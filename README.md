@@ -181,8 +181,8 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 
 ```bash
 # Clone the repository
-git clone https://github.com/scrapyui/scrapyui.git
-cd scrapyui
+git clone https://github.com/igtmtakan/scrapyUi.git
+cd scrapyUi
 
 # Backend setup
 cd backend
@@ -208,8 +208,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 📞 Support
 
-- **Issues**: [GitHub Issues](https://github.com/scrapyui/scrapyui/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/scrapyui/scrapyui/discussions)
+- **Issues**: [GitHub Issues](https://github.com/igtmtakan/scrapyUi/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/igtmtakan/scrapyUi/discussions)
 - **Email**: admin@scrapyui.com
 
 ---

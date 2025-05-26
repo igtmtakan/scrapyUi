@@ -1,0 +1,54 @@
+# Include the README and license files
+include README.md
+include LICENSE
+include CHANGELOG.md
+
+# Include configuration files
+include pyproject.toml
+include setup.py
+include requirements.txt
+
+# Include backend files
+recursive-include backend *.py
+recursive-include backend *.txt
+recursive-include backend *.md
+recursive-include backend *.yml
+recursive-include backend *.yaml
+recursive-include backend *.json
+recursive-include backend *.cfg
+recursive-include backend *.ini
+
+# Include frontend build files (if built)
+recursive-include frontend/dist *
+recursive-include frontend/build *
+
+# Include static files
+recursive-include backend/app/static *
+recursive-include backend/app/templates *
+
+# Include documentation
+recursive-include docs *.rst
+recursive-include docs *.md
+recursive-include docs *.txt
+recursive-include docs Makefile
+
+# Exclude development and cache files
+global-exclude *.pyc
+global-exclude *.pyo
+global-exclude *.pyd
+global-exclude __pycache__
+global-exclude .git*
+global-exclude .DS_Store
+global-exclude *.so
+global-exclude .coverage
+global-exclude .pytest_cache
+global-exclude .mypy_cache
+global-exclude .tox
+global-exclude .venv
+global-exclude venv
+global-exclude env
+global-exclude node_modules
+global-exclude .next
+global-exclude dist
+global-exclude build
+global-exclude *.egg-info
