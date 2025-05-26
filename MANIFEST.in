@@ -1,12 +1,14 @@
-# Include the README and license files
+# Include package metadata
+include VERSION
 include README.md
 include LICENSE
 include CHANGELOG.md
+include *.md
 
 # Include configuration files
 include pyproject.toml
 include setup.py
-include requirements.txt
+include backend/requirements.txt
 
 # Include backend files
 recursive-include backend *.py
@@ -25,6 +27,9 @@ recursive-include frontend/build *
 # Include static files
 recursive-include backend/app/static *
 recursive-include backend/app/templates *
+
+# Include shell scripts
+include *.sh
 
 # Include documentation
 recursive-include docs *.rst
@@ -52,3 +57,9 @@ global-exclude .next
 global-exclude dist
 global-exclude build
 global-exclude *.egg-info
+global-exclude *.pid
+global-exclude *.db
+global-exclude *.sqlite
+global-exclude *.sqlite3
+global-exclude *.log
+global-exclude scrapy_projects

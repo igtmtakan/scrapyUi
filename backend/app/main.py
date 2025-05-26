@@ -469,6 +469,35 @@ async def api_health_check():
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
 
+def start_server():
+    """Start the ScrapyUI server using shell script."""
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    # Get project root (3 levels up from backend/app/main.py)
+    project_root = Path(__file__).parent.parent.parent
+    start_script = project_root / "start_servers.sh"
+
+    if start_script.exists():
+        print("🚀 Starting ScrapyUI servers...")
+        try:
+            subprocess.run([str(start_script)], cwd=project_root, check=True)
+        except KeyboardInterrupt:
+            print("\n🛑 Server startup interrupted")
+            sys.exit(0)
+        except subprocess.CalledProcessError as e:
+            print(f"❌ Failed to start servers: {e}")
+            sys.exit(1)
+    else:
+        print("❌ start_servers.sh not found. Starting backend only...")
+        uvicorn.run(
+            "backend.app.main:app",
+            host="0.0.0.0",
+            port=8000,
+            reload=True
+        )
+
 if __name__ == "__main__":
     uvicorn.run(
         "main:app",
