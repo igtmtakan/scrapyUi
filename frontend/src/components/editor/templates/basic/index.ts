@@ -1,0 +1,1 @@
+export { basicTemplates } from './basicTemplates'

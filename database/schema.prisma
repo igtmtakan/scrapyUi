@@ -1,0 +1,101 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./scrapy_ui.db"
+}
+
+model Project {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  path        String   @unique
+  settings    Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  spiders     Spider[]
+  tasks       Task[]
+  
+  @@map("projects")
+}
+
+model Spider {
+  id          String   @id @default(cuid())
+  name        String
+  code        String
+  template    String?
+  settings    Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  
+  tasks       Task[]
+  
+  @@unique([projectId, name])
+  @@map("spiders")
+}
+
+model Task {
+  id          String     @id @default(cuid())
+  status      TaskStatus @default(PENDING)
+  startedAt   DateTime?
+  finishedAt  DateTime?
+  itemsCount  Int        @default(0)
+  requestsCount Int      @default(0)
+  errorCount  Int        @default(0)
+  logLevel    String     @default("INFO")
+  settings    Json?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  
+  projectId   String
+  project     Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  
+  spiderId    String
+  spider      Spider     @relation(fields: [spiderId], references: [id], onDelete: Cascade)
+  
+  results     Result[]
+  logs        Log[]
+  
+  @@map("tasks")
+}
+
+model Result {
+  id        String   @id @default(cuid())
+  data      Json
+  url       String?
+  createdAt DateTime @default(now())
+  
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  
+  @@map("results")
+}
+
+model Log {
+  id        String   @id @default(cuid())
+  level     String
+  message   String
+  timestamp DateTime @default(now())
+  
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  
+  @@map("logs")
+}
+
+enum TaskStatus {
+  PENDING
+  RUNNING
+  FINISHED
+  FAILED
+  CANCELLED
+}

@@ -1,0 +1,1 @@
+export { playwrightTemplates } from './playwrightTemplates'

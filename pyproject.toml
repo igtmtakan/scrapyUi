@@ -1,0 +1,151 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scrapyui"
+version = "1.0.0"
+authors = [
+    {name = "ScrapyUI Team", email = "admin@scrapyui.com"},
+]
+description = "Web-based Scrapy Management Interface with Playwright Integration"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.8"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Internet :: WWW/HTTP :: Indexing/Search",
+    "Topic :: Software Development :: Testing",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: OS Independent",
+    "Framework :: FastAPI",
+    "Framework :: Scrapy",
+]
+keywords = [
+    "scrapy",
+    "web-scraping", 
+    "playwright",
+    "fastapi",
+    "react",
+    "ui",
+    "management",
+    "spider",
+    "crawler",
+    "automation",
+]
+dependencies = [
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+    "sqlalchemy>=2.0.0",
+    "alembic>=1.12.0",
+    "pydantic>=2.4.0",
+    "python-jose[cryptography]>=3.3.0",
+    "passlib[bcrypt]>=1.7.4",
+    "python-multipart>=0.0.6",
+    "scrapy>=2.11.0",
+    "scrapy-playwright>=0.0.34",
+    "playwright>=1.40.0",
+    "celery>=5.3.0",
+    "redis>=5.0.0",
+    "beautifulsoup4>=4.12.0",
+    "pyquery>=2.0.0",
+    "requests>=2.31.0",
+    "aiofiles>=23.2.1",
+    "python-dotenv>=1.0.0",
+    "jinja2>=3.1.2",
+    "pandas>=2.1.0",
+    "openpyxl>=3.1.0",
+    "lxml>=4.9.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "black>=23.0.0",
+    "flake8>=6.0.0",
+    "mypy>=1.0.0",
+    "pre-commit>=3.0.0",
+]
+docs = [
+    "sphinx>=5.0.0",
+    "sphinx-rtd-theme>=1.2.0",
+    "myst-parser>=2.0.0",
+]
+test = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.0.0",
+    "httpx>=0.25.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/scrapyui/scrapyui"
+Documentation = "https://scrapyui.readthedocs.io/"
+Repository = "https://github.com/scrapyui/scrapyui.git"
+"Bug Reports" = "https://github.com/scrapyui/scrapyui/issues"
+Changelog = "https://github.com/scrapyui/scrapyui/blob/main/CHANGELOG.md"
+
+[project.scripts]
+scrapyui = "app.cli:main"
+scrapyui-server = "app.main:start_server"
+scrapyui-admin = "app.cli:create_admin"
+
+[tool.setuptools]
+package-dir = {"" = "backend"}
+
+[tool.setuptools.packages.find]
+where = ["backend"]
+
+[tool.setuptools.package-data]
+app = ["templates/*.py", "static/*", "config/*.py"]
+
+[tool.black]
+line-length = 88
+target-version = ['py38']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.isort]
+profile = "black"
+multi_line_output = 3
+line_length = 88
+
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-ra -q --strict-markers"
+testpaths = [
+    "tests",
+    "backend/tests",
+]
+python_files = [
+    "test_*.py",
+    "*_test.py",
+]

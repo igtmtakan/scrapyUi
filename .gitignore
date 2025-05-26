@@ -1,0 +1,169 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm
+.eslintcache
+
+# Next.js
+.next/
+out/
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Scrapy
+*.json
+*.csv
+*.xlsx
+*.xml
+*.pdf
+*.png
+*.jpg
+*.jpeg
+
+# Test files and temporary data
+test_*
+temp/
+tmp/
+uploads/
+exports/
+user_scripts/
+scrapy_projects/*/results_*
+scrapy_projects/*/output*
+backend/test_projects/
+backend/projects/
+backend/scrapy_projects/
+projects/
+
+# Performance and analytics
+performance_metrics.db
+usage_analytics.db
+
+# Backup files
+*.backup
+*.bak
+
+# Coverage reports
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pyenv
+.python-version
+
+# pipenv
+Pipfile.lock
+
+# PEP 582
+__pypackages__/
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# Specific to this project
+backend/app.db
+backend/scrapy_ui.db*
+database/scrapy_ui.db
+scrapy_ui.db
+*.egg-info/
+scrapyui.egg-info/
+
+# Scrapy本体（除外）
+scrapy/
+
+# Test and debug files
+debug_*
+test_*
+simple_*
+yahoo_*
+nodejs_direct_response.json

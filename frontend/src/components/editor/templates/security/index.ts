@@ -1,0 +1,1 @@
+export { securityTemplates } from './securityTemplates'
