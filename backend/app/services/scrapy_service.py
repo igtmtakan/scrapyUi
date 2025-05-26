@@ -613,7 +613,7 @@ PLAYWRIGHT_ABORT_REQUEST = lambda req: req.resource_type == "image"
                             lines = content.split('\n')
                             items_count = len([line for line in lines if line.strip() and line.strip() != '[' and line.strip() != ']'])
 
-                            # 進行状況を計算（リクエスト数÷アイテム数）
+                            # 進行状況を計算（経過(%) = リクエスト数/アイテム数）
                             if task_id in self.task_progress:
                                 start_time = self.task_progress[task_id]['started_at']
                                 elapsed = (datetime.now() - start_time).total_seconds()
@@ -621,14 +621,13 @@ PLAYWRIGHT_ABORT_REQUEST = lambda req: req.resource_type == "image"
                                 # リクエスト数を推定（アイテム数 + 初期リクエスト）
                                 requests_made = max(items_count + 1, 1)
 
-                                # 進行状況をリクエスト数÷アイテム数で計算
+                                # 進行状況を計算: 経過(%) = リクエスト数/アイテム数
                                 if items_count > 0:
-                                    # アイテムが取得できている場合
-                                    progress_percentage = min((requests_made / max(items_count, 1)) * 100, 95)
+                                    # アイテムが取得できている場合: リクエスト数/アイテム数
+                                    progress_percentage = min((requests_made / items_count) * 100, 95)
                                 else:
-                                    # まだアイテムが取得できていない場合は時間ベース
-                                    estimated_duration = 300  # 5分
-                                    progress_percentage = min((elapsed / estimated_duration) * 50, 50)  # 最大50%まで
+                                    # まだアイテムが取得できていない場合は初期値
+                                    progress_percentage = 10  # 開始時は10%
 
                                 return {
                                     'items_scraped': items_count,

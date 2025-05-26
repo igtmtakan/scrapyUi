@@ -167,3 +167,9 @@ test_*
 simple_*
 yahoo_*
 nodejs_direct_response.json
+
+# Process ID files
+*.pid
+.backend.pid
+.frontend.pid
+.nodejs.pid
