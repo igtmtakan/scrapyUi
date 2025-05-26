@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react'
 import { useWebSocket } from '@/hooks/useWebSocket'
+import { apiClient } from '@/lib/api'
 import {
   Play,
   Square,
@@ -36,6 +37,7 @@ export default function TaskMonitor({ taskId, showAllTasks = false }: TaskMonito
   const [tasks, setTasks] = useState<TaskStatus[]>([])
   const [logs, setLogs] = useState<Array<{ timestamp: string; level: string; message: string }>>([])
   const [selectedTask, setSelectedTask] = useState<string | null>(taskId || null)
+  const [isLoading, setIsLoading] = useState(true)
 
   const [clientId, setClientId] = React.useState('')
   const [mounted, setMounted] = React.useState(false)
@@ -45,6 +47,75 @@ export default function TaskMonitor({ taskId, showAllTasks = false }: TaskMonito
     setMounted(true)
     setClientId(`monitor_${Date.now()}`)
   }, [])
+
+  // 実際のタスクデータを取得
+  const loadTasks = async () => {
+    try {
+      setIsLoading(true)
+
+      // 直接fetchを使用（認証なし）
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/tasks/`)
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+
+      const tasksData = await response.json()
+
+      // 実行中のタスクのみフィルタリング（showAllTasksがfalseの場合）
+      const filteredTasks = showAllTasks
+        ? tasksData
+        : tasksData.filter((task: any) => task.status === 'RUNNING')
+
+      // TaskStatusフォーマットに変換
+      const formattedTasks = filteredTasks.map((task: any) => ({
+        id: task.id,
+        name: `${task.project?.name || 'Unknown'} / ${task.spider?.name || 'Unknown'}`,
+        status: task.status,
+        startedAt: task.started_at,
+        finishedAt: task.finished_at,
+        itemsCount: task.items_count || 0,
+        requestsCount: task.requests_count || 0,
+        errorCount: task.error_count || 0,
+        progress: calculateProgress(task)
+      }))
+
+      setTasks(formattedTasks)
+    } catch (error) {
+      console.error('Failed to load tasks:', error)
+      // エラーの場合は空の配列を設定
+      setTasks([])
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  // プログレス計算
+  const calculateProgress = (task: any) => {
+    if (task.status === 'FINISHED') return 100
+    if (task.status === 'FAILED' || task.status === 'CANCELLED') return 0
+    if (task.status === 'PENDING') return 0
+
+    if (task.status === 'RUNNING') {
+      if (task.items_count > 0) {
+        return Math.min(95, (task.requests_count / task.items_count) * 100)
+      } else {
+        return 10
+      }
+    }
+
+    return 0
+  }
+
+  // 初期データ読み込み
+  React.useEffect(() => {
+    if (mounted) {
+      loadTasks()
+      // 定期的にタスクデータを更新
+      const interval = setInterval(loadTasks, 5000) // 5秒ごと
+      return () => clearInterval(interval)
+    }
+  }, [mounted, showAllTasks])
 
   const { isConnected, connectionStatus, lastMessage, subscribeToTask, unsubscribeFromTask } = useWebSocket({
     url: mounted && clientId ? `${process.env.NEXT_PUBLIC_WS_URL}/ws/${clientId}` : '',
@@ -249,10 +320,17 @@ export default function TaskMonitor({ taskId, showAllTasks = false }: TaskMonito
               </div>
             ))}
 
-            {tasks.length === 0 && (
+            {isLoading && (
+              <div className="p-8 text-center text-gray-500">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto mb-2"></div>
+                <p className="text-sm">Loading tasks...</p>
+              </div>
+            )}
+
+            {!isLoading && tasks.length === 0 && (
               <div className="p-8 text-center text-gray-500">
                 <Activity className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                <p className="text-sm">No active tasks</p>
+                <p className="text-sm">{showAllTasks ? 'No tasks found' : 'No active tasks'}</p>
               </div>
             )}
           </div>

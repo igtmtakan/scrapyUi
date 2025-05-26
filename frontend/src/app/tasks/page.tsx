@@ -2,13 +2,13 @@
 
 import { useEffect, useState } from 'react';
 import { useAuthStore } from '@/stores/authStore';
-import { 
-  Play, 
-  Pause, 
-  Square, 
-  Clock, 
-  CheckCircle, 
-  XCircle, 
+import {
+  Play,
+  Pause,
+  Square,
+  Clock,
+  CheckCircle,
+  XCircle,
   AlertCircle,
   Search,
   Filter,
@@ -52,6 +52,8 @@ export default function TasksPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [projectFilter, setProjectFilter] = useState<string>('all');
+  const [spiderFilter, setSpiderFilter] = useState<string>('all');
   const [selectedTask, setSelectedTask] = useState<string | null>(null);
 
   useEffect(() => {
@@ -144,25 +146,73 @@ export default function TasksPage() {
 
   const formatDuration = (startedAt?: string, finishedAt?: string) => {
     if (!startedAt) return '-';
-    
+
     const start = new Date(startedAt);
     const end = finishedAt ? new Date(finishedAt) : new Date();
     const duration = Math.floor((end.getTime() - start.getTime()) / 1000);
-    
+
     if (duration < 60) return `${duration}秒`;
     if (duration < 3600) return `${Math.floor(duration / 60)}分`;
     return `${Math.floor(duration / 3600)}時間${Math.floor((duration % 3600) / 60)}分`;
   };
 
+  const calculateProgress = (task: Task) => {
+    // ステータス完了で経過(%) = 100%
+    if (task.status === 'FINISHED') {
+      return 100;
+    }
+
+    if (task.status === 'FAILED' || task.status === 'CANCELLED') {
+      return 0;
+    }
+
+    if (task.status === 'PENDING') {
+      return 0;
+    }
+
+    // 実行中の場合: 経過(%) = リクエスト数/アイテム数
+    if (task.status === 'RUNNING') {
+      if (task.items_count > 0) {
+        return Math.min(95, (task.requests_count / task.items_count) * 100);
+      } else {
+        return 10; // 開始時は10%
+      }
+    }
+
+    return 0;
+  };
+
+  const getProgressBarColor = (status: string) => {
+    switch (status) {
+      case 'RUNNING':
+        return 'bg-blue-500';
+      case 'FINISHED':
+        return 'bg-green-500';
+      case 'FAILED':
+        return 'bg-red-500';
+      case 'CANCELLED':
+        return 'bg-gray-500';
+      default:
+        return 'bg-gray-500';
+    }
+  };
+
   const filteredTasks = tasks.filter(task => {
     const matchesSearch = task.project?.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          task.spider?.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         task.id.toLowerCase().includes(searchTerm.toLowerCase());
-    
+                         task.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         task.spider_id.toLowerCase().includes(searchTerm.toLowerCase());
+
     const matchesStatus = statusFilter === 'all' || task.status === statusFilter;
-    
-    return matchesSearch && matchesStatus;
+    const matchesProject = projectFilter === 'all' || task.project?.name === projectFilter;
+    const matchesSpider = spiderFilter === 'all' || task.spider?.name === spiderFilter;
+
+    return matchesSearch && matchesStatus && matchesProject && matchesSpider;
   });
+
+  // ユニークなプロジェクト名とスパイダー名を取得
+  const uniqueProjects = Array.from(new Set(tasks.map(task => task.project?.name).filter(Boolean)));
+  const uniqueSpiders = Array.from(new Set(tasks.map(task => task.spider?.name).filter(Boolean)));
 
   if (!isAuthenticated) {
     return (
@@ -202,32 +252,64 @@ export default function TasksPage() {
         </div>
 
         {/* Filters */}
-        <div className="mb-6 flex flex-col sm:flex-row gap-4">
-          <div className="flex-1 relative">
-            <Search className="w-5 h-5 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
-            <input
-              type="text"
-              placeholder="タスクを検索..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 bg-gray-800 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            />
+        <div className="mb-6 space-y-4">
+          <div className="flex flex-col sm:flex-row gap-4">
+            <div className="flex-1 relative">
+              <Search className="w-5 h-5 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+              <input
+                type="text"
+                placeholder="プロジェクト名、スパイダー名、タスクID、スパイダーIDで検索..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full pl-10 pr-4 py-2 bg-gray-800 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              />
+            </div>
           </div>
-          
-          <div className="relative">
-            <Filter className="w-5 h-5 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              className="pl-10 pr-8 py-2 bg-gray-800 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            >
-              <option value="all">全てのステータス</option>
-              <option value="PENDING">待機中</option>
-              <option value="RUNNING">実行中</option>
-              <option value="FINISHED">完了</option>
-              <option value="FAILED">失敗</option>
-              <option value="CANCELLED">キャンセル</option>
-            </select>
+
+          <div className="flex flex-col sm:flex-row gap-4">
+            <div className="relative">
+              <Filter className="w-5 h-5 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                className="pl-10 pr-8 py-2 bg-gray-800 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              >
+                <option value="all">全てのステータス</option>
+                <option value="PENDING">待機中</option>
+                <option value="RUNNING">実行中</option>
+                <option value="FINISHED">完了</option>
+                <option value="FAILED">失敗</option>
+                <option value="CANCELLED">キャンセル</option>
+              </select>
+            </div>
+
+            <div className="relative">
+              <Filter className="w-5 h-5 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+              <select
+                value={projectFilter}
+                onChange={(e) => setProjectFilter(e.target.value)}
+                className="pl-10 pr-8 py-2 bg-gray-800 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              >
+                <option value="all">全てのプロジェクト</option>
+                {uniqueProjects.map(project => (
+                  <option key={project} value={project}>{project}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="relative">
+              <Filter className="w-5 h-5 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+              <select
+                value={spiderFilter}
+                onChange={(e) => setSpiderFilter(e.target.value)}
+                className="pl-10 pr-8 py-2 bg-gray-800 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              >
+                <option value="all">全てのスパイダー</option>
+                {uniqueSpiders.map(spider => (
+                  <option key={spider} value={spider}>{spider}</option>
+                ))}
+              </select>
+            </div>
           </div>
         </div>
 
@@ -262,7 +344,7 @@ export default function TasksPage() {
               {searchTerm || statusFilter !== 'all' ? 'タスクが見つかりません' : 'タスクがありません'}
             </h3>
             <p className="text-gray-400 mb-6">
-              {searchTerm || statusFilter !== 'all' 
+              {searchTerm || statusFilter !== 'all' || projectFilter !== 'all' || spiderFilter !== 'all'
                 ? '検索条件を調整してください'
                 : 'プロジェクトでスパイダーを実行するとタスクが表示されます'
               }
@@ -285,19 +367,22 @@ export default function TasksPage() {
                       {getStatusIcon(task.status)}
                       <div>
                         <h3 className="text-lg font-semibold text-white">
-                          {task.project?.name} / {task.spider?.name}
+                          {task.project?.name || 'プロジェクト不明'} / {task.spider?.name || 'スパイダー不明'}
                         </h3>
                         <p className="text-sm text-gray-400">
                           タスクID: {task.id}
                         </p>
+                        <p className="text-xs text-gray-500">
+                          スパイダーID: {task.spider_id}
+                        </p>
                       </div>
                     </div>
-                    
+
                     <div className="flex items-center space-x-3">
                       <span className={`px-3 py-1 rounded-full text-xs font-medium ${getStatusColor(task.status)}`}>
                         {getStatusText(task.status)}
                       </span>
-                      
+
                       <div className="relative">
                         <button
                           onClick={() => setSelectedTask(selectedTask === task.id ? null : task.id)}
@@ -305,7 +390,7 @@ export default function TasksPage() {
                         >
                           <MoreVertical className="w-4 h-4" />
                         </button>
-                        
+
                         {selectedTask === task.id && (
                           <div className="absolute right-0 mt-2 w-48 bg-gray-700 rounded-lg shadow-lg border border-gray-600 z-10">
                             <div className="py-1">
@@ -361,6 +446,29 @@ export default function TasksPage() {
                       </div>
                       <div className="text-xs text-gray-400">実行時間</div>
                     </div>
+                  </div>
+
+                  {/* Progress Bar */}
+                  <div className="mb-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-sm font-medium text-gray-300">
+                        進行状況
+                      </span>
+                      <span className="text-sm text-gray-400">
+                        {calculateProgress(task).toFixed(0)}%
+                      </span>
+                    </div>
+                    <div className="w-full bg-gray-700 rounded-full h-2">
+                      <div
+                        className={`h-2 rounded-full transition-all duration-300 ${getProgressBarColor(task.status)}`}
+                        style={{ width: `${calculateProgress(task)}%` }}
+                      ></div>
+                    </div>
+                    {task.status === 'RUNNING' && task.items_count > 0 && (
+                      <div className="text-xs text-gray-500 mt-1">
+                        経過(%) = リクエスト数({task.requests_count}) ÷ アイテム数({task.items_count})
+                      </div>
+                    )}
                   </div>
 
                   {/* Task Timeline */}
