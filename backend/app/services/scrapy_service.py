@@ -23,6 +23,15 @@ from ..utils.error_handler import (
     ErrorCode
 )
 
+# Python 3.13パフォーマンス最適化
+from ..performance.python313_optimizations import (
+    FreeThreadedExecutor,
+    AsyncOptimizer,
+    MemoryOptimizer,
+    performance_monitor,
+    jit_optimizer
+)
+
 class ScrapyPlaywrightService:
     """Scrapy + Playwright統合を管理するサービスクラス（シングルトン）"""
 
@@ -32,6 +41,10 @@ class ScrapyPlaywrightService:
     def __init__(self, base_projects_dir: str = None):
         # ロガーを初期化
         self.logger = get_logger(__name__)
+
+        # Python 3.13パフォーマンス最適化コンポーネント
+        self.memory_optimizer = MemoryOptimizer()
+        self.async_optimizer = None  # 必要時に初期化
 
     def __new__(cls, base_projects_dir: str = None):
         if cls._instance is None:
@@ -358,6 +371,108 @@ FAKEUSERAGENT_PROVIDERS = [
                 spider_id=spider_name,
                 details={"original_error": str(e)}
             )
+
+    @performance_monitor
+    @jit_optimizer.hot_function
+    def run_spider_optimized(self, project_path: str, spider_name: str, task_id: str, settings: Optional[Dict[str, Any]] = None) -> str:
+        """
+        Python 3.13最適化版スパイダー実行
+        Free-threaded並列処理とJIT最適化を活用
+        """
+        try:
+            log_with_context(
+                self.logger, "INFO",
+                f"Starting optimized spider execution: {spider_name}",
+                task_id=task_id,
+                project_id=project_path,
+                spider_id=spider_name,
+                extra_data={"optimization": "python313", "settings": settings}
+            )
+
+            # Free-threaded並列実行を使用
+            with FreeThreadedExecutor(max_workers=4) as executor:
+                # CPU集約的な前処理を並列実行
+                preprocessing_future = executor.submit_cpu_intensive(
+                    self._preprocess_spider_execution,
+                    project_path, spider_name, task_id, settings
+                )
+
+                # 並列でプロジェクト検証
+                validation_future = executor.submit_cpu_intensive(
+                    self._validate_project_structure,
+                    project_path
+                )
+
+                # 結果を取得
+                preprocessing_result = preprocessing_future.result()
+                validation_result = validation_future.result()
+
+                if not validation_result:
+                    raise SpiderException(
+                        message=f"Project validation failed: {project_path}",
+                        error_code=ErrorCode.PROJECT_NOT_FOUND,
+                        project_id=project_path
+                    )
+
+            # 通常のスパイダー実行
+            return self.run_spider(project_path, spider_name, task_id, settings)
+
+        except Exception as e:
+            error_msg = f"Error in optimized spider execution: {str(e)}"
+            log_exception(
+                self.logger, error_msg,
+                task_id=task_id,
+                project_id=project_path,
+                spider_id=spider_name
+            )
+            raise TaskException(
+                message=error_msg,
+                error_code=ErrorCode.SPIDER_EXECUTION_FAILED,
+                task_id=task_id,
+                project_id=project_path,
+                spider_id=spider_name
+            )
+
+    def _preprocess_spider_execution(self, project_path: str, spider_name: str, task_id: str, settings: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """スパイダー実行の前処理（CPU集約的）"""
+        full_path = self.base_projects_dir / project_path
+
+        # 設定の最適化
+        optimized_settings = settings.copy() if settings else {}
+
+        # Python 3.13の最適化設定を追加
+        optimized_settings.update({
+            'CONCURRENT_REQUESTS': 32,  # Free-threaded環境では高い並行性
+            'CONCURRENT_REQUESTS_PER_DOMAIN': 16,
+            'DOWNLOAD_DELAY': 0.1,
+            'RANDOMIZE_DOWNLOAD_DELAY': 0.5,
+            'AUTOTHROTTLE_ENABLED': True,
+            'AUTOTHROTTLE_START_DELAY': 0.1,
+            'AUTOTHROTTLE_MAX_DELAY': 3.0,
+            'AUTOTHROTTLE_TARGET_CONCURRENCY': 8.0,
+        })
+
+        return {
+            'project_path': str(full_path),
+            'optimized_settings': optimized_settings,
+            'task_id': task_id
+        }
+
+    def _validate_project_structure(self, project_path: str) -> bool:
+        """プロジェクト構造の検証（CPU集約的）"""
+        full_path = self.base_projects_dir / project_path
+
+        if not full_path.exists():
+            return False
+
+        # 必要なファイルの存在確認
+        required_files = [
+            full_path / 'scrapy.cfg',
+            full_path / project_path / '__init__.py',
+            full_path / project_path / 'settings.py',
+        ]
+
+        return all(file.exists() for file in required_files)
 
     def stop_spider(self, task_id: str) -> bool:
         """スパイダーの実行を停止"""
