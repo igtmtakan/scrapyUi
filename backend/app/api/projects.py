@@ -9,6 +9,20 @@ from ..models.schemas import Project, ProjectCreate, ProjectUpdate, ProjectWithS
 from ..services.scrapy_service import ScrapyPlaywrightService
 from ..api.auth import get_current_active_user
 
+# ロギングとエラーハンドリングのインポート
+from ..utils.logging_config import get_logger, log_with_context, log_exception
+from ..utils.error_handler import (
+    ScrapyUIException,
+    ProjectException,
+    ResourceNotFoundException,
+    AuthorizationException,
+    ErrorCode,
+    handle_exception
+)
+
+# ロガーを初期化
+logger = get_logger(__name__)
+
 router = APIRouter(
     responses={
         404: {"description": "Not found"},
@@ -58,54 +72,89 @@ async def get_project(project_id: str, db: Session = Depends(get_db)):
 async def create_project(project: ProjectCreate, db: Session = Depends(get_db)):
     """新しいプロジェクトを作成"""
 
-    # プロジェクト名の重複チェック
-    existing_project = db.query(DBProject).filter(DBProject.name == project.name).first()
-    if existing_project:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Project with this name already exists"
+    try:
+        log_with_context(
+            logger, "INFO",
+            f"Creating new project: {project.name}",
+            extra_data={"project_name": project.name, "description": project.description}
         )
 
-    # プロジェクト名をそのままパスとして使用（scrapy startproject と同じ動作）
-    project_path = project.name
+        # プロジェクト名の重複チェック
+        existing_project = db.query(DBProject).filter(DBProject.name == project.name).first()
+        if existing_project:
+            raise ProjectException(
+                message=f"Project with name '{project.name}' already exists",
+                error_code=ErrorCode.PROJECT_CREATION_FAILED,
+                details={"project_name": project.name}
+            )
 
-    # プロジェクトパスの重複チェック
-    existing_path = db.query(DBProject).filter(DBProject.path == project_path).first()
-    if existing_path:
-        # パスが重複する場合はUUIDを追加
-        project_path = f"{project_path}_{str(uuid.uuid4())[:8]}"
+        # プロジェクト名をそのままパスとして使用（scrapy startproject と同じ動作）
+        project_path = project.name
 
-    # Scrapyプロジェクトの作成（scrapy startproject project_name と同じ動作）
-    try:
-        # テスト環境では実際のScrapyプロジェクト作成をスキップ
-        if not os.getenv("TESTING", False):
-            scrapy_service = ScrapyPlaywrightService()
-            # プロジェクト名をそのまま使用してscrapy startprojectを実行
-            scrapy_service.create_project(project_path, project_path)
-        else:
-            # テスト環境では単純にディレクトリを作成
-            project_dir = f"./scrapy_projects/{project_path}"
-            os.makedirs(project_dir, exist_ok=True)
+        # プロジェクトパスの重複チェック
+        existing_path = db.query(DBProject).filter(DBProject.path == project_path).first()
+        if existing_path:
+            # パスが重複する場合はUUIDを追加
+            project_path = f"{project_path}_{str(uuid.uuid4())[:8]}"
+
+        # Scrapyプロジェクトの作成（scrapy startproject project_name と同じ動作）
+        try:
+            # テスト環境では実際のScrapyプロジェクト作成をスキップ
+            if not os.getenv("TESTING", False):
+                scrapy_service = ScrapyPlaywrightService()
+                # プロジェクト名をそのまま使用してscrapy startprojectを実行
+                scrapy_service.create_project(project_path, project_path)
+                logger.info(f"Scrapy project created successfully: {project_path}")
+            else:
+                # テスト環境では単純にディレクトリを作成
+                project_dir = f"./scrapy_projects/{project_path}"
+                os.makedirs(project_dir, exist_ok=True)
+                logger.info(f"Test project directory created: {project_dir}")
+        except Exception as e:
+            # プロジェクト作成に失敗してもデータベースには保存する（テスト用）
+            log_exception(
+                logger, f"Warning: Failed to create Scrapy project: {str(e)}",
+                extra_data={"project_name": project.name, "project_path": project_path}
+            )
+
+        # データベースに保存
+        db_project = DBProject(
+            id=str(uuid.uuid4()),
+            name=project.name,
+            description=project.description,
+            path=project_path,
+            scrapy_version=project.scrapy_version or "2.11.0",
+            settings=project.settings or {},
+            user_id="test-user-id"  # テスト用の固定ユーザーID
+        )
+
+        db.add(db_project)
+        db.commit()
+        db.refresh(db_project)
+
+        log_with_context(
+            logger, "INFO",
+            f"Project created successfully: {project.name}",
+            project_id=db_project.id,
+            extra_data={"project_path": project_path}
+        )
+
+        return db_project
+
+    except ProjectException:
+        # 既にProjectExceptionの場合は再発生
+        raise
     except Exception as e:
-        # プロジェクト作成に失敗してもデータベースには保存する（テスト用）
-        print(f"Warning: Failed to create Scrapy project: {str(e)}")
-
-    # データベースに保存
-    db_project = DBProject(
-        id=str(uuid.uuid4()),
-        name=project.name,
-        description=project.description,
-        path=project_path,
-        scrapy_version=project.scrapy_version or "2.11.0",
-        settings=project.settings or {},
-        user_id="test-user-id"  # テスト用の固定ユーザーID
-    )
-
-    db.add(db_project)
-    db.commit()
-    db.refresh(db_project)
-
-    return db_project
+        error_msg = f"Failed to create project: {str(e)}"
+        log_exception(
+            logger, error_msg,
+            extra_data={"project_name": project.name}
+        )
+        raise ProjectException(
+            message=error_msg,
+            error_code=ErrorCode.PROJECT_CREATION_FAILED,
+            details={"original_error": str(e)}
+        )
 
 @router.put("/{project_id}", response_model=Project)
 async def update_project(

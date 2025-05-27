@@ -13,11 +13,25 @@ import sys
 from datetime import datetime, timedelta
 import glob
 
+# ロギングとエラーハンドリングのインポート
+from ..utils.logging_config import get_logger, log_with_context, log_exception
+from ..utils.error_handler import (
+    ScrapyUIException,
+    ProjectException,
+    SpiderException,
+    TaskException,
+    ErrorCode
+)
+
 class ScrapyPlaywrightService:
     """Scrapy + Playwright統合を管理するサービスクラス（シングルトン）"""
 
     _instance = None
     _initialized = False
+
+    def __init__(self, base_projects_dir: str = None):
+        # ロガーを初期化
+        self.logger = get_logger(__name__)
 
     def __new__(cls, base_projects_dir: str = None):
         if cls._instance is None:
@@ -47,6 +61,12 @@ class ScrapyPlaywrightService:
     def create_project(self, project_name: str, project_path: str) -> bool:
         """新しいScrapyプロジェクトを作成（scrapy startproject と同じ動作）"""
         try:
+            log_with_context(
+                self.logger, "INFO",
+                f"Creating Scrapy project: {project_name}",
+                extra_data={"project_name": project_name, "project_path": project_path}
+            )
+
             # scrapy_projects ディレクトリ内にプロジェクトを作成
             # scrapy startproject project_name の動作を再現
 
@@ -58,9 +78,7 @@ class ScrapyPlaywrightService:
                 sys.executable, "-m", "scrapy", "startproject", project_name
             ]
 
-            print(f"Creating Scrapy project: {project_name}")
-            print(f"Command: {' '.join(cmd)}")
-            print(f"Working directory: {self.base_projects_dir}")
+            self.logger.info(f"Executing command: {' '.join(cmd)} in {self.base_projects_dir}")
 
             result = subprocess.run(
                 cmd,
@@ -70,7 +88,7 @@ class ScrapyPlaywrightService:
                 check=True
             )
 
-            print(f"Scrapy project created successfully: {result.stdout}")
+            self.logger.info(f"Scrapy project created successfully: {result.stdout}")
 
             # 作成されたプロジェクトディレクトリのパス
             project_dir = self.base_projects_dir / project_name
@@ -78,14 +96,36 @@ class ScrapyPlaywrightService:
             # scrapy-playwright設定を追加
             self._setup_playwright_config(project_dir / project_name)
 
+            log_with_context(
+                self.logger, "INFO",
+                f"Project creation completed: {project_name}",
+                extra_data={"project_name": project_name, "project_dir": str(project_dir)}
+            )
+
             return True
 
         except subprocess.CalledProcessError as e:
-            print(f"Failed to create Scrapy project: {e.stderr}")
-            raise Exception(f"Failed to create Scrapy project: {e.stderr}")
+            error_msg = f"Failed to create Scrapy project: {e.stderr}"
+            log_exception(
+                self.logger, error_msg,
+                extra_data={"project_name": project_name, "command": cmd, "stderr": e.stderr}
+            )
+            raise ProjectException(
+                message=error_msg,
+                error_code=ErrorCode.PROJECT_CREATION_FAILED,
+                details={"stderr": e.stderr, "command": cmd}
+            )
         except Exception as e:
-            print(f"Error creating project: {str(e)}")
-            raise Exception(f"Error creating project: {str(e)}")
+            error_msg = f"Error creating project: {str(e)}"
+            log_exception(
+                self.logger, error_msg,
+                extra_data={"project_name": project_name}
+            )
+            raise ProjectException(
+                message=error_msg,
+                error_code=ErrorCode.PROJECT_CREATION_FAILED,
+                details={"original_error": str(e)}
+            )
 
     def _setup_playwright_config(self, project_dir: Path) -> None:
         """scrapy-playwright設定をプロジェクトに追加"""
@@ -234,8 +274,24 @@ FAKEUSERAGENT_PROVIDERS = [
     def run_spider(self, project_path: str, spider_name: str, task_id: str, settings: Optional[Dict[str, Any]] = None) -> str:
         """スパイダーを実行（非同期）"""
         try:
+            log_with_context(
+                self.logger, "INFO",
+                f"Starting spider execution: {spider_name}",
+                task_id=task_id,
+                project_id=project_path,
+                spider_id=spider_name,
+                extra_data={"settings": settings}
+            )
+
             # scrapy_projects/project_name ディレクトリでscrapy crawlを実行
             full_path = self.base_projects_dir / project_path
+
+            if not full_path.exists():
+                raise SpiderException(
+                    message=f"Project directory not found: {full_path}",
+                    error_code=ErrorCode.PROJECT_NOT_FOUND,
+                    project_id=project_path
+                )
 
             cmd = [sys.executable, "-m", "scrapy", "crawl", spider_name]
 
@@ -248,8 +304,7 @@ FAKEUSERAGENT_PROVIDERS = [
             output_file = full_path / f"results_{task_id}.json"
             cmd.extend(["-o", str(output_file)])
 
-            print(f"Running spider: {spider_name} in {full_path}")
-            print(f"Command: {' '.join(cmd)}")
+            self.logger.info(f"Executing spider command: {' '.join(cmd)} in {full_path}")
 
             # 非同期でプロセスを開始
             process = subprocess.Popen(
@@ -274,11 +329,35 @@ FAKEUSERAGENT_PROVIDERS = [
                 'last_update': datetime.now()
             }
 
+            log_with_context(
+                self.logger, "INFO",
+                f"Spider process started successfully: {spider_name}",
+                task_id=task_id,
+                extra_data={"pid": process.pid, "output_file": str(output_file)}
+            )
+
             return task_id
 
+        except SpiderException:
+            # 既にSpiderExceptionの場合は再発生
+            raise
         except Exception as e:
-            print(f"Error running spider: {str(e)}")
-            raise Exception(f"Error running spider: {str(e)}")
+            error_msg = f"Error running spider: {str(e)}"
+            log_exception(
+                self.logger, error_msg,
+                task_id=task_id,
+                project_id=project_path,
+                spider_id=spider_name,
+                extra_data={"settings": settings}
+            )
+            raise TaskException(
+                message=error_msg,
+                error_code=ErrorCode.SPIDER_EXECUTION_FAILED,
+                task_id=task_id,
+                project_id=project_path,
+                spider_id=spider_name,
+                details={"original_error": str(e)}
+            )
 
     def stop_spider(self, task_id: str) -> bool:
         """スパイダーの実行を停止"""

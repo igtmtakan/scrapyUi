@@ -8,12 +8,30 @@ import uvicorn
 import os
 from pathlib import Path
 
+# ロギングとエラーハンドリングのインポート
+from .utils.logging_config import setup_logging, get_logger
+from .middleware.error_middleware import (
+    ErrorHandlingMiddleware,
+    RequestLoggingMiddleware,
+    PerformanceLoggingMiddleware
+)
+
 from .api import projects, spiders, tasks, results, schedules, notifications, auth, proxies, ai, admin, script_runner, project_files
 # from .api import shell, database_config, extensions  # 一時的に無効化
 from .api.routes import nodejs_integration
 # from .api import settings
 from .database import engine, Base
 from .websocket import endpoints as websocket_endpoints
+
+# ロギングシステムの初期化
+setup_logging(
+    level="INFO",
+    log_to_file=True,
+    log_to_console=True,
+    json_format=False
+)
+
+logger = get_logger(__name__)
 
 # データベーステーブルの作成
 Base.metadata.create_all(bind=engine)
@@ -375,6 +393,11 @@ app = FastAPI(
 
 app.openapi = custom_openapi
 
+# エラーハンドリングとロギングミドルウェアを追加
+app.add_middleware(ErrorHandlingMiddleware)
+app.add_middleware(RequestLoggingMiddleware)
+app.add_middleware(PerformanceLoggingMiddleware, slow_request_threshold=2.0)
+
 # 標準CORSミドルウェアを適用
 app.add_middleware(
     CORSMiddleware,
@@ -416,24 +439,32 @@ async def startup_event():
     global scrapy_service_instance
 
     try:
+        logger.info("🚀 Starting ScrapyUI Application...")
+
         from .services.scrapy_service import ScrapyPlaywrightService
         from .services.scheduler_service import scheduler_service
 
         # ScrapyServiceのシングルトンインスタンスを取得
         scrapy_service_instance = ScrapyPlaywrightService()
+        logger.info("✅ ScrapyPlaywrightService initialized")
 
         # タスク監視システムを開始
         scrapy_service_instance.start_monitoring()
+        logger.info("🔍 Task monitoring system started")
 
         # スケジューラーサービスを開始
         scheduler_service.start()
+        logger.info("⏰ Schedule service started")
 
+        logger.info("✅ ScrapyUI Application started successfully")
         print("✅ ScrapyUI Application started successfully")
         print("🔍 Task monitoring system initialized")
         print("⏰ Schedule service initialized")
 
     except Exception as e:
-        print(f"❌ Error during startup: {str(e)}")
+        error_msg = f"❌ Error during startup: {str(e)}"
+        logger.error(error_msg, exc_info=True)
+        print(error_msg)
         import traceback
         traceback.print_exc()
 
@@ -443,21 +474,28 @@ async def shutdown_event():
     global scrapy_service_instance
 
     try:
+        logger.info("🛑 Shutting down ScrapyUI Application...")
+
         from .services.scheduler_service import scheduler_service
 
         if scrapy_service_instance:
             # タスク監視システムを停止
             scrapy_service_instance.stop_monitoring_tasks()
+            logger.info("🔍 Task monitoring system stopped")
 
         # スケジューラーサービスを停止
         scheduler_service.stop()
+        logger.info("⏰ Schedule service stopped")
 
+        logger.info("🛑 ScrapyUI Application shutdown completed")
         print("🛑 ScrapyUI Application shutdown completed")
         print("🔍 Task monitoring system stopped")
         print("⏰ Schedule service stopped")
 
     except Exception as e:
-        print(f"❌ Error during shutdown: {str(e)}")
+        error_msg = f"❌ Error during shutdown: {str(e)}"
+        logger.error(error_msg, exc_info=True)
+        print(error_msg)
         import traceback
         traceback.print_exc()
 
