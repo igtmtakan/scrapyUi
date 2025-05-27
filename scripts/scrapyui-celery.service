@@ -1,0 +1,30 @@
+[Unit]
+Description=ScrapyUI Celery Worker
+After=network.target redis.service
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/path/to/scrapyui/backend
+Environment=PYTHONPATH=/path/to/scrapyui/backend
+ExecStart=/usr/bin/python3 /path/to/scrapyui/backend/start_celery_worker.py
+Restart=always
+RestartSec=10
+KillMode=mixed
+TimeoutStopSec=30
+
+# ログ設定
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=scrapyui-celery
+
+# セキュリティ設定
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/path/to/scrapyui
+
+[Install]
+WantedBy=multi-user.target

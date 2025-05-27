@@ -170,13 +170,21 @@ export default function TasksPage() {
       return 0;
     }
 
-    // 実行中の場合: 経過(%) = リクエスト数/アイテム数
+    // 実行中の場合: 新方式 = 現在のアイテム数/(現在のアイテム数 + pendingアイテム数)
     if (task.status === 'RUNNING') {
       if (task.items_count > 0) {
-        return Math.min(95, (task.requests_count / task.items_count) * 100);
-      } else {
-        return 10; // 開始時は10%
+        // pendingアイテム数を推定（簡易版）
+        const pendingItems = Math.max(0, Math.min(
+          60 - task.items_count, // 最大60アイテムと仮定
+          Math.max(task.requests_count - task.items_count, 10) // リクエスト差分または最低10
+        ));
+        const totalEstimated = task.items_count + pendingItems;
+
+        if (totalEstimated > 0) {
+          return Math.min(95, (task.items_count / totalEstimated) * 100);
+        }
       }
+      return 10; // 開始時は10%
     }
 
     return 0;
@@ -466,7 +474,11 @@ export default function TasksPage() {
                     </div>
                     {task.status === 'RUNNING' && task.items_count > 0 && (
                       <div className="text-xs text-gray-500 mt-1">
-                        経過(%) = リクエスト数({task.requests_count}) ÷ アイテム数({task.items_count})
+                        進行状況 = 現在のアイテム数({task.items_count}) ÷ 推定総アイテム数
+                        <br />
+                        <span className="text-gray-600">
+                          (リクエスト数: {task.requests_count}, 推定残り: {Math.max(0, Math.min(60 - task.items_count, Math.max(task.requests_count - task.items_count, 10)))})
+                        </span>
                       </div>
                     )}
                   </div>

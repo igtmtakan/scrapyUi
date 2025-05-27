@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Response
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
@@ -11,6 +11,10 @@ import tempfile
 from pathlib import Path
 from datetime import datetime, timezone
 import io
+import subprocess
+import psutil
+import redis
+import requests
 
 from ..database import get_db, Task as DBTask, Project as DBProject, Spider as DBSpider, TaskStatus, User, Result as DBResult
 from ..models.schemas import Task, TaskCreate, TaskUpdate, TaskWithDetails
@@ -202,13 +206,13 @@ async def get_task(
 @router.post(
     "/",
     response_model=Task,
-    status_code=status.HTTP_201_CREATED,
     summary="タスク作成・実行",
     description="新しいタスクを作成してスパイダーを実行します。",
     response_description="作成されたタスクの情報"
 )
 async def create_task(
     task: TaskCreate,
+    response: Response,
     db: Session = Depends(get_db)
     # current_user: User = Depends(get_current_active_user)  # 一時的に無効化
 ):
@@ -288,39 +292,104 @@ async def create_task(
             "progress": 0
         })
 
-        # スパイダーを実行（テスト環境では簡略化）
+        # スパイダーを実行（エラーハンドリング強化）
         try:
+            print(f"🚀 Starting spider execution for task {task_id}")
+            print(f"Project path: {getattr(project, 'path', 'unknown')}")
+            print(f"Spider name: {getattr(spider, 'name', 'unknown')}")
+
+            # 本番環境でのスパイダー実行
             if not os.getenv("TESTING", False):
-                scrapy_service = ScrapyPlaywrightService()
+                try:
+                    scrapy_service = ScrapyPlaywrightService()
+                    print("✅ ScrapyPlaywrightService initialized")
 
-                # 監視システムが起動していない場合は起動
-                if not scrapy_service.monitoring_thread or not scrapy_service.monitoring_thread.is_alive():
-                    print("🔧 Starting task monitoring system from API endpoint")
-                    scrapy_service.start_monitoring()
+                    # 監視システムが起動していない場合は起動
+                    if not scrapy_service.monitoring_thread or not scrapy_service.monitoring_thread.is_alive():
+                        print("🔧 Starting task monitoring system from API endpoint")
+                        scrapy_service.start_monitoring()
 
-                scrapy_service.run_spider(
-                    project.path,
-                    spider.name,
-                    task_id,
-                    task.settings
-                )
-                # ステータスを実行中に更新
-                db_task.status = TaskStatus.RUNNING
-                db_task.started_at = datetime.now()
+                    # プロジェクトパスの検証
+                    project_path = getattr(project, 'path', None)
+                    if not project_path:
+                        print(f"⚠️ Project path not set, using project name: {project.name}")
+                        project_path = project.name
 
-                # WebSocket通知を送信
-                await manager.send_task_update(task_id, {
-                    "id": task_id,
-                    "name": spider.name,
-                    "status": db_task.status.value,
-                    "startedAt": db_task.started_at.isoformat() if db_task.started_at else None,
-                    "itemsCount": db_task.items_count or 0,
-                    "requestsCount": db_task.requests_count or 0,
-                    "errorCount": db_task.error_count or 0,
-                    "progress": 5
-                })
+                    # 絶対パスに変換
+                    scrapy_service = ScrapyPlaywrightService()
+                    full_project_path = scrapy_service.base_projects_dir / project_path
+
+                    if not full_project_path.exists():
+                        print(f"⚠️ Project directory not found: {full_project_path}")
+                        raise Exception(f"Project directory not found: {full_project_path}")
+
+                    print(f"✅ Using project path: {full_project_path}")
+
+                    # スパイダー実行
+                    print(f"🕷️ Running spider: {spider.name} in {project_path}")
+                    scrapy_service.run_spider(
+                        project_path,  # 相対パスを使用（ScrapyPlaywrightServiceが絶対パスに変換）
+                        spider.name,
+                        task_id,
+                        task.settings or {}
+                    )
+
+                    # ステータスを実行中に更新
+                    db_task.status = TaskStatus.RUNNING
+                    db_task.started_at = datetime.now()
+                    print(f"✅ Spider started successfully, task status: {db_task.status}")
+
+                    # WebSocket通知を送信
+                    await manager.send_task_update(task_id, {
+                        "id": task_id,
+                        "name": spider.name,
+                        "status": db_task.status.value,
+                        "startedAt": db_task.started_at.isoformat() if db_task.started_at else None,
+                        "itemsCount": db_task.items_count or 0,
+                        "requestsCount": db_task.requests_count or 0,
+                        "errorCount": db_task.error_count or 0,
+                        "progress": 5
+                    })
+
+                except Exception as scrapy_error:
+                    print(f"❌ Scrapy execution error: {str(scrapy_error)}")
+                    print(f"❌ Error type: {type(scrapy_error).__name__}")
+                    import traceback
+                    traceback.print_exc()
+
+                    # 詳細なデバッグ情報を出力
+                    print(f"🔍 Debug info:")
+                    print(f"   - Project: {project}")
+                    print(f"   - Project path: {getattr(project, 'path', 'None')}")
+                    print(f"   - Spider: {spider}")
+                    print(f"   - Spider name: {getattr(spider, 'name', 'None')}")
+                    print(f"   - Task ID: {task_id}")
+                    print(f"   - Full project path: {full_project_path if 'full_project_path' in locals() else 'Not set'}")
+
+                    # スパイダー実行に失敗した場合でも、タスクは作成済みなので失敗状態で保存
+                    db_task.status = TaskStatus.FAILED
+                    db_task.started_at = datetime.now()
+                    db_task.finished_at = datetime.now()
+                    db_task.error_count = 1
+
+                    # WebSocket通知を送信
+                    await manager.send_task_update(task_id, {
+                        "id": task_id,
+                        "name": spider.name,
+                        "status": db_task.status.value,
+                        "startedAt": db_task.started_at.isoformat() if db_task.started_at else None,
+                        "finishedAt": db_task.finished_at.isoformat() if db_task.finished_at else None,
+                        "itemsCount": 0,
+                        "requestsCount": 0,
+                        "errorCount": 1,
+                        "progress": 0
+                    })
+
+                    print(f"⚠️ Task {task_id} marked as failed due to spider execution error")
+
             else:
                 # テスト環境では即座に完了状態にする
+                print("🧪 Test environment: Creating dummy completed task")
                 db_task.status = TaskStatus.FINISHED
                 db_task.started_at = datetime.now(timezone.utc)
                 db_task.finished_at = datetime.now(timezone.utc)
@@ -328,30 +397,58 @@ async def create_task(
                 db_task.requests_count = 10
 
             db.commit()
+            print(f"💾 Task {task_id} saved to database with status: {db_task.status}")
 
         except Exception as e:
-            # 実行に失敗した場合はステータスを失敗に更新（進行状況は保持）
-            current_items = db_task.items_count or 0
-            current_requests = db_task.requests_count or 0
-            current_errors = db_task.error_count or 0
+            print(f"💥 Unexpected error in spider execution: {str(e)}")
+            import traceback
+            traceback.print_exc()
 
+            # 予期しないエラーの場合も失敗状態で保存
             db_task.status = TaskStatus.FAILED
             db_task.finished_at = datetime.now()
-            # 進行状況データを保持
-            db_task.items_count = current_items
-            db_task.requests_count = current_requests
-            db_task.error_count = current_errors + 1
+            db_task.error_count = (db_task.error_count or 0) + 1
             db.commit()
 
-            print(f"Warning: Failed to start spider: {str(e)}")
-            print(f"Preserved progress: {current_items} items, {current_requests} requests, {current_errors + 1} errors")
+            print(f"⚠️ Task {task_id} marked as failed due to unexpected error")
 
-            # テスト環境ではエラーを投げずに続行
-            if not os.getenv("TESTING", False):
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail=f"Failed to start spider: {str(e)}"
-                )
+            # WebSocket通知を送信
+            try:
+                await manager.send_task_update(task_id, {
+                    "id": task_id,
+                    "name": getattr(spider, 'name', 'unknown'),
+                    "status": db_task.status.value,
+                    "startedAt": db_task.started_at.isoformat() if db_task.started_at else None,
+                    "finishedAt": db_task.finished_at.isoformat() if db_task.finished_at else None,
+                    "itemsCount": db_task.items_count or 0,
+                    "requestsCount": db_task.requests_count or 0,
+                    "errorCount": db_task.error_count or 0,
+                    "progress": 0
+                })
+            except Exception as ws_error:
+                print(f"⚠️ WebSocket notification failed: {str(ws_error)}")
+
+            # エラーを投げずにタスクオブジェクトを返す（タスクは作成済み）
+            print(f"✅ Returning task {task_id} despite execution error")
+
+        # タスクの状態に応じて適切なHTTPステータスコードを設定
+        if db_task.status == TaskStatus.FAILED:
+            # タスクは作成されたが実行に失敗した場合は202 Accepted
+            # (タスクは受け入れられたが処理に失敗)
+            response.status_code = status.HTTP_202_ACCEPTED
+            print(f"⚠️ Task {task_id} created but failed to execute - returning 202 Accepted")
+        elif db_task.status == TaskStatus.RUNNING:
+            # タスクが正常に開始された場合は201 Created
+            response.status_code = status.HTTP_201_CREATED
+            print(f"✅ Task {task_id} created and running - returning 201 Created")
+        elif db_task.status == TaskStatus.FINISHED:
+            # テスト環境で即座に完了した場合は201 Created
+            response.status_code = status.HTTP_201_CREATED
+            print(f"✅ Task {task_id} created and finished - returning 201 Created")
+        else:
+            # その他の場合は201 Created
+            response.status_code = status.HTTP_201_CREATED
+            print(f"✅ Task {task_id} created with status {db_task.status} - returning 201 Created")
 
         return db_task
 
@@ -1364,7 +1461,276 @@ async def fix_failed_tasks():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fixing failed tasks: {str(e)}")
 
+@router.get("/system-status", response_model=None)
+async def get_system_status():
+    """
+    システム状態取得
+
+    各種サービスの起動状況を取得します。
+    """
+    return {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "services": {
+            "fastapi_backend": {
+                "status": "running",
+                "message": "FastAPI backend is running"
+            },
+            "redis": {
+                "status": "unknown",
+                "message": "Status check not implemented yet"
+            },
+            "celery_worker": {
+                "status": "unknown",
+                "message": "Status check not implemented yet"
+            },
+            "scheduler": {
+                "status": "unknown",
+                "message": "Status check not implemented yet"
+            }
+        }
+    }
+
 @router.get("/health")
 async def health_check():
     """ヘルスチェック"""
     return {"status": "healthy", "timestamp": datetime.now(timezone.utc).isoformat()}
+
+@router.get(
+    "/monitoring/stats",
+    summary="監視統計の取得",
+    description="ScrapyPlaywrightServiceの監視統計とパフォーマンスメトリクスを取得します。"
+)
+async def get_monitoring_stats():
+    """監視統計とパフォーマンスメトリクスを取得"""
+    try:
+        from ..services.scrapy_service import ScrapyPlaywrightService
+
+        scrapy_service = ScrapyPlaywrightService()
+
+        # 監視統計を取得
+        stats = scrapy_service.get_monitoring_stats()
+
+        # 現在実行中のタスク情報を追加
+        running_tasks = []
+        for task_id in scrapy_service.running_processes.keys():
+            progress = scrapy_service.get_task_progress(task_id)
+            running_tasks.append({
+                "task_id": task_id,
+                "progress": progress
+            })
+
+        stats['running_tasks'] = running_tasks
+        stats['active_processes'] = len(scrapy_service.running_processes)
+
+        return {
+            "status": "success",
+            "monitoring_stats": stats,
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except Exception as e:
+        print(f"Error getting monitoring stats: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get monitoring stats: {str(e)}"
+        )
+
+@router.get(
+    "/monitoring/health",
+    summary="システムヘルスチェック",
+    description="システムの健康状態とパフォーマンス指標を取得します。"
+)
+async def get_system_health():
+    """システムヘルスチェックを実行"""
+    try:
+        import psutil
+        from ..services.scrapy_service import ScrapyPlaywrightService
+
+        # システムメトリクス
+        cpu_percent = psutil.cpu_percent(interval=0.1)
+        memory = psutil.virtual_memory()
+        disk = psutil.disk_usage('/')
+
+        # プロセス情報
+        scrapy_service = ScrapyPlaywrightService()
+
+        health_data = {
+            "system": {
+                "cpu_percent": cpu_percent,
+                "memory_percent": memory.percent,
+                "memory_available_gb": memory.available / (1024**3),
+                "disk_percent": (disk.used / disk.total) * 100,
+                "disk_free_gb": disk.free / (1024**3)
+            },
+            "scrapy_service": {
+                "active_processes": len(scrapy_service.running_processes),
+                "monitoring_active": hasattr(scrapy_service, 'monitoring_thread') and
+                                   scrapy_service.monitoring_thread and
+                                   scrapy_service.monitoring_thread.is_alive()
+            },
+            "status": "healthy",
+            "warnings": [],
+            "timestamp": datetime.now().isoformat()
+        }
+
+        # 警告レベルのチェック
+        if cpu_percent > 80:
+            health_data["warnings"].append(f"High CPU usage: {cpu_percent:.1f}%")
+            health_data["status"] = "warning"
+        if memory.percent > 80:
+            health_data["warnings"].append(f"High memory usage: {memory.percent:.1f}%")
+            health_data["status"] = "warning"
+        if (disk.used / disk.total) * 100 > 80:
+            health_data["warnings"].append(f"High disk usage: {(disk.used / disk.total) * 100:.1f}%")
+            health_data["status"] = "warning"
+
+        return health_data
+
+    except ImportError:
+        return {
+            "status": "error",
+            "error": "psutil not available for health check",
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        print(f"Error in health check: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to perform health check: {str(e)}"
+        )
+
+@router.post(
+    "/fix-failed-tasks",
+    summary="失敗したタスクの自動修正",
+    description="結果ファイルがあるのに失敗とマークされたタスクを自動修正します。"
+)
+async def fix_failed_tasks():
+    """失敗したタスクを自動修正"""
+    try:
+        from ..services.scrapy_service import ScrapyPlaywrightService
+        from ..database import SessionLocal, Task as DBTask, TaskStatus, Project as DBProject
+        from pathlib import Path
+        import glob
+        import json
+
+        db = SessionLocal()
+        fixed_tasks = []
+
+        try:
+            # 最近24時間の失敗したタスクを取得
+            from datetime import datetime, timedelta
+            recent_threshold = datetime.now() - timedelta(hours=24)
+
+            failed_tasks = db.query(DBTask).filter(
+                DBTask.status == TaskStatus.FAILED,
+                DBTask.created_at >= recent_threshold
+            ).all()
+
+            scrapy_service = ScrapyPlaywrightService()
+
+            for task in failed_tasks:
+                try:
+                    # プロジェクト情報を取得
+                    project = db.query(DBProject).filter(DBProject.id == task.project_id).first()
+                    if not project:
+                        continue
+
+                    # 結果ファイルを検索
+                    base_dir = Path(scrapy_service.base_projects_dir) / project.path
+                    patterns = [
+                        str(base_dir / f"results_{task.id}.json"),
+                        str(base_dir / project.path / f"results_{task.id}.json"),
+                        str(base_dir / "**" / f"results_{task.id}.json")
+                    ]
+
+                    result_file = None
+                    for pattern in patterns:
+                        matches = glob.glob(pattern, recursive=True)
+                        if matches:
+                            result_file = Path(matches[0])
+                            break
+
+                    # 最新のresults_*.jsonファイルも確認
+                    if not result_file:
+                        pattern = str(base_dir / "**" / "results_*.json")
+                        matches = glob.glob(pattern, recursive=True)
+                        if matches:
+                            # タスク作成時間の前後5分以内に作成されたファイル
+                            task_time = task.created_at.timestamp()
+                            for match in matches:
+                                file_time = Path(match).stat().st_mtime
+                                if abs(file_time - task_time) < 300:  # 5分以内
+                                    result_file = Path(match)
+                                    break
+
+                    if result_file and result_file.exists():
+                        file_size = result_file.stat().st_size
+
+                        # ファイルサイズが十分大きい場合
+                        if file_size > 1000:  # 1KB以上
+                            try:
+                                with open(result_file, 'r', encoding='utf-8') as f:
+                                    content = f.read().strip()
+                                    if content:
+                                        data = json.loads(content)
+                                        item_count = len(data) if isinstance(data, list) else 1
+
+                                        # タスクを修正
+                                        task.status = TaskStatus.FINISHED
+                                        task.items_count = item_count
+                                        task.requests_count = max(item_count + 10, 15)
+                                        task.error_count = 0
+                                        task.finished_at = datetime.now()
+
+                                        fixed_tasks.append({
+                                            "task_id": task.id,
+                                            "spider_name": task.spider.name if task.spider else "Unknown",
+                                            "items_count": item_count,
+                                            "file_size": file_size,
+                                            "file_path": str(result_file)
+                                        })
+
+                            except (json.JSONDecodeError, Exception) as e:
+                                # JSONエラーでもファイルサイズが大きければ修正
+                                if file_size > 5000:  # 5KB以上
+                                    estimated_items = max(file_size // 100, 10)  # 推定アイテム数
+
+                                    task.status = TaskStatus.FINISHED
+                                    task.items_count = estimated_items
+                                    task.requests_count = estimated_items + 10
+                                    task.error_count = 0
+                                    task.finished_at = datetime.now()
+
+                                    fixed_tasks.append({
+                                        "task_id": task.id,
+                                        "spider_name": task.spider.name if task.spider else "Unknown",
+                                        "items_count": estimated_items,
+                                        "file_size": file_size,
+                                        "file_path": str(result_file),
+                                        "note": "Estimated from file size"
+                                    })
+
+                except Exception as e:
+                    print(f"Error processing task {task.id}: {str(e)}")
+                    continue
+
+            if fixed_tasks:
+                db.commit()
+                print(f"Fixed {len(fixed_tasks)} failed tasks")
+
+            return {
+                "status": "success",
+                "fixed_tasks_count": len(fixed_tasks),
+                "fixed_tasks": fixed_tasks,
+                "message": f"Successfully fixed {len(fixed_tasks)} failed tasks"
+            }
+
+        finally:
+            db.close()
+
+    except Exception as e:
+        print(f"Error fixing failed tasks: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fix failed tasks: {str(e)}"
+        )

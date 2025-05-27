@@ -225,10 +225,50 @@ async def create_schedule(schedule: ScheduleCreate, db: Session = Depends(get_db
             detail="Spider not found"
         )
 
-    # Cron式の検証
+    # Cron式の詳細検証
     try:
+        # 基本的なCron式検証
         cron = croniter(schedule.cron_expression, datetime.now())
         next_run = cron.get_next(datetime)
+
+        # 追加の安全性チェック
+        cron_parts = schedule.cron_expression.split()
+        if len(cron_parts) != 5:
+            raise ValueError("Cron expression must have exactly 5 parts")
+
+        # 分の範囲チェック（0-59）
+        minute_part = cron_parts[0]
+        if minute_part != '*' and not minute_part.startswith('*/'):
+            try:
+                minute_val = int(minute_part)
+                if minute_val < 0 or minute_val > 59:
+                    raise ValueError("Minute must be between 0-59")
+            except ValueError:
+                pass  # 複雑な式は croniter に任せる
+
+        # 時間の範囲チェック（0-23）
+        hour_part = cron_parts[1]
+        if hour_part != '*' and not hour_part.startswith('*/'):
+            try:
+                hour_val = int(hour_part)
+                if hour_val < 0 or hour_val > 23:
+                    raise ValueError("Hour must be between 0-23")
+            except ValueError:
+                pass
+
+        # 実行頻度の妥当性チェック（1分未満の実行を防止）
+        if minute_part.startswith('*/'):
+            interval = int(minute_part[2:])
+            if interval == 0:
+                raise ValueError("Execution interval cannot be 0")
+
+        # 次回実行時刻が妥当かチェック
+        if next_run <= datetime.now():
+            # 1秒後の時刻で再計算
+            future_time = datetime.now().replace(second=0, microsecond=0)
+            cron = croniter(schedule.cron_expression, future_time)
+            next_run = cron.get_next(datetime)
+
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -509,4 +549,106 @@ async def get_scheduler_status():
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get scheduler status: {str(e)}"
+        )
+
+@router.post(
+    "/scheduler/health-check",
+    summary="スケジューラ健全性チェック",
+    description="全スケジュールの健全性をチェックし、問題があれば修正します。"
+)
+async def scheduler_health_check(db: Session = Depends(get_db)):
+    """スケジューラの健全性チェックと自動修正"""
+    try:
+        # 全スケジュールを取得
+        schedules = db.query(DBSchedule).all()
+
+        health_report = {
+            "timestamp": datetime.now().isoformat(),
+            "total_schedules": len(schedules),
+            "healthy_schedules": 0,
+            "fixed_schedules": 0,
+            "error_schedules": 0,
+            "issues": [],
+            "fixes": []
+        }
+
+        for schedule in schedules:
+            schedule_issues = []
+            schedule_fixes = []
+
+            # 1. Cron式の検証
+            try:
+                cron = croniter(schedule.cron_expression, datetime.now())
+                next_run = cron.get_next(datetime)
+
+                # 次回実行時刻を更新（古い場合）
+                if not schedule.next_run or schedule.next_run < datetime.now():
+                    old_next_run = schedule.next_run
+                    schedule.next_run = next_run
+                    schedule_fixes.append(f"Updated next_run from {old_next_run} to {next_run}")
+
+            except Exception as e:
+                schedule_issues.append(f"Invalid cron expression: {e}")
+
+            # 2. プロジェクト・スパイダーの存在確認
+            if not schedule.project:
+                schedule_issues.append("Associated project not found")
+            if not schedule.spider:
+                schedule_issues.append("Associated spider not found")
+
+            # 3. 実行頻度の妥当性チェック
+            try:
+                cron_parts = schedule.cron_expression.split()
+                if len(cron_parts) >= 1:
+                    minute_part = cron_parts[0]
+                    if minute_part.startswith('*/'):
+                        interval = int(minute_part[2:])
+                        if interval < 1:
+                            schedule_issues.append("Execution interval too frequent (< 1 minute)")
+                        elif interval > 1440:  # 24時間
+                            schedule_issues.append("Execution interval too long (> 24 hours)")
+            except:
+                pass
+
+            # 4. 最終実行時刻の妥当性
+            if schedule.last_run and schedule.last_run > datetime.now():
+                schedule.last_run = None
+                schedule_fixes.append("Reset invalid last_run time")
+
+            # 結果の集計
+            if schedule_issues:
+                health_report["error_schedules"] += 1
+                health_report["issues"].append({
+                    "schedule_id": schedule.id,
+                    "schedule_name": schedule.name,
+                    "issues": schedule_issues
+                })
+            else:
+                health_report["healthy_schedules"] += 1
+
+            if schedule_fixes:
+                health_report["fixed_schedules"] += 1
+                health_report["fixes"].append({
+                    "schedule_id": schedule.id,
+                    "schedule_name": schedule.name,
+                    "fixes": schedule_fixes
+                })
+
+        # 修正をコミット
+        if health_report["fixed_schedules"] > 0:
+            db.commit()
+
+        # 健全性スコアを計算
+        if health_report["total_schedules"] > 0:
+            health_score = (health_report["healthy_schedules"] / health_report["total_schedules"]) * 100
+            health_report["health_score"] = round(health_score, 1)
+        else:
+            health_report["health_score"] = 100.0
+
+        return health_report
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to perform health check: {str(e)}"
         )

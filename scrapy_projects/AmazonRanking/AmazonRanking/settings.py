@@ -19,15 +19,16 @@ ADDONS = {}
 #USER_AGENT = "AmazonRanking (+http://www.yourdomain.com)"
 
 # Obey robots.txt rules
-ROBOTSTXT_OBEY = True
+ROBOTSTXT_OBEY = False
 
 # Configure maximum concurrent requests performed by Scrapy (default: 16)
-#CONCURRENT_REQUESTS = 32
+CONCURRENT_REQUESTS = 1
 
 # Configure a delay for requests for the same website (default: 0)
 # See https://docs.scrapy.org/en/latest/topics/settings.html#download-delay
 # See also autothrottle settings and docs
-#DOWNLOAD_DELAY = 3
+DOWNLOAD_DELAY = 1.0  # 増加: サーバー負荷軽減
+RANDOMIZE_DOWNLOAD_DELAY = 0.5  # ランダム遅延（0.5-1.5秒）
 # The download delay setting will honor only one of:
 #CONCURRENT_REQUESTS_PER_DOMAIN = 16
 #CONCURRENT_REQUESTS_PER_IP = 16
@@ -39,10 +40,25 @@ ROBOTSTXT_OBEY = True
 #TELNETCONSOLE_ENABLED = False
 
 # Override the default request headers:
-#DEFAULT_REQUEST_HEADERS = {
-#    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-#    "Accept-Language": "en",
-#}
+DEFAULT_REQUEST_HEADERS = {
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "ja",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+}
+
+# タイムアウト設定（予防策）
+DOWNLOAD_TIMEOUT = 30  # 30秒でタイムアウト
+
+# リトライ設定（予防策）
+RETRY_ENABLED = True
+RETRY_TIMES = 3  # 3回までリトライ
+RETRY_HTTP_CODES = [500, 502, 503, 504, 408, 429]  # リトライ対象のHTTPコード
+
+# メモリ管理設定（予防策）
+MEMUSAGE_ENABLED = True
+MEMUSAGE_LIMIT_MB = 512  # 512MBでメモリ制限
+MEMUSAGE_WARNING_MB = 256  # 256MBで警告
+MEMUSAGE_NOTIFY_MAIL = []
 
 # Enable or disable spider middlewares
 # See https://docs.scrapy.org/en/latest/topics/spider-middleware.html
@@ -83,11 +99,18 @@ ROBOTSTXT_OBEY = True
 
 # Enable and configure HTTP caching (disabled by default)
 # See https://docs.scrapy.org/en/latest/topics/downloader-middleware.html#httpcache-middleware-settings
-#HTTPCACHE_ENABLED = True
-#HTTPCACHE_EXPIRATION_SECS = 0
-#HTTPCACHE_DIR = "httpcache"
-#HTTPCACHE_IGNORE_HTTP_CODES = []
-#HTTPCACHE_STORAGE = "scrapy.extensions.httpcache.FilesystemCacheStorage"
+HTTPCACHE_ENABLED = True
+HTTPCACHE_EXPIRATION_SECS = 86400  # 24時間キャッシュ
+HTTPCACHE_DIR = "httpcache"
+HTTPCACHE_IGNORE_HTTP_CODES = []
+HTTPCACHE_STORAGE = "scrapy.extensions.httpcache.FilesystemCacheStorage"
+
+# ログ設定（予防策）
+LOG_LEVEL = 'INFO'
+LOG_FILE = None  # ファイルログは無効（Celeryログに統合）
+
+# 統計情報の詳細化（予防策）
+STATS_CLASS = 'scrapy.statscollectors.MemoryStatsCollector'
 
 # Set settings whose default value is deprecated to a future-proof value
 FEED_EXPORT_ENCODING = "utf-8"

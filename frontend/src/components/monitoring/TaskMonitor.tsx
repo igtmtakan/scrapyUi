@@ -99,7 +99,7 @@ export default function TaskMonitor({ taskId, showAllTasks = false }: TaskMonito
     }
   }
 
-  // プログレス計算
+  // プログレス計算（新方式: pendingアイテム数ベース）
   const calculateProgress = (task: any) => {
     if (task.status === 'FINISHED') return 100
     if (task.status === 'FAILED' || task.status === 'CANCELLED') return 0
@@ -107,10 +107,18 @@ export default function TaskMonitor({ taskId, showAllTasks = false }: TaskMonito
 
     if (task.status === 'RUNNING') {
       if (task.items_count > 0) {
-        return Math.min(95, (task.requests_count / task.items_count) * 100)
-      } else {
-        return 10
+        // pendingアイテム数を推定
+        const pendingItems = Math.max(0, Math.min(
+          60 - task.items_count, // 最大60アイテムと仮定
+          Math.max(task.requests_count - task.items_count, 10) // リクエスト差分または最低10
+        ))
+        const totalEstimated = task.items_count + pendingItems
+
+        if (totalEstimated > 0) {
+          return Math.min(95, (task.items_count / totalEstimated) * 100)
+        }
       }
+      return 10
     }
 
     return 0

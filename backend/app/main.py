@@ -16,7 +16,7 @@ from .middleware.error_middleware import (
     PerformanceLoggingMiddleware
 )
 
-from .api import projects, spiders, tasks, results, schedules, notifications, auth, proxies, ai, admin, script_runner, project_files, performance
+from .api import projects, spiders, tasks, results, schedules, notifications, auth, proxies, ai, admin, script_runner, project_files, performance, system
 # from .api import shell, database_config, extensions  # 一時的に無効化
 from .api.routes import nodejs_integration
 # from .api import settings
@@ -425,6 +425,7 @@ app.include_router(admin.router, tags=["admin"])
 app.include_router(script_runner.router, prefix="/api/script", tags=["script-runner"])
 app.include_router(nodejs_integration.router, prefix="/api/nodejs", tags=["nodejs-integration"])
 app.include_router(performance.router, prefix="/api", tags=["performance"])
+app.include_router(system.router, prefix="/api", tags=["system"])
 # app.include_router(settings.router, prefix="/api/settings", tags=["settings"])
 
 # WebSocketエンドポイント

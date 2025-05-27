@@ -2,16 +2,16 @@ import scrapy
 import json
 
 class UserAgentTestSpider(scrapy.Spider):
-name = "user_agent_test"
+    name = "user_agent_test"
     start_urls = [
         'https://httpbin.org/user-agent',
         'https://httpbin.org/headers',
     ]
-    
+
     def parse(self, response):
         try:
             data = json.loads(response.text)
-            
+
             if 'user-agent' in data:
                 yield {
                     'url': response.url,

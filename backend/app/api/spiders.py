@@ -64,25 +64,30 @@ def update_spider_name_in_code(code: str, spider_name: str) -> str:
 
     updated_code = code
 
-    # 1. name = "..." または name = '...' の形式を検索して置換
+    # 1. name = "..." または name = '...' の形式を検索して置換（インデント保持）
     name_patterns = [
-        r'name\s*=\s*["\'][^"\']*["\']',  # name = "old_name" または name = 'old_name'
-        r'name\s*=\s*"[^"]*"',           # name = "old_name"
-        r"name\s*=\s*'[^']*'"            # name = 'old_name'
+        r'(\s*)name\s*=\s*["\'][^"\']*["\']',  # インデントを含むname = "old_name"
+        r'(\s*)name\s*=\s*"[^"]*"',           # インデントを含むname = "old_name"
+        r"(\s*)name\s*=\s*'[^']*'"            # インデントを含むname = 'old_name'
     ]
 
     name_updated = False
     for pattern in name_patterns:
-        if re.search(pattern, updated_code):
-            updated_code = re.sub(pattern, f'name = "{spider_name}"', updated_code)
+        match = re.search(pattern, updated_code)
+        if match:
+            # 元のインデントを保持して置換
+            indent = match.group(1)
+            updated_code = re.sub(pattern, f'{indent}name = "{spider_name}"', updated_code)
             name_updated = True
+            print(f"🔄 Updated name attribute with preserved indentation: {repr(indent)}")
             break
 
-    # name = が見つからない場合、クラス定義の後に追加
+    # name = が見つからない場合、クラス定義の後に適切なインデントで追加
     if not name_updated:
         class_pattern = r'(class\s+\w+.*?Spider.*?:)'
         if re.search(class_pattern, updated_code):
             updated_code = re.sub(class_pattern, f'\\1\n    name = "{spider_name}"', updated_code)
+            print(f"🔧 Added missing name attribute with proper indentation")
 
     # 2. クラス名を更新（継承関係を確実に保持）
     # より詳細なクラス定義パターンを検出
@@ -139,21 +144,159 @@ def update_spider_name_in_code(code: str, spider_name: str) -> str:
 
     return updated_code
 
-def validate_spider_inheritance(code: str) -> dict:
-    """スパイダーコードの継承関係をバリデーションする"""
+def auto_fix_spider_indentation(code: str) -> tuple[str, list[str]]:
+    """スパイダーコードのインデントエラーを自動修正する"""
+    import re
+
+    if not code:
+        return code, []
+
+    lines = code.split('\n')
+    fixed_lines = []
+    fixes_applied = []
+    in_class = False
+
+    for i, line in enumerate(lines):
+        # クラス定義を検出
+        if re.match(r'^class\s+\w+.*?:', line):
+            in_class = True
+            fixed_lines.append(line)
+            print(f"🔍 Found class definition at line {i+1}: {line.strip()}")
+            continue
+
+        # 空行やコメント行はそのまま
+        if not line.strip() or line.strip().startswith('#'):
+            fixed_lines.append(line)
+            continue
+
+        # import文やfrom文はクラス外
+        if re.match(r'^(import|from)\s+', line):
+            in_class = False
+            fixed_lines.append(line)
+            continue
+
+        # 新しいクラス定義はクラス外
+        if re.match(r'^class\s+', line):
+            in_class = False
+            fixed_lines.append(line)
+            continue
+
+        # クラス内の処理
+        if in_class:
+            # クラス属性（name, allowed_domains, start_urls, custom_settings など）
+            if re.match(r'^\s*(name|allowed_domains|start_urls|custom_settings|handle_httpstatus_list)\s*=', line):
+                stripped_line = line.lstrip()
+                expected_indent = '    '  # 4スペース
+
+                # インデントが正しくない場合
+                if not line.startswith(expected_indent):
+                    fixed_line = expected_indent + stripped_line
+                    fixed_lines.append(fixed_line)
+                    fixes_applied.append(f"Line {i+1}: Fixed indentation for class attribute: {stripped_line.split('=')[0].strip()}")
+                    print(f"🔧 Fixed line {i+1}: '{line.strip()}' -> '{fixed_line.strip()}'")
+                    continue
+                else:
+                    # 既に正しいインデント
+                    fixed_lines.append(line)
+                    continue
+
+            # メソッド定義
+            elif re.match(r'^\s*def\s+', line):
+                stripped_line = line.lstrip()
+                expected_indent = '    '  # 4スペース
+
+                # インデントが正しくない場合
+                if not line.startswith(expected_indent):
+                    fixed_line = expected_indent + stripped_line
+                    fixed_lines.append(fixed_line)
+                    fixes_applied.append(f"Line {i+1}: Fixed indentation for method definition")
+                    print(f"🔧 Fixed line {i+1}: method definition")
+                    continue
+                else:
+                    # 既に正しいインデント
+                    fixed_lines.append(line)
+                    continue
+
+            # その他のクラス内コード（インデントされていない場合は警告のみ）
+            elif line.strip() and not line.startswith(' ') and not line.startswith('\t'):
+                # トップレベルのコードが見つかった場合、クラス外に出たと判断
+                in_class = False
+                fixed_lines.append(line)
+                continue
+
+        # そのまま追加
+        fixed_lines.append(line)
+
+    fixed_code = '\n'.join(fixed_lines)
+    return fixed_code, fixes_applied
+
+def validate_spider_inheritance(code: str, auto_fix: bool = False) -> dict:
+    """スパイダーコードの継承関係とインデントをバリデーションする（自動修正オプション付き）"""
     import re
 
     validation_result = {
         "valid": True,
         "errors": [],
         "warnings": [],
-        "fixes_applied": []
+        "fixes_applied": [],
+        "fixed_code": code
     }
 
     if not code:
         validation_result["valid"] = False
         validation_result["errors"].append("コードが空です")
         return validation_result
+
+    # まず元のコードでエラーを検出
+    original_lines = code.split('\n')
+    for i, line in enumerate(original_lines, 1):
+        # name = の行をチェック
+        if re.match(r'^\s*name\s*=', line):
+            # クラス内の属性なので、インデントが必要
+            if not line.startswith('    ') and not line.startswith('\t'):
+                validation_result["errors"].append(f"Line {i}: 'name' attribute must be indented (class attribute)")
+
+        # クラス定義内の他の属性もチェック
+        if re.match(r'^\s*(allowed_domains|start_urls|custom_settings)\s*=', line):
+            if not line.startswith('    ') and not line.startswith('\t'):
+                validation_result["warnings"].append(f"Line {i}: Class attribute should be indented")
+
+    # 自動修正を実行
+    if auto_fix:
+        fixed_code, fixes_applied = auto_fix_spider_indentation(code)
+        validation_result["fixed_code"] = fixed_code
+        validation_result["fixes_applied"].extend(fixes_applied)
+
+        # 修正後のコードで再検証
+        if fixes_applied:
+            fixed_lines = fixed_code.split('\n')
+            remaining_errors = []
+            remaining_warnings = []
+
+            for i, line in enumerate(fixed_lines, 1):
+                # name = の行をチェック
+                if re.match(r'^\s*name\s*=', line):
+                    if not line.startswith('    ') and not line.startswith('\t'):
+                        remaining_errors.append(f"Line {i}: 'name' attribute must be indented (class attribute)")
+
+                # クラス定義内の他の属性もチェック
+                if re.match(r'^\s*(allowed_domains|start_urls|custom_settings)\s*=', line):
+                    if not line.startswith('    ') and not line.startswith('\t'):
+                        remaining_warnings.append(f"Line {i}: Class attribute should be indented")
+
+            # 修正後にエラーが残っていない場合は有効とする
+            if not remaining_errors:
+                validation_result["valid"] = True
+                validation_result["errors"] = []
+            else:
+                validation_result["valid"] = False
+                validation_result["errors"] = remaining_errors
+
+            validation_result["warnings"] = remaining_warnings
+    else:
+        # 自動修正しない場合、エラーがあれば無効
+        if validation_result["errors"]:
+            validation_result["valid"] = False
 
     # 1. scrapy のインポートをチェック
     has_scrapy_import = 'import scrapy' in code or 'from scrapy' in code
@@ -605,8 +748,12 @@ async def copy_spider(
     print(f"DEBUG: Updated copied spider code name to: {new_name}")
     print(f"DEBUG: Ensured scrapy.Spider inheritance in copied spider")
 
-    # バリデーションを実行
-    validation_result = validate_spider_inheritance(updated_code)
+    # バリデーションと自動修正を実行
+    validation_result = validate_spider_inheritance(updated_code, auto_fix=True)
+    if validation_result["fixes_applied"]:
+        print(f"DEBUG: Auto-fixed issues in copied spider: {validation_result['fixes_applied']}")
+        updated_code = validation_result["fixed_code"]
+
     if validation_result["warnings"]:
         print(f"DEBUG: Copy validation warnings: {validation_result['warnings']}")
     if not validation_result["valid"]:
@@ -679,4 +826,121 @@ async def copy_spider(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to copy spider: {str(e)}"
+        )
+
+@router.post(
+    "/check-all-indentation",
+    summary="全スパイダーファイルのインデントチェック",
+    description="すべてのスパイダーファイルのインデントをチェックし、必要に応じて自動修正します。"
+)
+async def check_all_spider_indentation(
+    auto_fix: bool = False,
+    db: Session = Depends(get_db)
+):
+    """全スパイダーファイルのインデントチェックと自動修正"""
+
+    try:
+        scrapy_service = ScrapyPlaywrightService()
+        results = {
+            "total_spiders": 0,
+            "checked_spiders": 0,
+            "spiders_with_issues": 0,
+            "spiders_fixed": 0,
+            "details": []
+        }
+
+        # データベースからすべてのスパイダーを取得
+        all_spiders = db.query(DBSpider).all()
+        results["total_spiders"] = len(all_spiders)
+
+        for spider in all_spiders:
+            try:
+                # プロジェクト情報を取得
+                project = db.query(DBProject).filter(DBProject.id == spider.project_id).first()
+                if not project:
+                    continue
+
+                # スパイダーファイルのパスを構築
+                spider_file_path = scrapy_service.base_projects_dir / project.path / project.path / "spiders" / f"{spider.name}.py"
+
+                spider_result = {
+                    "spider_name": spider.name,
+                    "project_name": project.name,
+                    "file_path": str(spider_file_path),
+                    "exists": spider_file_path.exists(),
+                    "issues_found": [],
+                    "fixes_applied": [],
+                    "status": "checked"
+                }
+
+                # ファイルが存在する場合のみチェック
+                if spider_file_path.exists():
+                    try:
+                        # ファイルからコードを読み取り
+                        with open(spider_file_path, 'r', encoding='utf-8') as f:
+                            file_code = f.read()
+
+                        # バリデーションと自動修正を実行
+                        validation_result = validate_spider_inheritance(file_code, auto_fix=auto_fix)
+
+                        spider_result["issues_found"] = validation_result["errors"] + validation_result["warnings"]
+                        spider_result["fixes_applied"] = validation_result["fixes_applied"]
+
+                        if validation_result["errors"] or validation_result["warnings"]:
+                            results["spiders_with_issues"] += 1
+
+                        # 自動修正が適用された場合、ファイルを更新
+                        if auto_fix and validation_result["fixes_applied"]:
+                            try:
+                                # ファイルシステムに保存
+                                scrapy_service.save_spider_code(project.path, spider.name, validation_result["fixed_code"])
+
+                                # データベースも更新
+                                spider.code = validation_result["fixed_code"]
+                                db.commit()
+
+                                results["spiders_fixed"] += 1
+                                spider_result["status"] = "fixed"
+
+                                print(f"✅ Fixed spider: {spider.name} ({len(validation_result['fixes_applied'])} fixes)")
+
+                            except Exception as save_error:
+                                spider_result["status"] = "fix_failed"
+                                spider_result["error"] = f"Failed to save fixes: {str(save_error)}"
+                                print(f"❌ Failed to save fixes for {spider.name}: {save_error}")
+
+                    except Exception as read_error:
+                        spider_result["status"] = "read_error"
+                        spider_result["error"] = f"Failed to read file: {str(read_error)}"
+                        print(f"❌ Failed to read {spider.name}: {read_error}")
+
+                else:
+                    spider_result["status"] = "file_not_found"
+                    spider_result["error"] = "Spider file not found in filesystem"
+
+                results["details"].append(spider_result)
+                results["checked_spiders"] += 1
+
+            except Exception as spider_error:
+                print(f"❌ Error processing spider {spider.name}: {spider_error}")
+                results["details"].append({
+                    "spider_name": spider.name,
+                    "status": "error",
+                    "error": str(spider_error)
+                })
+
+        # サマリーを出力
+        print(f"📊 Indentation Check Summary:")
+        print(f"   Total spiders: {results['total_spiders']}")
+        print(f"   Checked: {results['checked_spiders']}")
+        print(f"   With issues: {results['spiders_with_issues']}")
+        print(f"   Fixed: {results['spiders_fixed']}")
+
+        return results
+
+    except Exception as e:
+        print(f"❌ Error in check_all_spider_indentation: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to check spider indentation: {str(e)}"
         )

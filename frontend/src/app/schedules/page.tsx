@@ -55,9 +55,11 @@ export default function SchedulesPage() {
   const [taskProgress, setTaskProgress] = useState<{[scheduleId: string]: any}>({})
   const [autoRefresh, setAutoRefresh] = useState(true)
 
-  // データ取得
+  // データ取得（SSR対応）
   useEffect(() => {
-    loadSchedules()
+    if (typeof window !== 'undefined') {
+      loadSchedules()
+    }
   }, [])
 
   // 統計情報の更新
@@ -65,8 +67,10 @@ export default function SchedulesPage() {
     updateStats()
   }, [schedules, taskProgress])
 
-  // 自動更新の設定
+  // 自動更新の設定（SSR対応）
   useEffect(() => {
+    if (typeof window === 'undefined') return
+
     let interval: NodeJS.Timeout | null = null
 
     if (autoRefresh) {
@@ -83,9 +87,9 @@ export default function SchedulesPage() {
     }
   }, [autoRefresh])
 
-  // 初回タスク進行状況取得
+  // 初回タスク進行状況取得（SSR対応）
   useEffect(() => {
-    if (schedules.length > 0) {
+    if (typeof window !== 'undefined' && schedules.length > 0) {
       loadTaskProgress()
     }
   }, [schedules])
@@ -130,17 +134,33 @@ export default function SchedulesPage() {
     try {
       const progressData: {[scheduleId: string]: any} = {}
 
+      // 認証トークンの取得（SSR対応）
+      const getAuthToken = () => {
+        if (typeof window !== 'undefined') {
+          return localStorage.getItem('access_token')
+        }
+        return null
+      }
+
+      const authToken = getAuthToken()
+      if (!authToken) {
+        console.warn('No auth token available for task progress loading')
+        return
+      }
+
       // 各スケジュールの最新タスクを取得
       for (const schedule of schedules) {
         try {
-          const response = await fetch(
-            `/api/tasks/?project_id=${schedule.project_id}&spider_id=${schedule.spider_id}&limit=1&status=RUNNING,PENDING`,
-            {
-              headers: {
-                'Authorization': `Bearer ${localStorage.getItem('access_token')}`
-              }
-            }
-          )
+          const apiUrl = `${window.location.origin}/api/tasks/?project_id=${schedule.project_id}&spider_id=${schedule.spider_id}&limit=1&status=RUNNING,PENDING`
+
+          const response = await fetch(apiUrl, {
+            method: 'GET',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${authToken}`
+            },
+            credentials: 'include'
+          })
 
           if (response.ok) {
             const tasks = await response.json()
@@ -162,9 +182,26 @@ export default function SchedulesPage() {
                 }
               }
             }
+          } else {
+            // HTTPエラーの詳細ログ
+            const errorText = await response.text().catch(() => 'Unknown error')
+            console.error(`HTTP ${response.status} for schedule ${schedule.id}:`, errorText)
+
+            // 401エラーの場合は認証エラー
+            if (response.status === 401) {
+              console.warn('Authentication failed, redirecting to login')
+              // 必要に応じてログインページにリダイレクト
+              // window.location.href = '/login'
+            }
           }
         } catch (error) {
-          console.error(`Failed to get task progress for schedule ${schedule.id}:`, error)
+          // ネットワークエラーやその他のエラー
+          console.error(`Network error for schedule ${schedule.id}:`, error)
+
+          // エラーの詳細を表示
+          if (error instanceof TypeError && error.message.includes('fetch')) {
+            console.error('Fetch failed - possible network or CORS issue')
+          }
         }
       }
 
@@ -274,11 +311,23 @@ export default function SchedulesPage() {
   // 結果ダウンロード
   const handleDownloadResults = async (schedule: Schedule) => {
     try {
+      // 認証トークンの取得（SSR対応）
+      const authToken = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null
+      if (!authToken) {
+        alert('認証が必要です。ログインしてください。')
+        return
+      }
+
       // 最新のタスクを取得してダウンロード
-      const response = await fetch(`/api/tasks?project_id=${schedule.project_id}&spider_id=${schedule.spider_id}&limit=1`, {
+      const apiUrl = `${window.location.origin}/api/tasks?project_id=${schedule.project_id}&spider_id=${schedule.spider_id}&limit=1`
+
+      const response = await fetch(apiUrl, {
+        method: 'GET',
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('access_token')}`
-        }
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authToken}`
+        },
+        credentials: 'include'
       })
 
       if (response.ok) {
@@ -600,17 +649,43 @@ export default function SchedulesPage() {
                           <div className="w-full bg-gray-600 rounded-full h-3 mb-2">
                             <div className="bg-gradient-to-r from-blue-500 to-green-500 h-3 rounded-full transition-all duration-500 flex items-center justify-center text-xs font-bold text-white"
                                  style={{
-                                   width: `${Math.min(100, Math.max(5,
-                                     taskProgress[schedule.id].requestsCount > 0
-                                       ? (taskProgress[schedule.id].itemsScraped / taskProgress[schedule.id].requestsCount) * 100
-                                       : taskProgress[schedule.id].elapsedTime > 0 ? Math.min(95, (taskProgress[schedule.id].elapsedTime / 60) * 10) : 5
-                                   ))}%`
+                                   width: `${Math.min(100, Math.max(5, (() => {
+                                     const items = taskProgress[schedule.id].itemsScraped;
+                                     if (items > 0) {
+                                       // pendingアイテム数を推定
+                                       const pendingItems = Math.max(0, Math.min(
+                                         60 - items, // 最大60アイテムと仮定
+                                         Math.max(taskProgress[schedule.id].requestsCount - items, 10) // リクエスト差分または最低10
+                                       ));
+                                       const totalEstimated = items + pendingItems;
+                                       return totalEstimated > 0 ? (items / totalEstimated) * 100 : 5;
+                                     }
+                                     return taskProgress[schedule.id].elapsedTime > 0 ? Math.min(95, (taskProgress[schedule.id].elapsedTime / 60) * 10) : 5;
+                                   })()))}%`
                                  }}>
-                              {taskProgress[schedule.id].requestsCount > 0
-                                ? `${Math.round((taskProgress[schedule.id].itemsScraped / taskProgress[schedule.id].requestsCount) * 100)}%`
+                              {(() => {
+                                const items = taskProgress[schedule.id].itemsScraped;
+                                if (items > 0) {
+                                  const pendingItems = Math.max(0, Math.min(60 - items, Math.max(taskProgress[schedule.id].requestsCount - items, 10)));
+                                  const totalEstimated = items + pendingItems;
+                                  return totalEstimated > 0 ? `${Math.round((items / totalEstimated) * 100)}%` : '5%';
+                                }
+                                return '5%';
+                              })()}
                                 : `${Math.min(95, Math.round((taskProgress[schedule.id].elapsedTime / 60) * 10))}%`
                               }
                             </div>
+                          </div>
+                        )}
+
+                        {/* 新しいプログレスバーの説明 */}
+                        {taskProgress[schedule.id].status === 'running' && taskProgress[schedule.id].itemsScraped > 0 && (
+                          <div className="text-xs text-gray-600 mt-1">
+                            進行状況 = 現在のアイテム数({taskProgress[schedule.id].itemsScraped}) ÷ 推定総アイテム数
+                            <br />
+                            <span className="text-gray-700">
+                              (リクエスト数: {taskProgress[schedule.id].requestsCount}, 推定残り: {Math.max(0, Math.min(60 - taskProgress[schedule.id].itemsScraped, Math.max(taskProgress[schedule.id].requestsCount - taskProgress[schedule.id].itemsScraped, 10)))})
+                            </span>
                           </div>
                         )}
 
@@ -670,14 +745,22 @@ export default function SchedulesPage() {
                           </div>
                         </div>
 
-                        {/* 完了タスクの進行状況バー */}
-                        {schedule.latest_task.status === 'FINISHED' && schedule.latest_task.requests_count > 0 && (
+                        {/* 完了タスクの進行状況バー（新方式） */}
+                        {schedule.latest_task.status === 'FINISHED' && schedule.latest_task.items_count > 0 && (
                           <div className="w-full bg-gray-600 rounded-full h-2 mb-2">
                             <div className="bg-gradient-to-r from-blue-500 to-green-500 h-2 rounded-full transition-all duration-500 flex items-center justify-center text-xs font-bold text-white"
                                  style={{
-                                   width: `${Math.min(100, (schedule.latest_task.items_count / schedule.latest_task.requests_count) * 100)}%`
+                                   width: '100%' // 完了タスクは常に100%
                                  }}>
+                              100%
                             </div>
+                          </div>
+                        )}
+
+                        {/* 完了タスクの詳細説明 */}
+                        {schedule.latest_task.status === 'FINISHED' && schedule.latest_task.items_count > 0 && (
+                          <div className="text-xs text-gray-600 mt-1">
+                            完了: {schedule.latest_task.items_count}アイテム取得 ({schedule.latest_task.requests_count}リクエスト)
                           </div>
                         )}
 

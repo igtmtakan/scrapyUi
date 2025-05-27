@@ -11,7 +11,22 @@ from ..database import SessionLocal, Task as DBTask, Project as DBProject, Spide
 from ..services.scrapy_service import ScrapyPlaywrightService
 from ..websocket.manager import manager
 
-@celery_app.task(bind=True)
+
+def _safe_websocket_notify(task_id: str, data: dict):
+    """Celeryワーカー内で安全にWebSocket通知を送信"""
+    try:
+        # イベントループが存在するかチェック
+        loop = asyncio.get_running_loop()
+        # 新しいタスクとして非同期実行を試行
+        asyncio.create_task(manager.send_task_update(task_id, data))
+    except RuntimeError:
+        # Celeryワーカー内ではイベントループが存在しないため、ログ出力のみ
+        print(f"📡 WebSocket notification skipped (Celery worker): Task {task_id} - {data.get('status', 'update')}")
+    except Exception as e:
+        # その他のエラーもログ出力のみ
+        print(f"📡 WebSocket notification error: {str(e)}")
+
+@celery_app.task(bind=True, soft_time_limit=1800, time_limit=2100)  # 30分のソフトタイムアウト、35分のハードタイムアウト
 def run_spider_task(self, project_id: str, spider_id: str, settings: dict = None):
     """
     Celeryタスクとしてスパイダーを実行
@@ -25,6 +40,9 @@ def run_spider_task(self, project_id: str, spider_id: str, settings: dict = None
         spider = db.query(DBSpider).filter(DBSpider.id == spider_id).first()
 
         if not project or not spider:
+            print(f"❌ Project or Spider not found:")
+            print(f"   Project ID: {project_id} -> Found: {project is not None}")
+            print(f"   Spider ID: {spider_id} -> Found: {spider is not None}")
             raise Exception("Project or Spider not found")
 
         # タスクレコードを作成
@@ -41,17 +59,12 @@ def run_spider_task(self, project_id: str, spider_id: str, settings: dict = None
         db.add(db_task)
         db.commit()
 
-        # WebSocketで開始通知（Celeryワーカー内では非同期処理をスキップ）
-        try:
-            loop = asyncio.get_running_loop()
-            asyncio.create_task(manager.send_task_update(task_id, {
-                "status": "RUNNING",
-                "started_at": datetime.now().isoformat(),
-                "message": f"Started spider {spider.name}"
-            }))
-        except RuntimeError:
-            # イベントループが動作していない場合はスキップ
-            print(f"📡 WebSocket notification skipped (no event loop): Task {task_id} started")
+        # WebSocketで開始通知（Celeryワーカー内では安全にスキップ）
+        _safe_websocket_notify(task_id, {
+            "status": "RUNNING",
+            "started_at": datetime.now().isoformat(),
+            "message": f"Started spider {spider.name}"
+        })
 
         # Scrapyサービスでスパイダーを実行
         scrapy_service = ScrapyPlaywrightService()
@@ -64,16 +77,13 @@ def run_spider_task(self, project_id: str, spider_id: str, settings: dict = None
             db_task.error_count = error_count
             db.commit()
 
-            # WebSocket通知（Celeryワーカー内では非同期処理をスキップ）
-            try:
-                asyncio.create_task(manager.send_task_update(task_id, {
-                    "items_count": items_count,
-                    "requests_count": requests_count,
-                    "error_count": error_count,
-                    "progress": min(100, (items_count / 100) * 100) if items_count > 0 else 0
-                }))
-            except RuntimeError:
-                print(f"📡 WebSocket progress update skipped: {items_count} items, {requests_count} requests")
+            # WebSocket通知（Celeryワーカー内では安全にスキップ）
+            _safe_websocket_notify(task_id, {
+                "items_count": items_count,
+                "requests_count": requests_count,
+                "error_count": error_count,
+                "progress": min(100, (items_count / 100) * 100) if items_count > 0 else 0
+            })
 
         # ログコールバック
         def log_callback(level, message):
@@ -114,15 +124,12 @@ def run_spider_task(self, project_id: str, spider_id: str, settings: dict = None
         db_task.status = TaskStatus.RUNNING
         db.commit()
 
-        # 開始通知（Celeryワーカー内では非同期処理をスキップ）
-        try:
-            asyncio.create_task(manager.send_task_update(task_id, {
-                "status": "RUNNING",
-                "started_at": datetime.now().isoformat(),
-                "message": f"Spider {spider.name} started successfully"
-            }))
-        except RuntimeError:
-            print(f"📡 WebSocket start notification skipped: Task {task_id} started")
+        # 開始通知（Celeryワーカー内では安全にスキップ）
+        _safe_websocket_notify(task_id, {
+            "status": "RUNNING",
+            "started_at": datetime.now().isoformat(),
+            "message": f"Spider {spider.name} started successfully"
+        })
 
         return {
             "status": "started",
@@ -133,6 +140,16 @@ def run_spider_task(self, project_id: str, spider_id: str, settings: dict = None
         }
 
     except Exception as e:
+        # 詳細なエラー情報を収集
+        import traceback
+        error_details = {
+            'error_type': type(e).__name__,
+            'error_message': str(e),
+            'traceback': traceback.format_exc(),
+            'task_id': task_id,
+            'timestamp': datetime.now().isoformat()
+        }
+
         # エラー処理 - アイテム数・リクエスト数を保持
         if 'db_task' in locals():
             # 現在の進行状況を保持してからエラー状態に更新
@@ -146,17 +163,40 @@ def run_spider_task(self, project_id: str, spider_id: str, settings: dict = None
             db_task.items_count = current_items
             db_task.requests_count = current_requests
             db_task.error_count = current_errors + 1  # エラーカウントを増加
+
+            # エラー詳細をsettingsに保存
+            if not db_task.settings:
+                db_task.settings = {}
+            db_task.settings['error_details'] = error_details
+
             db.commit()
 
-            print(f"❌ Task {task_id} failed with error: {str(e)}")
+            print(f"❌ Task {task_id} failed with detailed error:")
+            print(f"   Error Type: {error_details['error_type']}")
+            print(f"   Error Message: {error_details['error_message']}")
             print(f"   Preserved progress: {current_items} items, {current_requests} requests, {current_errors + 1} errors")
+            print(f"   Full traceback saved to database")
+
+        # エラーログをデータベースに保存
+        try:
+            error_log = DBLog(
+                id=str(uuid.uuid4()),
+                task_id=task_id,
+                level='ERROR',
+                message=f"Task failed: {error_details['error_type']}: {error_details['error_message']}"
+            )
+            db.add(error_log)
+            db.commit()
+        except Exception as log_error:
+            print(f"Failed to save error log: {str(log_error)}")
 
         # エラー通知（Celeryワーカー内では非同期処理をスキップ）
         try:
             asyncio.create_task(manager.send_task_update(task_id, {
                 "status": "FAILED",
                 "finished_at": datetime.now().isoformat(),
-                "error": str(e),
+                "error": error_details['error_message'],
+                "error_type": error_details['error_type'],
                 "items_count": current_items if 'current_items' in locals() else 0,
                 "requests_count": current_requests if 'current_requests' in locals() else 0,
                 "error_count": (current_errors + 1) if 'current_errors' in locals() else 1
@@ -164,7 +204,10 @@ def run_spider_task(self, project_id: str, spider_id: str, settings: dict = None
         except RuntimeError:
             print(f"📡 WebSocket error notification skipped: Task {task_id} failed with error: {str(e)}")
 
-        raise e
+        # 詳細なエラー情報を含む例外を再発生
+        enhanced_error = Exception(f"Task {task_id} failed: {error_details['error_type']}: {error_details['error_message']}")
+        enhanced_error.error_details = error_details
+        raise enhanced_error
 
     finally:
         db.close()

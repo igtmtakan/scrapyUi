@@ -1,0 +1,105 @@
+version: '3.8'
+
+services:
+  # Redis (Celeryブローカー)
+  redis:
+    image: redis:7-alpine
+    container_name: scrapyui-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # バックエンド (FastAPI)
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: scrapyui-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=sqlite:///./database/scrapy_ui.db
+    volumes:
+      - ./backend:/app
+      - ./scrapy_projects:/app/scrapy_projects
+    depends_on:
+      - redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Celeryワーカー
+  celery-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: scrapyui-celery-worker
+    command: python start_celery_worker.py
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=sqlite:///./database/scrapy_ui.db
+    volumes:
+      - ./backend:/app
+      - ./scrapy_projects:/app/scrapy_projects
+    depends_on:
+      - redis
+      - backend
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "from app.celery_app import celery_app; print('OK')"]
+      interval: 60s
+      timeout: 30s
+      retries: 3
+
+  # フロントエンド (Next.js)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: scrapyui-frontend
+    ports:
+      - "4000:4000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  # Node.js Puppeteerサービス
+  nodejs-service:
+    build:
+      context: ./nodejs-service
+      dockerfile: Dockerfile
+    container_name: scrapyui-nodejs
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./nodejs-service:/app
+      - /app/node_modules
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  redis_data:
+
+networks:
+  default:
+    name: scrapyui-network

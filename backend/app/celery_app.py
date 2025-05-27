@@ -41,6 +41,7 @@ celery_app.conf.beat_schedule = {
 # タスクルーティング
 celery_app.conf.task_routes = {
     'app.tasks.scrapy_tasks.run_spider_task': {'queue': 'scrapy'},
+    'app.tasks.scrapy_tasks.scheduled_spider_run': {'queue': 'scrapy'},  # スケジュール実行もscrapyキューに配置
     'app.tasks.scrapy_tasks.cleanup_old_results': {'queue': 'maintenance'},
     'app.tasks.scrapy_tasks.system_health_check': {'queue': 'monitoring'},
 }

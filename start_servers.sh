@@ -23,6 +23,8 @@ pkill -f "next.*dev" 2>/dev/null || true
 pkill -f "npm.*dev" 2>/dev/null || true
 pkill -f "node.*app.js" 2>/dev/null || true
 pkill -f "nodemon.*app.js" 2>/dev/null || true
+pkill -f "celery.*worker" 2>/dev/null || true
+pkill -f "start_celery_worker.py" 2>/dev/null || true
 
 # ポートが使用中の場合は強制停止
 echo "🔧 ポート ${BACKEND_PORT}, ${FRONTEND_PORT}, ${NODEJS_PORT} をクリアしています..."
@@ -37,6 +39,15 @@ echo "🔧 バックエンドサーバーを起動中 (ポート: ${BACKEND_PORT
 cd backend
 python3 -m uvicorn app.main:app --host 0.0.0.0 --port ${BACKEND_PORT} --reload &
 BACKEND_PID=$!
+cd ..
+
+sleep 3
+
+# Celeryワーカーを起動
+echo "⚙️ Celeryワーカーを起動中..."
+cd backend
+python3 start_celery_worker.py &
+CELERY_PID=$!
 cd ..
 
 sleep 3
@@ -64,6 +75,9 @@ echo "✅ サーバー起動状況を確認中..."
 echo "📊 バックエンド (http://localhost:${BACKEND_PORT}):"
 curl -s "http://localhost:${BACKEND_PORT}/health" | jq . || echo "❌ バックエンドが応答しません"
 
+echo "⚙️ Celeryワーカー:"
+ps aux | grep -E "(celery.*worker|start_celery_worker)" | grep -v grep | head -1 && echo "✅ Celeryワーカーが動作中" || echo "❌ Celeryワーカーが動作していません"
+
 echo "🌐 フロントエンド (http://localhost:${FRONTEND_PORT}):"
 curl -s -I "http://localhost:${FRONTEND_PORT}" | head -1 || echo "❌ フロントエンドが応答しません"
 
@@ -86,9 +100,10 @@ echo "🛑 サーバーを停止するには Ctrl+C を押してください"
 echo $BACKEND_PID > .backend.pid
 echo $FRONTEND_PID > .frontend.pid
 echo $NODEJS_PID > .nodejs.pid
+echo $CELERY_PID > .celery.pid
 
 # 終了シグナルをキャッチしてプロセスを停止
-trap 'echo "🛑 サーバーを停止中..."; kill $BACKEND_PID $FRONTEND_PID $NODEJS_PID 2>/dev/null; rm -f .backend.pid .frontend.pid .nodejs.pid; exit' INT TERM
+trap 'echo "🛑 サーバーを停止中..."; kill $BACKEND_PID $FRONTEND_PID $NODEJS_PID $CELERY_PID 2>/dev/null; rm -f .backend.pid .frontend.pid .nodejs.pid .celery.pid; exit' INT TERM
 
 # プロセスが終了するまで待機
 wait
