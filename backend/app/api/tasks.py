@@ -37,6 +37,7 @@ async def get_tasks(
     project_id: str = None,
     spider_id: str = None,
     status: str = None,
+    limit: int = Query(default=None, description="取得するタスク数の上限"),
     db: Session = Depends(get_db)
     # current_user: User = Depends(get_current_active_user)  # 一時的に無効化
 ):
@@ -63,9 +64,16 @@ async def get_tasks(
     if spider_id:
         query = query.filter(DBTask.spider_id == spider_id)
     if status:
-        query = query.filter(DBTask.status == status)
+        # 複数のステータスをカンマ区切りで指定可能
+        status_list = [s.strip().upper() for s in status.split(',')]
+        query = query.filter(DBTask.status.in_(status_list))
 
-    tasks = query.order_by(DBTask.created_at.desc()).all()
+    query = query.order_by(DBTask.created_at.desc())
+
+    if limit:
+        query = query.limit(limit)
+
+    tasks = query.all()
 
     # 各タスクにproject/spider情報を追加
     tasks_with_details = []
@@ -167,7 +175,9 @@ async def get_task(
         project = type('DummyProject', (), {
             'id': task.project_id,
             'name': 'Test Project',
-            'description': 'Test project for testing'
+            'description': 'Test project for testing',
+            'path': '/tmp/test',
+            'created_at': datetime.now(timezone.utc)
         })()
 
     if not spider:
@@ -175,7 +185,10 @@ async def get_task(
         spider = type('DummySpider', (), {
             'id': task.spider_id,
             'name': 'test_spider',
-            'description': 'Test spider for testing'
+            'description': 'Test spider for testing',
+            'code': '# Test spider code',
+            'project_id': task.project_id,
+            'created_at': datetime.now(timezone.utc)
         })()
 
     task_dict = task.__dict__.copy()
@@ -317,10 +330,22 @@ async def create_task(
             db.commit()
 
         except Exception as e:
-            # 実行に失敗した場合はステータスを失敗に更新
+            # 実行に失敗した場合はステータスを失敗に更新（進行状況は保持）
+            current_items = db_task.items_count or 0
+            current_requests = db_task.requests_count or 0
+            current_errors = db_task.error_count or 0
+
             db_task.status = TaskStatus.FAILED
+            db_task.finished_at = datetime.now()
+            # 進行状況データを保持
+            db_task.items_count = current_items
+            db_task.requests_count = current_requests
+            db_task.error_count = current_errors + 1
             db.commit()
+
             print(f"Warning: Failed to start spider: {str(e)}")
+            print(f"Preserved progress: {current_items} items, {current_requests} requests, {current_errors + 1} errors")
+
             # テスト環境ではエラーを投げずに続行
             if not os.getenv("TESTING", False):
                 raise HTTPException(
@@ -623,8 +648,8 @@ async def get_task_logs(
     task_id: str,
     limit: int = 100,
     level: str = None,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
+    db: Session = Depends(get_db)
+    # current_user: User = Depends(get_current_active_user)  # 一時的に無効化
 ):
     """
     ## タスクログ取得
@@ -647,41 +672,291 @@ async def get_task_logs(
     #     DBTask.id == task_id,
     #     DBTask.user_id == current_user.id
     # ).first()
+
     if not task:
-        # テスト環境ではダミーログを返す
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found"
+        )
+
+    try:
+        # まずデータベースからログを取得
+        from ..database import Log as DBLog
+        query = db.query(DBLog).filter(DBLog.task_id == task_id)
+
+        if level:
+            query = query.filter(DBLog.level == level.upper())
+
+        db_logs = query.order_by(DBLog.timestamp.desc()).limit(limit).all()
+
+        logs = [
+            {
+                "id": log.id,
+                "level": log.level,
+                "message": log.message,
+                "timestamp": log.timestamp.isoformat()
+            }
+            for log in db_logs
+        ]
+
+        # データベースにログがない場合、ログファイルから読み取りを試行
+        if not logs:
+            logs = _get_logs_from_file(task_id, task, db, limit, level)
+
+        return logs
+
+    except Exception as e:
+        # エラーが発生した場合はダミーログを返す
+        print(f"Error getting logs for task {task_id}: {str(e)}")
         return [
             {
-                "id": "test-log-1",
-                "level": "INFO",
-                "message": "Spider started successfully",
-                "timestamp": datetime.now(timezone.utc).isoformat()
-            },
-            {
-                "id": "test-log-2",
-                "level": "INFO",
-                "message": "Processing completed",
+                "id": f"error-log-{task_id}",
+                "level": "ERROR",
+                "message": f"Failed to retrieve logs: {str(e)}",
                 "timestamp": datetime.now(timezone.utc).isoformat()
             }
         ]
 
-    # ログを取得
-    from ..database import Log as DBLog
-    query = db.query(DBLog).filter(DBLog.task_id == task_id)
+def _get_logs_from_file(task_id: str, task, db: Session, limit: int = 100, level: str = None):
+    """ログファイルからログを読み取る"""
+    try:
+        # プロジェクト情報を取得
+        project = db.query(DBProject).filter(DBProject.id == task.project_id).first()
+        if not project:
+            return []
 
-    if level:
-        query = query.filter(DBLog.level == level.upper())
+        # ログファイルのパスを構築
+        scrapy_service = ScrapyPlaywrightService()
 
-    logs = query.order_by(DBLog.timestamp.desc()).limit(limit).all()
+        # 複数の可能なログファイルパスを試行
+        possible_log_paths = [
+            scrapy_service.base_projects_dir / project.path / project.path / f"logs_{task_id}.log",
+            scrapy_service.base_projects_dir / project.path / f"logs_{task_id}.log",
+            scrapy_service.base_projects_dir / project.path / "logs" / f"{task_id}.log",
+            scrapy_service.base_projects_dir / project.path / "logs" / f"scrapy_{task_id}.log",
+        ]
 
-    return [
-        {
-            "id": log.id,
-            "level": log.level,
-            "message": log.message,
-            "timestamp": log.timestamp.isoformat()
+        log_file_path = None
+        for path in possible_log_paths:
+            if path.exists():
+                log_file_path = path
+                break
+
+        if not log_file_path:
+            # ログファイルが見つからない場合は詳細な基本情報を返す
+            logs = []
+
+            # タスクの基本情報
+            logs.append({
+                "id": f"info-{task_id}-1",
+                "level": "INFO",
+                "message": f"Task {task_id[:8]}... started",
+                "timestamp": (task.started_at or task.created_at or datetime.now(timezone.utc)).isoformat()
+            })
+
+            # 結果ファイルの確認
+            try:
+                import glob
+                patterns = [
+                    str(scrapy_service.base_projects_dir / project.path / f"results_{task_id}.json"),
+                    str(scrapy_service.base_projects_dir / project.path / project.path / f"results_{task_id}.json"),
+                    str(scrapy_service.base_projects_dir / "**" / f"results_{task_id}.json")
+                ]
+
+                result_files = []
+                for pattern in patterns:
+                    result_files.extend(glob.glob(pattern, recursive=True))
+
+                if result_files:
+                    result_file = Path(result_files[0])
+                    file_size = result_file.stat().st_size
+
+                    logs.append({
+                        "id": f"info-{task_id}-2",
+                        "level": "INFO",
+                        "message": f"Results file found: {result_file.name} ({file_size} bytes)",
+                        "timestamp": (task.started_at or task.created_at or datetime.now(timezone.utc)).isoformat()
+                    })
+
+                    # ファイル内容を確認
+                    if file_size > 0:
+                        try:
+                            with open(result_file, 'r', encoding='utf-8') as f:
+                                data = json.load(f)
+                                item_count = len(data) if isinstance(data, list) else 1
+
+                                logs.append({
+                                    "id": f"info-{task_id}-3",
+                                    "level": "INFO",
+                                    "message": f"Successfully scraped {item_count} items",
+                                    "timestamp": (task.finished_at or datetime.now(timezone.utc)).isoformat()
+                                })
+
+                                # FAILEDだが実際にはデータがある場合
+                                if hasattr(task, 'status') and str(task.status) == 'FAILED' and item_count > 0:
+                                    logs.append({
+                                        "id": f"warning-{task_id}-1",
+                                        "level": "WARNING",
+                                        "message": f"Task marked as FAILED but {item_count} items were successfully scraped",
+                                        "timestamp": (task.finished_at or datetime.now(timezone.utc)).isoformat()
+                                    })
+                        except Exception as e:
+                            logs.append({
+                                "id": f"error-{task_id}-1",
+                                "level": "ERROR",
+                                "message": f"Failed to read results file: {str(e)}",
+                                "timestamp": (task.finished_at or datetime.now(timezone.utc)).isoformat()
+                            })
+                else:
+                    logs.append({
+                        "id": f"warning-{task_id}-2",
+                        "level": "WARNING",
+                        "message": "No results file found",
+                        "timestamp": (task.finished_at or datetime.now(timezone.utc)).isoformat()
+                    })
+
+            except Exception as e:
+                logs.append({
+                    "id": f"error-{task_id}-2",
+                    "level": "ERROR",
+                    "message": f"Error checking results: {str(e)}",
+                    "timestamp": datetime.now(timezone.utc).isoformat()
+                })
+
+            # タスクの最終状態
+            final_status = task.status.value if hasattr(task.status, 'value') else str(task.status)
+            logs.append({
+                "id": f"info-{task_id}-4",
+                "level": "ERROR" if final_status == "FAILED" else "INFO",
+                "message": f"Task completed with status: {final_status}",
+                "timestamp": (task.finished_at or datetime.now(timezone.utc)).isoformat()
+            })
+
+            return logs
+
+        # ログファイルを読み取り
+        logs = []
+        with open(log_file_path, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+
+        # ログ行を解析
+        for i, line in enumerate(lines[-limit:]):  # 最新のlimit行を取得
+            line = line.strip()
+            if not line:
+                continue
+
+            # ログレベルを抽出
+            log_level = "INFO"
+            if "ERROR" in line.upper():
+                log_level = "ERROR"
+            elif "WARNING" in line.upper() or "WARN" in line.upper():
+                log_level = "WARNING"
+            elif "DEBUG" in line.upper():
+                log_level = "DEBUG"
+
+            # レベルフィルタリング
+            if level and log_level != level.upper():
+                continue
+
+            logs.append({
+                "id": f"file-log-{task_id}-{i}",
+                "level": log_level,
+                "message": line,
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            })
+
+        return logs[::-1]  # 新しい順に並び替え
+
+    except Exception as e:
+        print(f"Error reading log file for task {task_id}: {str(e)}")
+        return []
+
+@router.post(
+    "/fix-failed-tasks",
+    summary="FAILEDタスクの修正",
+    description="実際にはデータを取得しているがFAILEDとマークされているタスクを修正します。"
+)
+async def fix_failed_tasks(
+    db: Session = Depends(get_db)
+    # current_user: User = Depends(get_current_active_user)  # 一時的に無効化
+):
+    """
+    ## FAILEDタスクの修正
+
+    実際にはデータを取得しているがFAILEDとマークされているタスクを修正します。
+
+    ### レスポンス
+    - **200**: 修正結果を返します
+    - **500**: サーバーエラー
+    """
+    try:
+        # FAILEDタスクを取得
+        failed_tasks = db.query(DBTask).filter(DBTask.status == TaskStatus.FAILED).all()
+
+        fixed_count = 0
+        checked_count = 0
+
+        for task in failed_tasks:
+            checked_count += 1
+
+            # プロジェクト情報を取得
+            project = db.query(DBProject).filter(DBProject.id == task.project_id).first()
+            if not project:
+                continue
+
+            # 結果ファイルを確認
+            try:
+                scrapy_service = ScrapyPlaywrightService()
+                import glob
+
+                patterns = [
+                    str(scrapy_service.base_projects_dir / project.path / f"results_{task.id}.json"),
+                    str(scrapy_service.base_projects_dir / project.path / project.path / f"results_{task.id}.json"),
+                    str(scrapy_service.base_projects_dir / "**" / f"results_{task.id}.json")
+                ]
+
+                result_files = []
+                for pattern in patterns:
+                    result_files.extend(glob.glob(pattern, recursive=True))
+
+                if result_files:
+                    result_file = Path(result_files[0])
+                    file_size = result_file.stat().st_size
+
+                    if file_size > 0:
+                        # ファイル内容を確認
+                        with open(result_file, 'r', encoding='utf-8') as f:
+                            data = json.load(f)
+                            item_count = len(data) if isinstance(data, list) else 1
+
+                            if item_count > 0:
+                                # タスクを成功状態に修正
+                                task.status = TaskStatus.FINISHED
+                                task.items_count = item_count
+                                task.requests_count = max(item_count, task.requests_count or 0)
+                                task.error_count = 0
+
+                                fixed_count += 1
+                                print(f"✅ Fixed task {task.id}: {item_count} items")
+
+            except Exception as e:
+                print(f"Error checking task {task.id}: {str(e)}")
+                continue
+
+        db.commit()
+
+        return {
+            "message": f"Task fix completed",
+            "checked_tasks": checked_count,
+            "fixed_tasks": fixed_count,
+            "details": f"Checked {checked_count} failed tasks, fixed {fixed_count} tasks"
         }
-        for log in logs
-    ]
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error fixing failed tasks: {str(e)}"
+        )
 
 @router.get(
     "/{task_id}/results/download",
@@ -765,9 +1040,28 @@ async def download_task_results(
                     json_file_path = Path(matches[0])
 
         if not json_file_path.exists():
+            # より詳細なエラー情報を提供
+            searched_paths = [
+                str(scrapy_service.base_projects_dir / project.path / project.path / f"results_{task_id}.json"),
+                str(scrapy_service.base_projects_dir / project.path / f"results_{task_id}.json"),
+                f"Pattern: {scrapy_service.base_projects_dir / project.path / '**' / f'results_{task_id}.json'}",
+                f"Global pattern: {scrapy_service.base_projects_dir / '**' / f'results_{task_id}.json'}"
+            ]
+
+            # タスクの状態も確認
+            task_status = task.status.value if hasattr(task.status, 'value') else str(task.status)
+            task_info = {
+                "task_id": task_id,
+                "task_status": task_status,
+                "items_count": task.items_count or 0,
+                "error_count": task.error_count or 0,
+                "project_path": project.path,
+                "searched_paths": searched_paths
+            }
+
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Results file not found"
+                detail=f"Results file not found. Task info: {json.dumps(task_info, indent=2)}"
             )
 
         # JSONデータを読み込み
@@ -786,6 +1080,9 @@ async def download_task_results(
         elif format.lower() == "xml":
             return _create_xml_response(data, task_id)
 
+    except HTTPException as he:
+        # HTTPExceptionはそのまま再発生
+        raise he
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -1041,3 +1338,33 @@ def _dict_to_xml(data, parent):
             _dict_to_xml(item, child)
     else:
         parent.text = str(data) if data is not None else ""
+
+@router.post(
+    "/fix-failed-tasks",
+    summary="失敗タスクの修正",
+    description="結果ファイルがあるのにFAILEDになっているタスクを修正します。"
+)
+async def fix_failed_tasks():
+    """
+    ## 失敗タスクの修正
+
+    結果ファイルがあるのにFAILEDになっているタスクを修正します。
+
+    ### レスポンス
+    - **200**: 修正が完了した場合
+    - **500**: サーバーエラー
+    """
+    try:
+        from ..services.scrapy_service import ScrapyPlaywrightService
+
+        service = ScrapyPlaywrightService()
+        service.fix_failed_tasks_with_results()
+
+        return {"message": "Failed tasks with results have been fixed", "status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fixing failed tasks: {str(e)}")
+
+@router.get("/health")
+async def health_check():
+    """ヘルスチェック"""
+    return {"status": "healthy", "timestamp": datetime.now(timezone.utc).isoformat()}

@@ -44,8 +44,11 @@ class Project(ProjectBase):
 # Spider schemas
 class SpiderBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
+    description: Optional[str] = None
     code: str = Field(..., min_length=1)
     template: Optional[str] = None
+    framework: Optional[str] = None
+    start_urls: Optional[List[str]] = None
     settings: Optional[Dict[str, Any]] = None
 
     @field_validator('name')
@@ -72,8 +75,11 @@ class SpiderCreate(SpiderBase):
 
 class SpiderUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=100)
+    description: Optional[str] = None
     code: Optional[str] = Field(None, min_length=1)
     template: Optional[str] = None
+    framework: Optional[str] = None
+    start_urls: Optional[List[str]] = None
     settings: Optional[Dict[str, Any]] = None
 
 class Spider(SpiderBase):
@@ -171,6 +177,8 @@ class Schedule(ScheduleBase):
     id: str
     project_id: str
     spider_id: str
+    project_name: Optional[str] = None
+    spider_name: Optional[str] = None
     last_run: Optional[datetime] = None
     next_run: Optional[datetime] = None
     created_at: datetime

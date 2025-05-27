@@ -1,32 +1,32 @@
-import { apiClient } from './api';
+// Node.jsサービス用の独自HTTPクライアント（apiClientは使用しない）
 
 export interface NodeJSHealthResponse {
   status: string;
   nodejs_service: {
-    status: string;
-    timestamp: string;
-    uptime: number;
-    memory: {
-      rss: number;
-      heapTotal: number;
-      heapUsed: number;
-      external: number;
-      arrayBuffers: number;
+    status?: string;
+    timestamp?: string;
+    uptime?: number;
+    memory?: {
+      rss?: number;
+      heapTotal?: number;
+      heapUsed?: number;
+      external?: number;
+      arrayBuffers?: number;
     };
-    version: string;
-    environment: string;
-    service: {
-      name: string;
-      version: string;
+    version?: string;
+    environment?: string;
+    service?: {
+      name?: string;
+      version?: string;
     };
-    browserPool: {
+    browserPool?: {
       total: number;
       inUse: number;
       available: number;
       maxInstances: number;
     };
   };
-  integration_status: string;
+  integration_status?: string;
 }
 
 export interface SPAScrapingRequest {
@@ -140,19 +140,41 @@ export interface WorkflowExecuteRequest {
 }
 
 class NodeJSService {
-  private baseUrl = '/api/nodejs';
+  private baseUrl = process.env.NEXT_PUBLIC_NODEJS_SERVICE_URL || 'http://localhost:3001/api';
 
   async checkHealth(): Promise<NodeJSHealthResponse> {
-    const response = await apiClient.get<NodeJSHealthResponse>(`${this.baseUrl}/health`);
-    return response.data;
+    const response = await fetch(`${this.baseUrl}/health`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    return response.json();
   }
 
   async testConnection(data?: any): Promise<NodeJSResponse> {
-    const response = await apiClient.post<NodeJSResponse>(`${this.baseUrl}/test`, {
-      message: 'Test from frontend',
-      data
+    const response = await fetch(`${this.baseUrl}/test`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        message: 'Test from frontend',
+        timestamp: new Date().toISOString(),
+        data
+      }),
     });
-    return response.data;
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    return response.json();
   }
 
   async scrapeSPA(request: SPAScrapingRequest): Promise<NodeJSResponse> {
@@ -238,6 +260,15 @@ class NodeJSService {
     message: string;
     color: string;
   } {
+    // browserPoolが未定義の場合のデフォルト処理
+    if (!browserPool) {
+      return {
+        status: 'critical',
+        message: 'Browser pool not available',
+        color: 'text-red-600'
+      };
+    }
+
     const { total, inUse, available, maxInstances } = browserPool;
     const usagePercent = total > 0 ? (inUse / total) * 100 : 0;
 

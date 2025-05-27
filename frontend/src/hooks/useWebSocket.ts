@@ -43,6 +43,20 @@ export function useWebSocket({
       return
     }
 
+    // URLの形式を検証
+    try {
+      const wsUrl = new URL(url)
+      if (!['ws:', 'wss:'].includes(wsUrl.protocol)) {
+        console.error('Invalid WebSocket URL protocol:', wsUrl.protocol)
+        setConnectionStatus('error')
+        return
+      }
+    } catch (error) {
+      console.error('Invalid WebSocket URL format:', url, error)
+      setConnectionStatus('error')
+      return
+    }
+
     console.log('Attempting WebSocket connection to:', url)
 
     // 既存の接続をクリーンアップ
@@ -96,7 +110,9 @@ export function useWebSocket({
         console.error('WebSocket error:', {
           url,
           readyState: ws.current?.readyState,
-          error: error
+          error: error,
+          errorType: error.type,
+          errorMessage: error instanceof ErrorEvent ? error.message : 'Unknown error'
         })
         setConnectionStatus('error')
         onError?.(error)

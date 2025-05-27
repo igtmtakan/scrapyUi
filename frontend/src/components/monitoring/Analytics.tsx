@@ -289,18 +289,21 @@ export default function Analytics() {
 
   if (isLoading) {
     return (
-      <div className="p-6 overflow-y-auto">
-        <div className="flex items-center justify-center h-64">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+      <div className="h-full overflow-y-auto">
+        <div className="p-6">
+          <div className="flex items-center justify-center h-64">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+          </div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="p-6 overflow-y-auto">
-      {/* 統計カード */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+    <div className="h-full overflow-y-auto">
+      <div className="p-6 space-y-8">
+        {/* 統計カード */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
           <div className="flex items-center justify-between">
             <div>
@@ -340,10 +343,10 @@ export default function Analytics() {
             <TrendingUp className="w-8 h-8 text-purple-400" />
           </div>
         </div>
-      </div>
+        </div>
 
-      {/* チャートエリア */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+        {/* チャートエリア */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* タスクトレンドチャート */}
         <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
           <div className="flex items-center mb-4">
@@ -399,10 +402,10 @@ export default function Analytics() {
             />
           </div>
         </div>
-      </div>
+        </div>
 
-      {/* 追加チャート */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+        {/* 追加チャート */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* スパイダー成功率 */}
         <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
           <div className="flex items-center mb-4">
@@ -500,10 +503,10 @@ export default function Analytics() {
             )}
           </div>
         </div>
-      </div>
+        </div>
 
-      {/* 最近のアクティビティ */}
-      <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
+        {/* 最近のアクティビティ */}
+        <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
         <h3 className="text-lg font-semibold text-white mb-4">Recent Activity</h3>
         <div className="space-y-3">
           {analyticsData.recentActivity.map(activity => (
@@ -526,6 +529,7 @@ export default function Analytics() {
               <p className="text-sm">最近のアクティビティがありません</p>
             </div>
           )}
+        </div>
         </div>
       </div>
     </div>

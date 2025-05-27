@@ -229,6 +229,11 @@ ROBOTSTXT_OBEY = True
 # User-Agent
 USER_AGENT = '{name} (+http://www.yourdomain.com)'
 
+# Override the default request headers:
+DEFAULT_REQUEST_HEADERS = {{
+    'Accept-Language': 'ja',
+}}
+
 # Scrapy-Playwright settings
 DOWNLOAD_HANDLERS = {{
     "http": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
@@ -259,6 +264,30 @@ AUTOTHROTTLE_DEBUG = False
 REQUEST_FINGERPRINTER_IMPLEMENTATION = "2.7"
 TWISTED_REACTOR = "twisted.internet.asyncioreactor.AsyncioSelectorReactor"
 FEED_EXPORT_ENCODING = "utf-8"
+
+# HTTP Cache settings (for development efficiency)
+HTTPCACHE_ENABLED = True
+HTTPCACHE_DIR = 'httpcache'
+HTTPCACHE_EXPIRATION_SECS = 86400  # 1 day
+
+# Fake User Agent settings (for anti-detection)
+DOWNLOADER_MIDDLEWARES = {{
+    'scrapy.downloadermiddlewares.useragent.UserAgentMiddleware': None,
+    'scrapy_fake_useragent.middleware.RandomUserAgentMiddleware': 400,
+    'scrapy_fake_useragent.middleware.RetryUserAgentMiddleware': 401,
+    'scrapy_proxies.RandomProxy': 350,
+}}
+
+# Fake User Agent configuration
+FAKEUSERAGENT_PROVIDERS = [
+    'scrapy_fake_useragent.providers.FakeUserAgentProvider',  # this is the default
+    'scrapy_fake_useragent.providers.FakerProvider',  # fallback
+    'scrapy_fake_useragent.providers.FixedUserAgentProvider',  # fallback
+]
+
+# Proxy settings (optional - configure as needed)
+# PROXY_LIST = '/path/to/proxy/list.txt'
+# PROXY_MODE = 0  # 0: random, 1: round-robin, 2: only once
 
 # ログレベル設定
 LOG_LEVEL = "INFO"

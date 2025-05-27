@@ -8,7 +8,8 @@ import uvicorn
 import os
 from pathlib import Path
 
-from .api import projects, spiders, tasks, results, schedules, notifications, auth, proxies, ai, shell, database_config, project_files, extensions, admin, script_runner
+from .api import projects, spiders, tasks, results, schedules, notifications, auth, proxies, ai, admin, script_runner, project_files
+# from .api import shell, database_config, extensions  # 一時的に無効化
 from .api.routes import nodejs_integration
 # from .api import settings
 from .database import engine, Base
@@ -394,9 +395,9 @@ app.include_router(schedules.router, prefix="/api/schedules", tags=["schedules"]
 app.include_router(notifications.router, prefix="/api/notifications", tags=["notifications"])
 app.include_router(proxies.router, prefix="/api/proxies", tags=["proxies"])
 app.include_router(ai.router, prefix="/api/ai", tags=["ai-analysis"])
-app.include_router(shell.router, prefix="/api/shell", tags=["scrapy-shell"])
-app.include_router(database_config.router, prefix="/api/database", tags=["database-config"])
-app.include_router(extensions.router, prefix="/api", tags=["extensions"])
+# app.include_router(shell.router, prefix="/api/shell", tags=["scrapy-shell"])  # 一時的に無効化
+# app.include_router(database_config.router, prefix="/api/database", tags=["database-config"])  # 一時的に無効化
+# app.include_router(extensions.router, prefix="/api", tags=["extensions"])  # 一時的に無効化
 app.include_router(admin.router, tags=["admin"])
 app.include_router(script_runner.router, prefix="/api/script", tags=["script-runner"])
 app.include_router(nodejs_integration.router, prefix="/api/nodejs", tags=["nodejs-integration"])
@@ -416,6 +417,7 @@ async def startup_event():
 
     try:
         from .services.scrapy_service import ScrapyPlaywrightService
+        from .services.scheduler_service import scheduler_service
 
         # ScrapyServiceのシングルトンインスタンスを取得
         scrapy_service_instance = ScrapyPlaywrightService()
@@ -423,8 +425,12 @@ async def startup_event():
         # タスク監視システムを開始
         scrapy_service_instance.start_monitoring()
 
+        # スケジューラーサービスを開始
+        scheduler_service.start()
+
         print("✅ ScrapyUI Application started successfully")
         print("🔍 Task monitoring system initialized")
+        print("⏰ Schedule service initialized")
 
     except Exception as e:
         print(f"❌ Error during startup: {str(e)}")
@@ -437,12 +443,18 @@ async def shutdown_event():
     global scrapy_service_instance
 
     try:
+        from .services.scheduler_service import scheduler_service
+
         if scrapy_service_instance:
             # タスク監視システムを停止
             scrapy_service_instance.stop_monitoring_tasks()
 
+        # スケジューラーサービスを停止
+        scheduler_service.stop()
+
         print("🛑 ScrapyUI Application shutdown completed")
         print("🔍 Task monitoring system stopped")
+        print("⏰ Schedule service stopped")
 
     except Exception as e:
         print(f"❌ Error during shutdown: {str(e)}")

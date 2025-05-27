@@ -6,7 +6,7 @@
 import scrapy
 
 
-class Aiueo3Item(scrapy.Item):
+class AmazonrankingItem(scrapy.Item):
     # define the fields for your item here like:
     # name = scrapy.Field()
     pass

@@ -153,6 +153,8 @@ dmypy.json
 # Specific to this project
 backend/app.db
 backend/scrapy_ui.db*
+backend/database/*.db
+backend/database/*.sqlite*
 database/scrapy_ui.db
 scrapy_ui.db
 *.egg-info/

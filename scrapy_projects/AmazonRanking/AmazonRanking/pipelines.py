@@ -8,6 +8,6 @@
 from itemadapter import ItemAdapter
 
 
-class AiueoPipeline:
+class AmazonrankingPipeline:
     def process_item(self, item, spider):
         return item

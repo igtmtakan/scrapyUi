@@ -1,17 +1,17 @@
 # ScrapyUI Database Configuration
 # データベース設定ファイル
 
-# デフォルト設定: SQLite
+# デフォルト設定: SQLite（database/ディレクトリ内）
 default:
   type: "sqlite"
-  database: "scrapy_ui.db"
+  database: "/home/igtmtakan/workplace/python/scrapyUI/backend/database/scrapy_ui.db"
   echo: false  # SQLログ出力
 
 # 開発環境設定
 development:
   type: "sqlite"
-  database: "scrapy_ui_dev.db"
-  echo: true
+  database: "/home/igtmtakan/workplace/python/scrapyUI/backend/database/scrapy_ui.db"
+  echo: false
 
 # テスト環境設定
 testing:
@@ -19,8 +19,14 @@ testing:
   database: ":memory:"  # インメモリデータベース
   echo: false
 
-# 本番環境設定例
+# 本番環境設定（SQLite使用）
 production:
+  type: "sqlite"
+  database: "/home/igtmtakan/workplace/python/scrapyUI/backend/database/scrapy_ui.db"
+  echo: false
+
+# 本番環境設定例（PostgreSQL）
+production_postgresql:
   type: "postgresql"
   host: "localhost"
   port: 5432
@@ -118,7 +124,7 @@ multi_database_example:
     database: "scrapy_ui_main"
     username: "scrapy_user"
     password: "your_password"
-  
+
   # ドキュメントストレージ
   document:
     type: "mongodb"
@@ -127,14 +133,14 @@ multi_database_example:
     database: "scrapy_ui_docs"
     username: "scrapy_user"
     password: "your_password"
-  
+
   # 検索エンジン
   search:
     type: "elasticsearch"
     hosts:
       - "http://localhost:9200"
     index_prefix: "scrapy_ui"
-  
+
   # キャッシュ
   cache:
     type: "redis"

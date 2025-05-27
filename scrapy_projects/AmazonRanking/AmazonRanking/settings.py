@@ -1,4 +1,4 @@
-# Scrapy settings for aiueo3 project
+# Scrapy settings for AmazonRanking project
 #
 # For simplicity, this file contains only settings considered important or
 # commonly used. You can find more settings consulting the documentation:
@@ -7,14 +7,16 @@
 #     https://docs.scrapy.org/en/latest/topics/downloader-middleware.html
 #     https://docs.scrapy.org/en/latest/topics/spider-middleware.html
 
-BOT_NAME = "aiueo3"
+BOT_NAME = "AmazonRanking"
 
-SPIDER_MODULES = ["aiueo3.spiders"]
-NEWSPIDER_MODULE = "aiueo3.spiders"
+SPIDER_MODULES = ["AmazonRanking.spiders"]
+NEWSPIDER_MODULE = "AmazonRanking.spiders"
+
+ADDONS = {}
 
 
 # Crawl responsibly by identifying yourself (and your website) on the user-agent
-#USER_AGENT = "aiueo3 (+http://www.yourdomain.com)"
+#USER_AGENT = "AmazonRanking (+http://www.yourdomain.com)"
 
 # Obey robots.txt rules
 ROBOTSTXT_OBEY = True
@@ -45,13 +47,13 @@ ROBOTSTXT_OBEY = True
 # Enable or disable spider middlewares
 # See https://docs.scrapy.org/en/latest/topics/spider-middleware.html
 #SPIDER_MIDDLEWARES = {
-#    "aiueo3.middlewares.Aiueo3SpiderMiddleware": 543,
+#    "AmazonRanking.middlewares.AmazonrankingSpiderMiddleware": 543,
 #}
 
 # Enable or disable downloader middlewares
 # See https://docs.scrapy.org/en/latest/topics/downloader-middleware.html
 #DOWNLOADER_MIDDLEWARES = {
-#    "aiueo3.middlewares.Aiueo3DownloaderMiddleware": 543,
+#    "AmazonRanking.middlewares.AmazonrankingDownloaderMiddleware": 543,
 #}
 
 # Enable or disable extensions
@@ -63,7 +65,7 @@ ROBOTSTXT_OBEY = True
 # Configure item pipelines
 # See https://docs.scrapy.org/en/latest/topics/item-pipeline.html
 #ITEM_PIPELINES = {
-#    "aiueo3.pipelines.Aiueo3Pipeline": 300,
+#    "AmazonRanking.pipelines.AmazonrankingPipeline": 300,
 #}
 
 # Enable and configure the AutoThrottle extension (disabled by default)
@@ -88,7 +90,6 @@ ROBOTSTXT_OBEY = True
 #HTTPCACHE_STORAGE = "scrapy.extensions.httpcache.FilesystemCacheStorage"
 
 # Set settings whose default value is deprecated to a future-proof value
-TWISTED_REACTOR = "twisted.internet.asyncioreactor.AsyncioSelectorReactor"
 FEED_EXPORT_ENCODING = "utf-8"
 
 

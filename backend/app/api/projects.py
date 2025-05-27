@@ -7,6 +7,7 @@ import os
 from ..database import get_db, Project as DBProject, Spider as DBSpider
 from ..models.schemas import Project, ProjectCreate, ProjectUpdate, ProjectWithSpiders, Spider, SpiderCreate
 from ..services.scrapy_service import ScrapyPlaywrightService
+from ..api.auth import get_current_active_user
 
 router = APIRouter(
     responses={
@@ -158,7 +159,8 @@ async def delete_project(project_id: str, db: Session = Depends(get_db)):
 async def create_project_spider(
     project_id: str,
     spider_data: dict,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_active_user)
 ):
     """プロジェクトにスパイダーを作成"""
     # プロジェクトの存在確認
@@ -191,10 +193,11 @@ async def create_project_spider(
     db_spider = DBSpider(
         id=str(uuid.uuid4()),
         name=spider_name,
-        code=spider_data.get("code", ""),
+        code=spider_data.get("script", spider_data.get("code", "")),
         template=spider_data.get("template"),
         settings=spider_data.get("settings", {}),
-        project_id=project_id
+        project_id=project_id,
+        user_id=current_user.id
     )
 
     db.add(db_spider)
@@ -205,7 +208,8 @@ async def create_project_spider(
     try:
         if not os.getenv("TESTING", False):
             scrapy_service = ScrapyPlaywrightService()
-            scrapy_service.save_spider_code(project.path, spider_name, spider_data.get("code", ""))
+            spider_code = spider_data.get("script", spider_data.get("code", ""))
+            scrapy_service.save_spider_code(project.path, spider_name, spider_code)
     except Exception as e:
         # データベースからロールバック
         db.delete(db_spider)
@@ -219,5 +223,6 @@ async def create_project_spider(
         "id": db_spider.id,
         "name": db_spider.name,
         "project_id": db_spider.project_id,
+        "start_urls": spider_data.get("start_urls", []),
         "created_at": db_spider.created_at.isoformat() if db_spider.created_at else None
     }

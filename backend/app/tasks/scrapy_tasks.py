@@ -35,17 +35,23 @@ def run_spider_task(self, project_id: str, spider_id: str, settings: dict = None
             status=TaskStatus.RUNNING,
             started_at=datetime.now(),
             log_level=settings.get('log_level', 'INFO') if settings else 'INFO',
-            settings=settings
+            settings=settings,
+            user_id=settings.get('user_id', 'system') if settings else 'system'
         )
         db.add(db_task)
         db.commit()
 
-        # WebSocketで開始通知
-        asyncio.create_task(manager.send_task_update(task_id, {
-            "status": "RUNNING",
-            "started_at": datetime.now().isoformat(),
-            "message": f"Started spider {spider.name}"
-        }))
+        # WebSocketで開始通知（Celeryワーカー内では非同期処理をスキップ）
+        try:
+            loop = asyncio.get_running_loop()
+            asyncio.create_task(manager.send_task_update(task_id, {
+                "status": "RUNNING",
+                "started_at": datetime.now().isoformat(),
+                "message": f"Started spider {spider.name}"
+            }))
+        except RuntimeError:
+            # イベントループが動作していない場合はスキップ
+            print(f"📡 WebSocket notification skipped (no event loop): Task {task_id} started")
 
         # Scrapyサービスでスパイダーを実行
         scrapy_service = ScrapyPlaywrightService()
@@ -58,13 +64,16 @@ def run_spider_task(self, project_id: str, spider_id: str, settings: dict = None
             db_task.error_count = error_count
             db.commit()
 
-            # WebSocket通知
-            asyncio.create_task(manager.send_task_update(task_id, {
-                "items_count": items_count,
-                "requests_count": requests_count,
-                "error_count": error_count,
-                "progress": min(100, (items_count / 100) * 100) if items_count > 0 else 0
-            }))
+            # WebSocket通知（Celeryワーカー内では非同期処理をスキップ）
+            try:
+                asyncio.create_task(manager.send_task_update(task_id, {
+                    "items_count": items_count,
+                    "requests_count": requests_count,
+                    "error_count": error_count,
+                    "progress": min(100, (items_count / 100) * 100) if items_count > 0 else 0
+                }))
+            except RuntimeError:
+                print(f"📡 WebSocket progress update skipped: {items_count} items, {requests_count} requests")
 
         # ログコールバック
         def log_callback(level, message):
@@ -78,67 +87,82 @@ def run_spider_task(self, project_id: str, spider_id: str, settings: dict = None
             db.add(log_entry)
             db.commit()
 
-            # WebSocketでログ送信
-            asyncio.create_task(manager.send_log_message(task_id, {
-                "level": level,
-                "message": message
-            }))
+            # WebSocketでログ送信（Celeryワーカー内では非同期処理をスキップ）
+            try:
+                asyncio.create_task(manager.send_log_message(task_id, {
+                    "level": level,
+                    "message": message
+                }))
+            except RuntimeError:
+                print(f"📡 WebSocket log skipped: [{level}] {message}")
 
         # スパイダー実行
-        results = scrapy_service.run_spider_with_callbacks(
-            project.path,
-            spider.name,
-            task_id,
-            settings,
-            progress_callback,
-            log_callback
+        task_result_id = scrapy_service.run_spider(
+            project_path=project.path,
+            spider_name=spider.name,
+            task_id=task_id,
+            settings=settings
         )
 
-        # 結果をデータベースに保存
-        for result_data in results:
-            result = DBResult(
-                id=str(uuid.uuid4()),
-                task_id=task_id,
-                data=result_data.get('data', {}),
-                url=result_data.get('url', '')
-            )
-            db.add(result)
+        print(f"✅ Spider started with task result ID: {task_result_id}")
 
-        # タスク完了
-        db_task.status = TaskStatus.FINISHED
-        db_task.finished_at = datetime.now()
+        # スパイダーの実行完了を待機（非同期）
+        # 実際の結果は ScrapyPlaywrightService の監視システムで処理される
+        results = []  # 空の結果リストを返す（実際の結果はファイルに保存される）
+
+        # タスクを実行中状態に更新（実際の完了は ScrapyPlaywrightService の監視システムで処理）
+        db_task.status = TaskStatus.RUNNING
         db.commit()
 
-        # 完了通知
-        asyncio.create_task(manager.send_task_update(task_id, {
-            "status": "FINISHED",
-            "finished_at": datetime.now().isoformat(),
-            "message": f"Spider {spider.name} completed successfully",
-            "total_results": len(results)
-        }))
+        # 開始通知（Celeryワーカー内では非同期処理をスキップ）
+        try:
+            asyncio.create_task(manager.send_task_update(task_id, {
+                "status": "RUNNING",
+                "started_at": datetime.now().isoformat(),
+                "message": f"Spider {spider.name} started successfully"
+            }))
+        except RuntimeError:
+            print(f"📡 WebSocket start notification skipped: Task {task_id} started")
 
         return {
-            "status": "success",
+            "status": "started",
             "task_id": task_id,
-            "results_count": len(results),
-            "items_count": db_task.items_count,
-            "requests_count": db_task.requests_count,
-            "error_count": db_task.error_count
+            "spider_name": spider.name,
+            "project_path": project.path,
+            "message": "Spider execution started successfully"
         }
 
     except Exception as e:
-        # エラー処理
+        # エラー処理 - アイテム数・リクエスト数を保持
         if 'db_task' in locals():
+            # 現在の進行状況を保持してからエラー状態に更新
+            current_items = db_task.items_count or 0
+            current_requests = db_task.requests_count or 0
+            current_errors = db_task.error_count or 0
+
             db_task.status = TaskStatus.FAILED
             db_task.finished_at = datetime.now()
+            # 進行状況データを保持
+            db_task.items_count = current_items
+            db_task.requests_count = current_requests
+            db_task.error_count = current_errors + 1  # エラーカウントを増加
             db.commit()
 
-        # エラー通知
-        asyncio.create_task(manager.send_task_update(task_id, {
-            "status": "FAILED",
-            "finished_at": datetime.now().isoformat(),
-            "error": str(e)
-        }))
+            print(f"❌ Task {task_id} failed with error: {str(e)}")
+            print(f"   Preserved progress: {current_items} items, {current_requests} requests, {current_errors + 1} errors")
+
+        # エラー通知（Celeryワーカー内では非同期処理をスキップ）
+        try:
+            asyncio.create_task(manager.send_task_update(task_id, {
+                "status": "FAILED",
+                "finished_at": datetime.now().isoformat(),
+                "error": str(e),
+                "items_count": current_items if 'current_items' in locals() else 0,
+                "requests_count": current_requests if 'current_requests' in locals() else 0,
+                "error_count": (current_errors + 1) if 'current_errors' in locals() else 1
+            }))
+        except RuntimeError:
+            print(f"📡 WebSocket error notification skipped: Task {task_id} failed with error: {str(e)}")
 
         raise e
 
@@ -249,16 +273,33 @@ def scheduled_spider_run(schedule_id: str):
     """
     スケジュールされたスパイダー実行
     """
+    from ..database import Schedule as DBSchedule
+
     db = SessionLocal()
 
     try:
-        # スケジュール情報を取得（後で実装するScheduleモデルから）
-        # schedule = db.query(Schedule).filter(Schedule.id == schedule_id).first()
+        # スケジュール情報を取得
+        schedule = db.query(DBSchedule).filter(DBSchedule.id == schedule_id).first()
 
-        # 仮の実装
-        return run_spider_task.delay("project_id", "spider_id", {})
+        if not schedule:
+            raise Exception(f"Schedule not found: {schedule_id}")
+
+        print(f"🚀 Executing scheduled spider: {schedule.name}")
+        print(f"   Project ID: {schedule.project_id}")
+        print(f"   Spider ID: {schedule.spider_id}")
+
+        # スパイダータスクを実行
+        task = run_spider_task.delay(
+            schedule.project_id,
+            schedule.spider_id,
+            schedule.settings or {}
+        )
+
+        print(f"✅ Scheduled spider task started: {task.id}")
+        return task.id
 
     except Exception as e:
+        print(f"❌ Error in scheduled_spider_run: {str(e)}")
         raise e
     finally:
         db.close()

@@ -5,17 +5,22 @@ const nextConfig = {
   experimental: {
     // 必要に応じて実験的機能を有効化
   },
-  
+
   // 開発サーバーの設定
   async rewrites() {
-    return []
+    return [
+      {
+        source: '/api/:path*',
+        destination: 'http://localhost:8000/api/:path*'
+      }
+    ]
   },
-  
+
   // 環境変数の設定
   env: {
     CUSTOM_PORT: '4000'
   },
-  
+
   // WebSocketプロキシ設定（開発時）
   async headers() {
     return [

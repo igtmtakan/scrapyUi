@@ -19,14 +19,21 @@ class ScrapyPlaywrightService:
     _instance = None
     _initialized = False
 
-    def __new__(cls, base_projects_dir: str = "./scrapy_projects"):
+    def __new__(cls, base_projects_dir: str = None):
         if cls._instance is None:
             cls._instance = super(ScrapyPlaywrightService, cls).__new__(cls)
         return cls._instance
 
-    def __init__(self, base_projects_dir: str = "./scrapy_projects"):
+    def __init__(self, base_projects_dir: str = None):
         if self._initialized:
             return
+
+        # デフォルトのプロジェクトディレクトリを設定
+        if base_projects_dir is None:
+            # 現在のファイルの位置から相対的にscrapy_projectsディレクトリを特定
+            current_file = Path(__file__)
+            # backend/app/services/scrapy_service.py から ../../scrapy_projects
+            base_projects_dir = current_file.parent.parent.parent.parent / "scrapy_projects"
 
         self.base_projects_dir = Path(base_projects_dir)
         self.base_projects_dir.mkdir(exist_ok=True)
@@ -35,7 +42,7 @@ class ScrapyPlaywrightService:
         self.monitoring_thread = None
         self.stop_monitoring = False
         self._initialized = True
-        print(f"🔧 ScrapyPlaywrightService initialized with base_dir: {self.base_projects_dir}")
+        print(f"🔧 ScrapyPlaywrightService initialized with base_dir: {self.base_projects_dir.absolute()}")
 
     def create_project(self, project_name: str, project_path: str) -> bool:
         """新しいScrapyプロジェクトを作成（scrapy startproject と同じ動作）"""
@@ -102,6 +109,38 @@ PLAYWRIGHT_LAUNCH_OPTIONS = {
 # Default request meta for Playwright
 PLAYWRIGHT_DEFAULT_NAVIGATION_TIMEOUT = 30000
 PLAYWRIGHT_ABORT_REQUEST = lambda req: req.resource_type == "image"
+
+# Override the default request headers:
+DEFAULT_REQUEST_HEADERS = {
+    'Accept-Language': 'ja',
+}
+
+# Feed export encoding
+FEED_EXPORT_ENCODING = 'utf-8'
+
+# HTTP Cache settings (for development efficiency)
+HTTPCACHE_ENABLED = True
+HTTPCACHE_DIR = 'httpcache'
+HTTPCACHE_EXPIRATION_SECS = 86400  # 1 day
+
+# Fake User Agent settings (for anti-detection)
+DOWNLOADER_MIDDLEWARES = {
+    'scrapy.downloadermiddlewares.useragent.UserAgentMiddleware': None,
+    'scrapy_fake_useragent.middleware.RandomUserAgentMiddleware': 400,
+    'scrapy_fake_useragent.middleware.RetryUserAgentMiddleware': 401,
+    'scrapy_proxies.RandomProxy': 350,
+}
+
+# Fake User Agent configuration
+FAKEUSERAGENT_PROVIDERS = [
+    'scrapy_fake_useragent.providers.FakeUserAgentProvider',  # this is the default
+    'scrapy_fake_useragent.providers.FakerProvider',  # fallback
+    'scrapy_fake_useragent.providers.FixedUserAgentProvider',  # fallback
+]
+
+# Proxy settings (optional - configure as needed)
+# PROXY_LIST = '/path/to/proxy/list.txt'
+# PROXY_MODE = 0  # 0: random, 1: round-robin, 2: only once
 '''
 
         if settings_file.exists():
@@ -111,13 +150,38 @@ PLAYWRIGHT_ABORT_REQUEST = lambda req: req.resource_type == "image"
     def get_spider_code(self, project_path: str, spider_name: str) -> str:
         """スパイダーのコードを取得"""
         try:
-            # scrapy_projects/project_name/project_name/spiders/spider_name.py
+            # 複数のパスパターンでスパイダーファイルを検索
             full_path = self.base_projects_dir / project_path
-            spider_file = full_path / project_path / "spiders" / f"{spider_name}.py"
 
-            if not spider_file.exists():
-                print(f"Spider file not found: {spider_file}")
-                raise Exception(f"Spider file not found: {spider_file}")
+            possible_spider_paths = [
+                # 標準Scrapyプロジェクト構造: scrapy_projects/project_name/project_name/spiders/spider_name.py
+                full_path / project_path / "spiders" / f"{spider_name}.py",
+                # 簡略化構造: scrapy_projects/project_name/spiders/spider_name.py
+                full_path / "spiders" / f"{spider_name}.py",
+                # 直接配置: scrapy_projects/project_name/spider_name.py
+                full_path / f"{spider_name}.py"
+            ]
+
+            spider_file = None
+            for path in possible_spider_paths:
+                if path.exists():
+                    spider_file = path
+                    print(f"✅ Spider file found: {spider_file}")
+                    break
+
+            if not spider_file:
+                # 再帰検索で最後の手段
+                import glob
+                pattern = str(full_path / "**" / f"{spider_name}.py")
+                matches = glob.glob(pattern, recursive=True)
+                if matches:
+                    spider_file = Path(matches[0])
+                    print(f"✅ Spider file found via recursive search: {spider_file}")
+                else:
+                    print(f"❌ Spider file not found in any location:")
+                    for path in possible_spider_paths:
+                        print(f"   - {path}")
+                    raise Exception(f"Spider file not found: {spider_name}.py in {full_path}")
 
             with open(spider_file, 'r', encoding='utf-8') as f:
                 return f.read()
@@ -129,9 +193,30 @@ PLAYWRIGHT_ABORT_REQUEST = lambda req: req.resource_type == "image"
     def save_spider_code(self, project_path: str, spider_name: str, code: str) -> bool:
         """スパイダーのコードを保存"""
         try:
-            # scrapy_projects/project_name/project_name/spiders/spider_name.py
+            # 既存のスパイダーファイルを検索
             full_path = self.base_projects_dir / project_path
-            spider_file = full_path / project_path / "spiders" / f"{spider_name}.py"
+
+            possible_spider_paths = [
+                # 標準Scrapyプロジェクト構造: scrapy_projects/project_name/project_name/spiders/spider_name.py
+                full_path / project_path / "spiders" / f"{spider_name}.py",
+                # 簡略化構造: scrapy_projects/project_name/spiders/spider_name.py
+                full_path / "spiders" / f"{spider_name}.py",
+                # 直接配置: scrapy_projects/project_name/spider_name.py
+                full_path / f"{spider_name}.py"
+            ]
+
+            spider_file = None
+            # 既存ファイルがあるかチェック
+            for path in possible_spider_paths:
+                if path.exists():
+                    spider_file = path
+                    print(f"✅ Updating existing spider file: {spider_file}")
+                    break
+
+            # 既存ファイルがない場合は標準構造で作成
+            if not spider_file:
+                spider_file = possible_spider_paths[0]  # 標準構造を使用
+                print(f"✅ Creating new spider file: {spider_file}")
 
             # ディレクトリが存在しない場合は作成
             spider_file.parent.mkdir(parents=True, exist_ok=True)
@@ -250,11 +335,29 @@ PLAYWRIGHT_ABORT_REQUEST = lambda req: req.resource_type == "image"
                     # 結果ファイルから実際の統計情報を取得
                     actual_items, actual_requests = self._get_task_statistics(task_id, task.project_id)
 
-                    task.status = TaskStatus.FINISHED if success else TaskStatus.FAILED
+                    # 現在の進行状況を保持
+                    current_items = task.items_count or 0
+                    current_requests = task.requests_count or 0
+                    current_errors = task.error_count or 0
+
+                    # 結果ファイルが存在し、データが取得されている場合は成功とみなす
+                    has_results = self._verify_task_results(task_id)
+                    final_success = success or (has_results and actual_items > 0)
+
+                    task.status = TaskStatus.FINISHED if final_success else TaskStatus.FAILED
                     task.finished_at = datetime.now()
-                    task.items_count = actual_items if actual_items > 0 else items_count
-                    task.requests_count = actual_requests if actual_requests > 0 else requests_count
-                    task.error_count = 0 if success else 1
+
+                    # 実際の統計情報を優先的に使用
+                    task.items_count = actual_items if actual_items > 0 else current_items
+                    task.requests_count = actual_requests if actual_requests > 0 else current_requests
+
+                    # エラーカウントの適切な設定
+                    if final_success:
+                        # 成功時はエラーカウントをリセット（データが取得できていれば成功）
+                        task.error_count = 0
+                    else:
+                        # 失敗時のみエラーカウントを設定
+                        task.error_count = max(1, current_errors)
 
                     db.commit()
                     print(f"Task {task_id} marked as {'completed' if success else 'failed'}")
@@ -354,15 +457,32 @@ PLAYWRIGHT_ABORT_REQUEST = lambda req: req.resource_type == "image"
                         result_file = Path(matches[0])
 
                 if result_file and result_file.exists():
-                    with open(result_file, 'r', encoding='utf-8') as f:
-                        data = json.load(f)
+                    try:
+                        with open(result_file, 'r', encoding='utf-8') as f:
+                            content = f.read().strip()
+
+                        # JSONファイルが不完全な場合の対処
+                        if content.startswith('[') and not content.endswith(']'):
+                            # 最後に ] を追加して修正
+                            content = content.rstrip(',') + '\n]'
+
+                        data = json.loads(content)
                         items_count = len(data) if isinstance(data, list) else 1
 
-                    # ログファイルからリクエスト数を推定（簡易版）
-                    requests_count = max(items_count + 1, 7)  # 最低7リクエスト（robots.txt含む）
+                        # ログファイルからリクエスト数を推定（簡易版）
+                        requests_count = max(items_count + 1, 7)  # 最低7リクエスト（robots.txt含む）
 
-                    print(f"Statistics from result file: items={items_count}, requests={requests_count} at {result_file}")
-                    return items_count, requests_count
+                        print(f"Statistics from result file: items={items_count}, requests={requests_count} at {result_file}")
+                        return items_count, requests_count
+
+                    except json.JSONDecodeError as e:
+                        print(f"JSON decode error in {result_file}: {str(e)}")
+                        # JSONエラーの場合、ファイルサイズから推定
+                        file_size = result_file.stat().st_size
+                        estimated_items = max(1, file_size // 2000)  # 2KB per item estimate
+                        estimated_requests = max(estimated_items + 1, 7)
+                        print(f"Estimated from file size: items={estimated_items}, requests={estimated_requests}")
+                        return estimated_items, estimated_requests
 
             finally:
                 db.close()
@@ -755,10 +875,19 @@ PLAYWRIGHT_ABORT_REQUEST = lambda req: req.resource_type == "image"
                         except Exception as e:
                             print(f"Error terminating process for task {task.id}: {str(e)}")
 
-                    # タスクを失敗としてマーク
+                    # タスクを失敗としてマーク（進行状況は保持）
+                    current_items = task.items_count or 0
+                    current_requests = task.requests_count or 0
+                    current_errors = task.error_count or 0
+
                     task.status = TaskStatus.FAILED
                     task.finished_at = datetime.now()
-                    task.error_count = 1
+                    # 進行状況データを保持
+                    task.items_count = current_items
+                    task.requests_count = current_requests
+                    task.error_count = current_errors + 1  # タイムアウトエラーを追加
+
+                    print(f"Task {task.id} timed out - preserved progress: {current_items} items, {current_requests} requests")
 
                 if timeout_tasks:
                     db.commit()
@@ -788,14 +917,24 @@ PLAYWRIGHT_ABORT_REQUEST = lambda req: req.resource_type == "image"
                         # 結果ファイルをチェックして完了判定
                         if self._verify_task_results(task.id):
                             print(f"Health check: Task {task.id} has results, marking as completed")
-                            task.status = TaskStatus.FINISHED
-                            task.finished_at = datetime.now()
 
                             # 統計情報を更新
                             actual_items, actual_requests = self._get_task_statistics(task.id, task.project_id)
-                            task.items_count = actual_items
-                            task.requests_count = actual_requests
-                            task.error_count = 0
+
+                            # データが取得されていれば成功とみなす
+                            if actual_items > 0:
+                                task.status = TaskStatus.FINISHED
+                                task.items_count = actual_items
+                                task.requests_count = actual_requests
+                                task.error_count = 0
+                                print(f"Health check: Task {task.id} completed successfully with {actual_items} items")
+                            else:
+                                # ファイルはあるがデータがない場合
+                                task.status = TaskStatus.FAILED
+                                task.error_count = 1
+                                print(f"Health check: Task {task.id} has empty results, marking as failed")
+
+                            task.finished_at = datetime.now()
                         else:
                             # 結果ファイルもない場合は失敗とする
                             print(f"Health check: Task {task.id} has no results, marking as failed")
@@ -825,6 +964,44 @@ PLAYWRIGHT_ABORT_REQUEST = lambda req: req.resource_type == "image"
 
         except Exception as e:
             print(f"Error in health check: {str(e)}")
+
+    def fix_failed_tasks_with_results(self):
+        """結果ファイルがあるのにFAILEDになっているタスクを修正"""
+        try:
+            from ..database import SessionLocal, Task as DBTask, TaskStatus
+
+            db = SessionLocal()
+            try:
+                # FAILEDステータスのタスクを取得
+                failed_tasks = db.query(DBTask).filter(DBTask.status == TaskStatus.FAILED).all()
+
+                fixed_count = 0
+                for task in failed_tasks:
+                    # 結果ファイルをチェック
+                    if self._verify_task_results(task.id):
+                        # 統計情報を取得
+                        actual_items, actual_requests = self._get_task_statistics(task.id, task.project_id)
+
+                        if actual_items > 0:
+                            # データがあるので成功に変更
+                            task.status = TaskStatus.FINISHED
+                            task.items_count = actual_items
+                            task.requests_count = actual_requests
+                            task.error_count = 0
+                            fixed_count += 1
+                            print(f"Fixed task {task.id}: {actual_items} items found, marked as FINISHED")
+
+                if fixed_count > 0:
+                    db.commit()
+                    print(f"Fixed {fixed_count} failed tasks that actually had results")
+                else:
+                    print("No failed tasks with results found to fix")
+
+            finally:
+                db.close()
+
+        except Exception as e:
+            print(f"Error fixing failed tasks: {str(e)}")
 
     def delete_project(self, project_path: str) -> bool:
         """Scrapyプロジェクトを削除"""

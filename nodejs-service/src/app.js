@@ -46,14 +46,19 @@ app.use(helmet({
   crossOriginEmbedderPolicy: false
 }));
 
-app.use(compression());
-
+// CORS設定を最初に配置（プリフライトリクエストを適切に処理）
 app.use(cors({
-  origin: process.env.CORS_ORIGIN?.split(',') || ['http://localhost:3000', 'http://localhost:8000'],
-  credentials: process.env.CORS_CREDENTIALS === 'true',
+  origin: true, // 開発環境では全てのオリジンを許可
+  credentials: false,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'x-api-key']
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-api-key'],
+  optionsSuccessStatus: 200 // プリフライトリクエストの成功ステータス
 }));
+
+// プリフライトリクエストを明示的に処理
+app.options('*', cors());
+
+app.use(compression());
 
 app.use(morgan('combined', {
   stream: {

@@ -88,8 +88,11 @@ class Spider(Base):
 
     id = Column(String, primary_key=True, index=True)
     name = Column(String, nullable=False)
+    description = Column(Text)
     code = Column(Text, nullable=False)
     template = Column(String)
+    framework = Column(String)
+    start_urls = Column(JSON)
     settings = Column(JSON)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

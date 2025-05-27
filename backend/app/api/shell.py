@@ -8,8 +8,8 @@ import json
 import asyncio
 from datetime import datetime
 
-from app.api.auth import get_current_active_user
-from app.database import User
+from ..api.auth import get_current_active_user
+from ..database import User
 
 router = APIRouter()
 

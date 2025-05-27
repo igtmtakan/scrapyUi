@@ -5,9 +5,10 @@ import uuid
 from datetime import datetime
 from croniter import croniter
 
-from ..database import get_db, Schedule as DBSchedule, Project as DBProject, Spider as DBSpider
+from ..database import get_db, Schedule as DBSchedule, Project as DBProject, Spider as DBSpider, Task as DBTask
 from ..models.schemas import Schedule, ScheduleCreate, ScheduleUpdate
 from ..tasks.scrapy_tasks import scheduled_spider_run
+from ..services.scheduler_service import scheduler_service
 
 router = APIRouter(
     responses={
@@ -19,7 +20,6 @@ router = APIRouter(
 
 @router.get(
     "/",
-    response_model=List[Schedule],
     summary="スケジュール一覧取得",
     description="登録されているスケジュールの一覧を取得します。",
     response_description="スケジュールのリスト"
@@ -42,19 +42,88 @@ async def get_schedules(
     - **200**: スケジュールのリストを返します
     - **500**: サーバーエラー
     """
-    query = db.query(DBSchedule)
+    # JOINクエリでプロジェクトとスパイダー情報を含める
+    query = db.query(
+        DBSchedule,
+        DBProject.name.label('project_name'),
+        DBSpider.name.label('spider_name')
+    ).join(
+        DBProject, DBSchedule.project_id == DBProject.id
+    ).join(
+        DBSpider, DBSchedule.spider_id == DBSpider.id
+    )
 
     if project_id:
         query = query.filter(DBSchedule.project_id == project_id)
     if is_active is not None:
         query = query.filter(DBSchedule.is_active == is_active)
 
-    schedules = query.order_by(DBSchedule.created_at.desc()).all()
+    results = query.order_by(DBSchedule.created_at.desc()).all()
+
+    # レスポンス形式を調整
+    schedules = []
+    for schedule, project_name, spider_name in results:
+        # 最新のタスクを取得
+        latest_task = db.query(DBTask).filter(
+            DBTask.project_id == schedule.project_id,
+            DBTask.spider_id == schedule.spider_id
+        ).order_by(DBTask.created_at.desc()).first()
+
+        # Cron式から間隔（分）を推定
+        interval_minutes = None
+        try:
+            # 簡易的な間隔計算（より正確な実装が必要な場合は改善）
+            if schedule.cron_expression.startswith("*/"):
+                # */7 * * * * 形式
+                parts = schedule.cron_expression.split()
+                if len(parts) >= 1 and parts[0].startswith("*/"):
+                    interval_minutes = int(parts[0][2:])
+            elif " " in schedule.cron_expression:
+                # 0 */2 * * * 形式（時間間隔）
+                parts = schedule.cron_expression.split()
+                if len(parts) >= 2 and parts[1].startswith("*/"):
+                    interval_minutes = int(parts[1][2:]) * 60
+        except:
+            pass
+
+        # 最新タスクの情報を含める
+        latest_task_dict = None
+        if latest_task:
+            latest_task_dict = {
+                "id": latest_task.id,
+                "status": latest_task.status,
+                "items_count": latest_task.items_count,
+                "requests_count": latest_task.requests_count,
+                "error_count": latest_task.error_count,
+                "started_at": latest_task.started_at,
+                "finished_at": latest_task.finished_at,
+                "created_at": latest_task.created_at
+            }
+
+        schedule_dict = {
+            "id": schedule.id,
+            "name": schedule.name,
+            "description": schedule.description,
+            "cron_expression": schedule.cron_expression,
+            "interval_minutes": interval_minutes,
+            "project_id": schedule.project_id,
+            "spider_id": schedule.spider_id,
+            "is_active": schedule.is_active,
+            "last_run": schedule.last_run,
+            "next_run": schedule.next_run,
+            "created_at": schedule.created_at,
+            "updated_at": schedule.updated_at,
+            "settings": schedule.settings,
+            "project_name": project_name,
+            "spider_name": spider_name,
+            "latest_task": latest_task_dict
+        }
+        schedules.append(schedule_dict)
+
     return schedules
 
 @router.get(
     "/{schedule_id}",
-    response_model=Schedule,
     summary="スケジュール詳細取得",
     description="指定されたスケジュールの詳細情報を取得します。",
     response_description="スケジュールの詳細情報"
@@ -73,17 +142,47 @@ async def get_schedule(schedule_id: str, db: Session = Depends(get_db)):
     - **404**: スケジュールが見つからない場合
     - **500**: サーバーエラー
     """
-    schedule = db.query(DBSchedule).filter(DBSchedule.id == schedule_id).first()
-    if not schedule:
+    # JOINクエリでプロジェクトとスパイダー情報を含める
+    result = db.query(
+        DBSchedule,
+        DBProject.name.label('project_name'),
+        DBSpider.name.label('spider_name')
+    ).join(
+        DBProject, DBSchedule.project_id == DBProject.id
+    ).join(
+        DBSpider, DBSchedule.spider_id == DBSpider.id
+    ).filter(DBSchedule.id == schedule_id).first()
+
+    if not result:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Schedule not found"
         )
-    return schedule
+
+    schedule, project_name, spider_name = result
+
+    # レスポンス形式を調整
+    schedule_dict = {
+        "id": schedule.id,
+        "name": schedule.name,
+        "description": schedule.description,
+        "cron_expression": schedule.cron_expression,
+        "project_id": schedule.project_id,
+        "spider_id": schedule.spider_id,
+        "is_active": schedule.is_active,
+        "last_run": schedule.last_run,
+        "next_run": schedule.next_run,
+        "created_at": schedule.created_at,
+        "updated_at": schedule.updated_at,
+        "settings": schedule.settings,
+        "project_name": project_name,
+        "spider_name": spider_name
+    }
+
+    return schedule_dict
 
 @router.post(
     "/",
-    response_model=Schedule,
     status_code=status.HTTP_201_CREATED,
     summary="スケジュール作成",
     description="新しいスケジュールを作成します。",
@@ -164,11 +263,28 @@ async def create_schedule(schedule: ScheduleCreate, db: Session = Depends(get_db
     db.commit()
     db.refresh(db_schedule)
 
-    return db_schedule
+    # プロジェクト・スパイダー名を含めてレスポンス
+    schedule_dict = {
+        "id": db_schedule.id,
+        "name": db_schedule.name,
+        "description": db_schedule.description,
+        "cron_expression": db_schedule.cron_expression,
+        "project_id": db_schedule.project_id,
+        "spider_id": db_schedule.spider_id,
+        "is_active": db_schedule.is_active,
+        "last_run": db_schedule.last_run,
+        "next_run": db_schedule.next_run,
+        "created_at": db_schedule.created_at,
+        "updated_at": db_schedule.updated_at,
+        "settings": db_schedule.settings,
+        "project_name": project.name if project else "N/A",
+        "spider_name": spider.name if spider else "N/A"
+    }
+
+    return schedule_dict
 
 @router.put(
     "/{schedule_id}",
-    response_model=Schedule,
     summary="スケジュール更新",
     description="既存のスケジュールを更新します。",
     response_description="更新されたスケジュールの情報"
@@ -227,7 +343,29 @@ async def update_schedule(
     db.commit()
     db.refresh(db_schedule)
 
-    return db_schedule
+    # プロジェクト・スパイダー名を取得
+    project = db.query(DBProject).filter(DBProject.id == db_schedule.project_id).first()
+    spider = db.query(DBSpider).filter(DBSpider.id == db_schedule.spider_id).first()
+
+    # プロジェクト・スパイダー名を含めてレスポンス
+    schedule_dict = {
+        "id": db_schedule.id,
+        "name": db_schedule.name,
+        "description": db_schedule.description,
+        "cron_expression": db_schedule.cron_expression,
+        "project_id": db_schedule.project_id,
+        "spider_id": db_schedule.spider_id,
+        "is_active": db_schedule.is_active,
+        "last_run": db_schedule.last_run,
+        "next_run": db_schedule.next_run,
+        "created_at": db_schedule.created_at,
+        "updated_at": db_schedule.updated_at,
+        "settings": db_schedule.settings,
+        "project_name": project.name if project else "N/A",
+        "spider_name": spider.name if spider else "N/A"
+    }
+
+    return schedule_dict
 
 @router.delete(
     "/{schedule_id}",
@@ -356,3 +494,19 @@ async def toggle_schedule(schedule_id: str, db: Session = Depends(get_db)):
         "schedule_id": schedule_id,
         "is_active": db_schedule.is_active
     }
+
+@router.get(
+    "/scheduler/status",
+    summary="スケジューラー状態取得",
+    description="スケジューラーサービスの状態を取得します。"
+)
+async def get_scheduler_status():
+    """スケジューラーサービスの状態を取得"""
+    try:
+        status = scheduler_service.get_status()
+        return status
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get scheduler status: {str(e)}"
+        )

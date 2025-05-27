@@ -4,13 +4,13 @@ import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { 
-  Activity, 
-  Server, 
-  Globe, 
-  RefreshCw, 
-  AlertCircle, 
-  CheckCircle, 
+import {
+  Activity,
+  Server,
+  Globe,
+  RefreshCw,
+  AlertCircle,
+  CheckCircle,
   Clock,
   MemoryStick,
   Cpu,
@@ -33,10 +33,41 @@ export default function NodeJSMonitor({ className }: NodeJSMonitorProps) {
       setLoading(true);
       setError(null);
       const healthData = await nodejsService.checkHealth();
+
+      console.log('Health data received:', healthData);
+
+      // データの整合性をチェック
+      if (!healthData) {
+        throw new Error('No health data received');
+      }
+
+      // nodejs_serviceが存在しない場合はデフォルト値を設定
+      if (!healthData.nodejs_service) {
+        healthData.nodejs_service = {
+          status: 'unknown',
+          timestamp: new Date().toISOString(),
+          uptime: 0,
+          memory: {
+            rss: 0,
+            heapTotal: 0,
+            heapUsed: 0,
+            external: 0,
+            arrayBuffers: 0
+          },
+          version: 'unknown',
+          environment: 'unknown',
+          service: {
+            name: 'ScrapyUI Node.js Service',
+            version: 'unknown'
+          }
+        };
+      }
+
       setHealth(healthData);
       setLastUpdate(new Date());
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch health data');
+      console.error('Health check failed:', err);
     } finally {
       setLoading(false);
     }
@@ -44,7 +75,7 @@ export default function NodeJSMonitor({ className }: NodeJSMonitorProps) {
 
   useEffect(() => {
     fetchHealth();
-    
+
     // Auto-refresh every 30 seconds
     const interval = setInterval(fetchHealth, 30000);
     return () => clearInterval(interval);
@@ -119,7 +150,7 @@ export default function NodeJSMonitor({ className }: NodeJSMonitorProps) {
   if (!health) return null;
 
   const { nodejs_service, integration_status } = health;
-  const browserPoolStatus = nodejsService.getBrowserPoolStatus(nodejs_service.browserPool);
+  const browserPoolStatus = nodejsService.getBrowserPoolStatus(nodejs_service?.browserPool);
 
   return (
     <div className={`space-y-6 ${className}`}>
@@ -144,9 +175,9 @@ export default function NodeJSMonitor({ className }: NodeJSMonitorProps) {
               <div>
                 <p className="text-sm font-medium text-gray-600">Service Status</p>
                 <div className="flex items-center gap-2 mt-1">
-                  {getStatusIcon(nodejs_service.status)}
-                  <Badge className={getStatusColor(nodejs_service.status)}>
-                    {nodejs_service.status}
+                  {getStatusIcon(nodejs_service?.status || 'unknown')}
+                  <Badge className={getStatusColor(nodejs_service?.status || 'unknown')}>
+                    {nodejs_service?.status || 'Unknown'}
                   </Badge>
                 </div>
               </div>
@@ -158,9 +189,9 @@ export default function NodeJSMonitor({ className }: NodeJSMonitorProps) {
               <div>
                 <p className="text-sm font-medium text-gray-600">Integration</p>
                 <div className="flex items-center gap-2 mt-1">
-                  {getStatusIcon(integration_status)}
-                  <Badge className={getStatusColor(integration_status)}>
-                    {integration_status}
+                  {getStatusIcon(integration_status || 'unknown')}
+                  <Badge className={getStatusColor(integration_status || 'unknown')}>
+                    {integration_status || 'Unknown'}
                   </Badge>
                 </div>
               </div>
@@ -173,7 +204,10 @@ export default function NodeJSMonitor({ className }: NodeJSMonitorProps) {
                 <p className="text-sm font-medium text-gray-600">Browser Pool</p>
                 <div className="flex items-center gap-2 mt-1">
                   <Badge className={browserPoolStatus.color}>
-                    {nodejs_service.browserPool.available}/{nodejs_service.browserPool.maxInstances}
+                    {nodejs_service?.browserPool ?
+                      `${nodejs_service.browserPool.available}/${nodejs_service.browserPool.maxInstances}` :
+                      'N/A'
+                    }
                   </Badge>
                   <span className="text-xs text-gray-500">available</span>
                 </div>
@@ -197,21 +231,23 @@ export default function NodeJSMonitor({ className }: NodeJSMonitorProps) {
           <CardContent className="space-y-4">
             <div className="flex justify-between items-center">
               <span className="text-sm font-medium">Service Version</span>
-              <Badge variant="outline">{nodejs_service.service.version}</Badge>
+              <Badge variant="outline">{nodejs_service?.service?.version || 'N/A'}</Badge>
             </div>
             <div className="flex justify-between items-center">
               <span className="text-sm font-medium">Node.js Version</span>
-              <Badge variant="outline">{nodejs_service.version}</Badge>
+              <Badge variant="outline">{nodejs_service?.version || 'N/A'}</Badge>
             </div>
             <div className="flex justify-between items-center">
               <span className="text-sm font-medium">Environment</span>
-              <Badge variant="outline">{nodejs_service.environment}</Badge>
+              <Badge variant="outline">{nodejs_service?.environment || 'N/A'}</Badge>
             </div>
             <div className="flex justify-between items-center">
               <span className="text-sm font-medium">Uptime</span>
               <div className="flex items-center gap-2">
                 <Clock className="w-4 h-4 text-gray-400" />
-                <span className="text-sm">{nodejsService.formatUptime(nodejs_service.uptime)}</span>
+                <span className="text-sm">
+                  {nodejs_service?.uptime ? nodejsService.formatUptime(nodejs_service.uptime) : 'N/A'}
+                </span>
               </div>
             </div>
           </CardContent>
@@ -228,19 +264,27 @@ export default function NodeJSMonitor({ className }: NodeJSMonitorProps) {
           <CardContent className="space-y-4">
             <div className="flex justify-between items-center">
               <span className="text-sm font-medium">RSS</span>
-              <span className="text-sm">{nodejsService.formatMemoryUsage(nodejs_service.memory.rss)}</span>
+              <span className="text-sm">
+                {nodejs_service?.memory?.rss ? nodejsService.formatMemoryUsage(nodejs_service.memory.rss) : 'N/A'}
+              </span>
             </div>
             <div className="flex justify-between items-center">
               <span className="text-sm font-medium">Heap Total</span>
-              <span className="text-sm">{nodejsService.formatMemoryUsage(nodejs_service.memory.heapTotal)}</span>
+              <span className="text-sm">
+                {nodejs_service?.memory?.heapTotal ? nodejsService.formatMemoryUsage(nodejs_service.memory.heapTotal) : 'N/A'}
+              </span>
             </div>
             <div className="flex justify-between items-center">
               <span className="text-sm font-medium">Heap Used</span>
-              <span className="text-sm">{nodejsService.formatMemoryUsage(nodejs_service.memory.heapUsed)}</span>
+              <span className="text-sm">
+                {nodejs_service?.memory?.heapUsed ? nodejsService.formatMemoryUsage(nodejs_service.memory.heapUsed) : 'N/A'}
+              </span>
             </div>
             <div className="flex justify-between items-center">
               <span className="text-sm font-medium">External</span>
-              <span className="text-sm">{nodejsService.formatMemoryUsage(nodejs_service.memory.external)}</span>
+              <span className="text-sm">
+                {nodejs_service?.memory?.external ? nodejsService.formatMemoryUsage(nodejs_service.memory.external) : 'N/A'}
+              </span>
             </div>
           </CardContent>
         </Card>

@@ -90,7 +90,9 @@ export default function MonitoringPage() {
       {/* メインコンテンツ */}
       <div className="flex-1 overflow-hidden">
         {activeTab === 'tasks' && (
-          <TaskMonitor showAllTasks={true} />
+          <div className="h-full">
+            <TaskMonitor showAllTasks={true} />
+          </div>
         )}
 
         {activeTab === 'analytics' && (

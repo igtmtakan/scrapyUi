@@ -21,11 +21,19 @@
 - **Task Scheduler**: Schedule and manage spider execution
 - **Data Export**: Export scraped data in multiple formats (JSON, CSV, Excel, XML)
 - **Performance Analytics**: Monitor scraping performance and statistics
+- **Execution History**: Version-based spider result download and management
 
 ### 🔒 **Security & Authentication**
 - **JWT Authentication**: Secure token-based authentication
 - **Role-based Access**: Admin and user roles with appropriate permissions
 - **User Isolation**: Each user can only access their own projects and data
+
+### 🛡️ **Anti-Detection & Optimization**
+- **User-Agent Rotation**: Automatic user-agent switching with scrapy-fake-useragent
+- **Proxy Support**: IP rotation with scrapy-proxies for stealth scraping
+- **HTTP Caching**: Development-friendly caching for faster iteration cycles
+- **Japanese Support**: UTF-8 encoding and Japanese content prioritization
+- **Smart Defaults**: Pre-configured settings for optimal scraping performance
 
 ## 🚀 Quick Start
 
@@ -131,40 +139,66 @@ scrapyui db reset     # Reset database
 ### Environment Variables
 
 ```bash
-# Database
-DATABASE_URL=sqlite:///./scrapyui.db
+# Database Configuration
+DATABASE_TYPE=sqlite
+DATABASE_NAME=/path/to/your/backend/database/scrapy_ui.db
+DATABASE_ECHO=false
 
-# JWT
+# For PostgreSQL
+# DATABASE_TYPE=postgresql
+# DATABASE_HOST=localhost
+# DATABASE_PORT=5432
+# DATABASE_NAME=scrapy_ui
+# DATABASE_USER=scrapy_user
+# DATABASE_PASSWORD=your_password
+
+# JWT Authentication
 SECRET_KEY=your-secret-key-here
 ACCESS_TOKEN_EXPIRE_MINUTES=30
+REFRESH_TOKEN_EXPIRE_DAYS=7
 
-# Redis (for Celery)
-REDIS_URL=redis://localhost:6379/0
-
-# Development
+# Application Settings
+SCRAPY_UI_ENV=production
 DEBUG=false
-TESTING=false
+LOG_LEVEL=INFO
 ```
 
 ### Custom Settings
 
-Create a `.env` file in your project directory:
+Create a `.env` file in your backend directory:
 
 ```env
 # Server Configuration
 HOST=0.0.0.0
 PORT=8000
 
-# Database Configuration
-DATABASE_URL=postgresql://user:password@localhost/scrapyui
+# Database Configuration (SQLite - Recommended for single-user)
+DATABASE_TYPE=sqlite
+DATABASE_NAME=/absolute/path/to/backend/database/scrapy_ui.db
+DATABASE_ECHO=false
+
+# Database Configuration (PostgreSQL - For multi-user production)
+# DATABASE_TYPE=postgresql
+# DATABASE_HOST=localhost
+# DATABASE_PORT=5432
+# DATABASE_NAME=scrapy_ui
+# DATABASE_USER=scrapy_user
+# DATABASE_PASSWORD=your_password
 
 # Security
 SECRET_KEY=your-super-secret-key
+JWT_SECRET_KEY=your-jwt-secret-key
 JWT_ALGORITHM=HS256
 
-# Features
-ENABLE_REGISTRATION=true
-ENABLE_ANALYTICS=true
+# Application Settings
+SCRAPY_UI_ENV=production
+DEBUG=false
+LOG_LEVEL=INFO
+
+# File Paths
+SCRAPY_PROJECTS_DIR=/path/to/scrapy_projects
+UPLOADS_DIR=/path/to/uploads
+EXPORTS_DIR=/path/to/exports
 ```
 
 ## 📚 Documentation

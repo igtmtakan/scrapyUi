@@ -112,7 +112,7 @@ export const useAuthStore = create<AuthState>()(
 
         console.log('🚀 Initializing auth store...');
         set({ isLoading: true });
-        const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+        const token = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null;
         console.log('🔑 Token found:', !!token);
 
         if (!token) {
@@ -140,7 +140,8 @@ export const useAuthStore = create<AuthState>()(
           console.log('❌ Token invalid, removing:', error);
           // トークンが無効な場合は削除
           if (typeof window !== 'undefined') {
-            localStorage.removeItem('token');
+            localStorage.removeItem('access_token');
+            localStorage.removeItem('refresh_token');
           }
           set({
             user: null,

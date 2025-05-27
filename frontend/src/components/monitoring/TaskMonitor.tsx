@@ -13,7 +13,8 @@ import {
   Activity,
   Database,
   Globe,
-  TrendingUp
+  TrendingUp,
+  ExternalLink
 } from 'lucide-react'
 
 interface TaskStatus {
@@ -26,6 +27,9 @@ interface TaskStatus {
   requestsCount: number
   errorCount: number
   progress?: number
+  project_id?: string
+  spider_id?: string
+  error_message?: string
 }
 
 interface TaskMonitorProps {
@@ -37,7 +41,9 @@ export default function TaskMonitor({ taskId, showAllTasks = false }: TaskMonito
   const [tasks, setTasks] = useState<TaskStatus[]>([])
   const [logs, setLogs] = useState<Array<{ timestamp: string; level: string; message: string }>>([])
   const [selectedTask, setSelectedTask] = useState<string | null>(taskId || null)
+  const [selectedTaskDetails, setSelectedTaskDetails] = useState<TaskStatus | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+  const [isLoadingLogs, setIsLoadingLogs] = useState(false)
 
   const [clientId, setClientId] = React.useState('')
   const [mounted, setMounted] = React.useState(false)
@@ -77,7 +83,10 @@ export default function TaskMonitor({ taskId, showAllTasks = false }: TaskMonito
         itemsCount: task.items_count || 0,
         requestsCount: task.requests_count || 0,
         errorCount: task.error_count || 0,
-        progress: calculateProgress(task)
+        progress: calculateProgress(task),
+        project_id: task.project_id,
+        spider_id: task.spider_id,
+        error_message: task.error_message
       }))
 
       setTasks(formattedTasks)
@@ -107,6 +116,32 @@ export default function TaskMonitor({ taskId, showAllTasks = false }: TaskMonito
     return 0
   }
 
+  // タスクのログを取得
+  const loadTaskLogs = async (taskId: string) => {
+    try {
+      setIsLoadingLogs(true)
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/tasks/${taskId}/logs?limit=100`)
+
+      if (response.ok) {
+        const logsData = await response.json()
+        const formattedLogs = logsData.map((log: any) => ({
+          timestamp: log.timestamp || new Date().toISOString(),
+          level: log.level || 'INFO',
+          message: log.message || ''
+        }))
+        setLogs(formattedLogs)
+      } else {
+        console.error('Failed to load logs:', response.status)
+        setLogs([])
+      }
+    } catch (error) {
+      console.error('Error loading logs:', error)
+      setLogs([])
+    } finally {
+      setIsLoadingLogs(false)
+    }
+  }
+
   // 初期データ読み込み
   React.useEffect(() => {
     if (mounted) {
@@ -120,11 +155,13 @@ export default function TaskMonitor({ taskId, showAllTasks = false }: TaskMonito
   const { isConnected, connectionStatus, lastMessage, subscribeToTask, unsubscribeFromTask } = useWebSocket({
     url: mounted && clientId ? `${process.env.NEXT_PUBLIC_WS_URL}/ws/${clientId}` : '',
     onMessage: (message) => {
+      console.log('WebSocket message received:', message)
       handleWebSocketMessage(message)
     },
     onConnect: () => {
-      console.log('WebSocket connected')
+      console.log('WebSocket connected successfully')
       if (taskId) {
+        console.log('Subscribing to task:', taskId)
         subscribeToTask(taskId)
       }
     },
@@ -132,7 +169,12 @@ export default function TaskMonitor({ taskId, showAllTasks = false }: TaskMonito
       console.log('WebSocket disconnected')
     },
     onError: (error) => {
-      console.error('WebSocket error:', error)
+      console.error('WebSocket error in TaskMonitor:', {
+        error,
+        url: `${process.env.NEXT_PUBLIC_WS_URL}/ws/${clientId}`,
+        clientId,
+        mounted
+      })
     }
   })
 
@@ -237,8 +279,16 @@ export default function TaskMonitor({ taskId, showAllTasks = false }: TaskMonito
     }
 
     setSelectedTask(taskId)
+    const task = tasks.find(t => t.id === taskId)
+    setSelectedTaskDetails(task || null)
+
     subscribeToTask(taskId)
     setLogs([]) // ログをクリア
+
+    // エラータスクまたは完了したタスクのログを読み込み
+    if (task && (task.status === 'FAILED' || task.status === 'FINISHED' || task.errorCount > 0)) {
+      loadTaskLogs(taskId)
+    }
   }
 
   return (
@@ -264,18 +314,22 @@ export default function TaskMonitor({ taskId, showAllTasks = false }: TaskMonito
 
       <div className="flex-1 flex">
         {/* タスクリスト */}
-        <div className="w-1/3 border-r border-gray-700">
-          <div className="p-3 border-b border-gray-700">
+        <div className="w-1/3 border-r border-gray-700 flex flex-col">
+          <div className="p-3 border-b border-gray-700 flex-shrink-0">
             <h3 className="text-sm font-medium text-gray-300">Active Tasks</h3>
           </div>
 
-          <div className="overflow-y-auto">
+          <div className="flex-1 overflow-y-auto max-h-full scrollbar-thin scrollbar-webkit">
             {tasks.map(task => (
               <div
                 key={task.id}
                 onClick={() => handleTaskSelect(task.id)}
                 className={`p-3 border-b border-gray-800 cursor-pointer hover:bg-gray-800 transition-colors ${
-                  selectedTask === task.id ? 'bg-gray-800 border-l-4 border-l-blue-500' : ''
+                  selectedTask === task.id
+                    ? 'bg-gray-800 border-l-4 border-l-blue-500'
+                    : task.status === 'FAILED'
+                    ? 'border-l-2 border-l-red-500 bg-red-900/10'
+                    : ''
                 }`}
               >
                 <div className="flex items-center justify-between mb-2">
@@ -321,16 +375,20 @@ export default function TaskMonitor({ taskId, showAllTasks = false }: TaskMonito
             ))}
 
             {isLoading && (
-              <div className="p-8 text-center text-gray-500">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto mb-2"></div>
-                <p className="text-sm">Loading tasks...</p>
+              <div className="flex-1 flex items-center justify-center p-8 text-gray-500">
+                <div className="text-center">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto mb-2"></div>
+                  <p className="text-sm">Loading tasks...</p>
+                </div>
               </div>
             )}
 
             {!isLoading && tasks.length === 0 && (
-              <div className="p-8 text-center text-gray-500">
-                <Activity className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                <p className="text-sm">{showAllTasks ? 'No tasks found' : 'No active tasks'}</p>
+              <div className="flex-1 flex items-center justify-center p-8 text-gray-500">
+                <div className="text-center">
+                  <Activity className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                  <p className="text-sm">{showAllTasks ? 'No tasks found' : 'No active tasks'}</p>
+                </div>
               </div>
             )}
           </div>
@@ -340,17 +398,72 @@ export default function TaskMonitor({ taskId, showAllTasks = false }: TaskMonito
         <div className="flex-1 flex flex-col">
           <div className="p-3 border-b border-gray-700">
             <h3 className="text-sm font-medium text-gray-300">
-              {selectedTask ? `Logs - Task ${selectedTask}` : 'Select a task to view logs'}
+              {selectedTask ? `Logs - Task ${selectedTask.slice(0, 8)}...` : 'Select a task to view logs'}
             </h3>
           </div>
 
-          <div className="flex-1 overflow-y-auto p-3 font-mono text-sm">
+          {/* エラー詳細セクション */}
+          {selectedTaskDetails && selectedTaskDetails.status === 'FAILED' && (
+            <div className="p-3 bg-red-900/20 border-b border-red-500/30">
+              <div className="flex items-center space-x-2 mb-2">
+                <XCircle className="w-4 h-4 text-red-400" />
+                <h4 className="text-sm font-medium text-red-400">エラー詳細</h4>
+              </div>
+
+              <div className="space-y-2 text-sm">
+                <div className="grid grid-cols-3 gap-4">
+                  <div>
+                    <span className="text-gray-400">エラー数:</span>
+                    <span className="ml-2 text-red-400 font-semibold">{selectedTaskDetails.errorCount}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-400">取得アイテム:</span>
+                    <span className="ml-2 text-white">{selectedTaskDetails.itemsCount}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-400">リクエスト数:</span>
+                    <span className="ml-2 text-white">{selectedTaskDetails.requestsCount}</span>
+                  </div>
+                </div>
+
+                {selectedTaskDetails.error_message && (
+                  <div className="mt-2">
+                    <span className="text-gray-400">エラーメッセージ:</span>
+                    <div className="mt-1 p-2 bg-gray-800 rounded text-red-300 text-xs font-mono">
+                      {selectedTaskDetails.error_message}
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex items-center space-x-4 mt-2">
+                  <button
+                    onClick={() => selectedTaskDetails.project_id && window.open(`/projects/${selectedTaskDetails.project_id}/tasks/${selectedTaskDetails.id}`, '_blank')}
+                    className="text-blue-400 hover:text-blue-300 text-xs flex items-center space-x-1"
+                  >
+                    <ExternalLink className="w-3 h-3" />
+                    <span>詳細ページを開く</span>
+                  </button>
+
+                  {isLoadingLogs && (
+                    <div className="flex items-center space-x-1 text-xs text-gray-400">
+                      <div className="animate-spin rounded-full h-3 w-3 border-b border-blue-400"></div>
+                      <span>ログ読み込み中...</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="flex-1 overflow-y-auto p-3 font-mono text-sm scrollbar-thin scrollbar-webkit">
             {logs.map((log, index) => (
-              <div key={index} className="mb-1 flex">
-                <span className="text-gray-500 mr-2">
+              <div key={index} className={`mb-1 flex ${
+                log.level === 'ERROR' ? 'bg-red-900/20 p-2 rounded' : ''
+              }`}>
+                <span className="text-gray-500 mr-2 flex-shrink-0">
                   {new Date(log.timestamp).toLocaleTimeString()}
                 </span>
-                <span className={`mr-2 ${
+                <span className={`mr-2 flex-shrink-0 font-semibold ${
                   log.level === 'ERROR' ? 'text-red-400' :
                   log.level === 'WARNING' ? 'text-yellow-400' :
                   log.level === 'INFO' ? 'text-blue-400' :
@@ -358,19 +471,40 @@ export default function TaskMonitor({ taskId, showAllTasks = false }: TaskMonito
                 }`}>
                   [{log.level}]
                 </span>
-                <span className="text-gray-300">{log.message}</span>
+                <span className={`${
+                  log.level === 'ERROR' ? 'text-red-300' : 'text-gray-300'
+                } break-all`}>
+                  {log.message}
+                </span>
               </div>
             ))}
 
-            {logs.length === 0 && selectedTask && (
+            {isLoadingLogs && (
               <div className="text-center text-gray-500 mt-8">
-                <p>Waiting for logs...</p>
+                <div className="flex items-center justify-center space-x-2">
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-400"></div>
+                  <p>ログを読み込み中...</p>
+                </div>
+              </div>
+            )}
+
+            {logs.length === 0 && selectedTask && !isLoadingLogs && (
+              <div className="text-center text-gray-500 mt-8">
+                <p>
+                  {selectedTaskDetails?.status === 'FAILED'
+                    ? 'エラーログが見つかりません'
+                    : 'ログを待機中...'}
+                </p>
               </div>
             )}
 
             {!selectedTask && (
               <div className="text-center text-gray-500 mt-8">
-                <p>Select a task to view real-time logs</p>
+                <div className="space-y-2">
+                  <Activity className="w-8 h-8 mx-auto opacity-50" />
+                  <p>タスクを選択してログとエラー詳細を表示</p>
+                  <p className="text-xs">エラータスクを選択すると詳細なエラー情報が表示されます</p>
+                </div>
               </div>
             )}
           </div>
