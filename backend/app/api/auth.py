@@ -342,3 +342,108 @@ async def get_current_active_user(
         )
 
     return user
+
+@router.put(
+    "/profile",
+    response_model=UserResponse,
+    summary="プロフィール更新",
+    description="認証されたユーザーのプロフィール情報を更新します。"
+)
+async def update_profile(
+    profile_data: dict,
+    current_user: DBUser = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    ## プロフィール更新
+
+    認証されたユーザーのプロフィール情報を更新します。
+
+    ### リクエストボディ
+    - **full_name** (optional): フルネーム
+    - **timezone** (optional): タイムゾーン
+    - **preferences** (optional): ユーザー設定
+
+    ### レスポンス
+    - **200**: 更新されたユーザー情報を返します
+    - **401**: 認証が必要
+    - **422**: バリデーションエラー
+    - **500**: サーバーエラー
+    """
+
+    # 許可されたフィールドのみ更新
+    allowed_fields = {'full_name', 'timezone', 'preferences'}
+
+    for field, value in profile_data.items():
+        if field in allowed_fields and hasattr(current_user, field):
+            setattr(current_user, field, value)
+
+    # 更新日時を設定
+    current_user.updated_at = datetime.now(timezone.utc)
+
+    db.commit()
+    db.refresh(current_user)
+
+    return current_user
+
+@router.put(
+    "/change-password",
+    summary="パスワード変更",
+    description="認証されたユーザーのパスワードを変更します。"
+)
+async def change_password(
+    password_data: dict,
+    current_user: DBUser = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    ## パスワード変更
+
+    認証されたユーザーのパスワードを変更します。
+
+    ### リクエストボディ
+    - **current_password**: 現在のパスワード
+    - **new_password**: 新しいパスワード（6文字以上）
+
+    ### レスポンス
+    - **200**: パスワードが正常に変更された場合
+    - **400**: リクエストデータが不正な場合
+    - **401**: 認証が必要、または現在のパスワードが間違っている場合
+    - **422**: バリデーションエラー
+    - **500**: サーバーエラー
+    """
+
+    # 必須フィールドの確認
+    if 'current_password' not in password_data or 'new_password' not in password_data:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="現在のパスワードと新しいパスワードの両方が必要です"
+        )
+
+    current_password = password_data['current_password']
+    new_password = password_data['new_password']
+
+    # 現在のパスワードを確認
+    if not PasswordHandler.verify_password(current_password, current_user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="現在のパスワードが正しくありません"
+        )
+
+    # 新しいパスワードのバリデーション
+    if len(new_password) < 6:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="新しいパスワードは6文字以上である必要があります"
+        )
+
+    # 新しいパスワードをハッシュ化
+    hashed_new_password = PasswordHandler.hash_password(new_password)
+
+    # パスワードを更新
+    current_user.hashed_password = hashed_new_password
+    current_user.updated_at = datetime.now(timezone.utc)
+
+    db.commit()
+
+    return {"message": "パスワードが正常に変更されました"}

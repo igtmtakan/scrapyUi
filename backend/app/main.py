@@ -17,8 +17,8 @@ from .middleware.error_middleware import (
     PerformanceLoggingMiddleware
 )
 
-from .api import projects, spiders, tasks, results, schedules, notifications, auth, proxies, ai, admin, script_runner, project_files, performance, system
-# from .api import shell, database_config, extensions  # 一時的に無効化
+from .api import projects, spiders, tasks, results, schedules, notifications, auth, proxies, ai, admin, script_runner, project_files, performance, system, database_config, settings
+# from .api import shell, extensions  # 一時的に無効化
 from .api.routes import nodejs_integration
 # from .api import settings
 from .database import engine, Base
@@ -429,7 +429,8 @@ app.include_router(notifications.router, prefix="/api/notifications", tags=["not
 app.include_router(proxies.router, prefix="/api/proxies", tags=["proxies"])
 app.include_router(ai.router, prefix="/api/ai", tags=["ai-analysis"])
 # app.include_router(shell.router, prefix="/api/shell", tags=["scrapy-shell"])  # 一時的に無効化
-# app.include_router(database_config.router, prefix="/api/database", tags=["database-config"])  # 一時的に無効化
+app.include_router(database_config.router, prefix="/api/database", tags=["database-config"])
+app.include_router(settings.router, prefix="/api/settings", tags=["settings"])
 # app.include_router(extensions.router, prefix="/api", tags=["extensions"])  # 一時的に無効化
 app.include_router(admin.router, tags=["admin"])
 app.include_router(script_runner.router, prefix="/api/script", tags=["script-runner"])

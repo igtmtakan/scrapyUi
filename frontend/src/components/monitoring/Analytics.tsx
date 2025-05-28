@@ -75,6 +75,7 @@ export default function Analytics() {
     recentActivity: []
   });
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     loadAnalyticsData();
@@ -86,20 +87,63 @@ export default function Analytics() {
     try {
       setIsLoading(true);
 
+      const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+
       // タスクデータを取得
-      const tasksResponse = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/tasks/`);
+      const tasksResponse = await fetch(`${baseUrl}/api/tasks/`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          'Origin': window.location.origin,
+        },
+        credentials: 'omit'
+      });
+
+      if (!tasksResponse.ok) {
+        throw new Error(`Tasks API failed: ${tasksResponse.status} ${tasksResponse.statusText}`);
+      }
+
       const tasks = await tasksResponse.json();
 
       // 結果データを取得
-      const resultsResponse = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/results/`);
+      const resultsResponse = await fetch(`${baseUrl}/api/results/`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          'Origin': window.location.origin,
+        },
+        credentials: 'omit'
+      });
+
+      if (!resultsResponse.ok) {
+        throw new Error(`Results API failed: ${resultsResponse.status} ${resultsResponse.statusText}`);
+      }
+
       const results = await resultsResponse.json();
 
       // データを分析
       const analytics = analyzeData(tasks, results);
       setAnalyticsData(analytics);
+      setError(null); // 成功時にエラーをクリア
 
     } catch (error) {
       console.error('Failed to load analytics data:', error);
+      setError(error instanceof Error ? error.message : 'Unknown error occurred');
+
+      // フォールバックデータを設定
+      setAnalyticsData({
+        totalTasks: 0,
+        activeTasks: 0,
+        totalResults: 0,
+        successRate: 0,
+        systemLoad: 0,
+        taskTrends: [],
+        statusDistribution: [],
+        spiderPerformance: [],
+        dailyVolume: [],
+        topDomains: [],
+        recentActivity: []
+      });
     } finally {
       setIsLoading(false);
     }
@@ -293,6 +337,31 @@ export default function Analytics() {
         <div className="p-6">
           <div className="flex items-center justify-center h-64">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="h-full overflow-y-auto">
+        <div className="p-6">
+          <div className="flex flex-col items-center justify-center h-64 space-y-4">
+            <div className="text-red-400 text-center">
+              <Activity className="w-12 h-12 mx-auto mb-4 opacity-50" />
+              <h3 className="text-lg font-semibold mb-2">データの読み込みに失敗しました</h3>
+              <p className="text-sm text-gray-400 mb-4">{error}</p>
+              <button
+                onClick={() => {
+                  setError(null);
+                  loadAnalyticsData();
+                }}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                再試行
+              </button>
+            </div>
           </div>
         </div>
       </div>

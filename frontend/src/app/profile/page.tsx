@@ -27,6 +27,11 @@ export default function ProfilePage() {
     email: '',
     timezone: 'UTC',
   });
+  const [stats, setStats] = useState({
+    projectCount: 0,
+    taskCount: 0,
+    isLoading: true,
+  });
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -44,21 +49,87 @@ export default function ProfilePage() {
     }
   }, [isAuthenticated, user, router]);
 
+  // 統計データを取得する関数
+  const loadStats = async () => {
+    try {
+      setStats(prev => ({ ...prev, isLoading: true }));
+
+      const { apiClient } = await import('@/lib/api');
+
+      console.log('📊 Loading profile stats...');
+
+      // プロジェクト数を取得
+      console.log('📁 Fetching projects...');
+      const projects = await apiClient.getProjects();
+      console.log('📁 Projects loaded:', projects.length);
+
+      // タスク数を取得
+      console.log('📋 Fetching tasks...');
+      const tasks = await apiClient.getTasks();
+      console.log('📋 Tasks loaded:', tasks.length);
+
+      setStats({
+        projectCount: projects.length,
+        taskCount: tasks.length,
+        isLoading: false,
+      });
+
+      console.log('✅ Profile stats loaded successfully');
+    } catch (error) {
+      console.error('❌ Failed to load stats:', error);
+
+      // エラーの詳細をログ出力
+      if (error instanceof Error) {
+        console.error('Error message:', error.message);
+        console.error('Error stack:', error.stack);
+      }
+
+      setStats(prev => ({ ...prev, isLoading: false }));
+    }
+  };
+
+  // 統計データを初期化時に読み込み
+  useEffect(() => {
+    if (isAuthenticated && user) {
+      loadStats();
+    }
+  }, [isAuthenticated, user]);
+
   const handleSave = async () => {
     try {
+      console.log('🔄 Starting profile update...');
+      console.log('📊 Current auth state:', {
+        isAuthenticated,
+        hasUser: !!user,
+        userEmail: user?.email
+      });
+
+      // トークンの存在確認
+      const token = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null;
+      console.log('🔑 Token status:', { hasToken: !!token, tokenLength: token?.length });
+
       // API呼び出しでプロフィール更新
       const { apiClient } = await import('@/lib/api');
+      console.log('📡 Calling updateProfile API...');
+
       await apiClient.updateProfile({
         full_name: formData.full_name,
         timezone: formData.timezone,
       });
 
+      console.log('✅ Profile update successful');
+
       // ユーザー情報を再取得
       await getCurrentUser();
       setIsEditing(false);
     } catch (error) {
-      console.error('Profile update failed:', error);
-      // エラーハンドリング（実際の実装では通知を表示）
+      console.error('❌ Profile update failed:', error);
+
+      // 認証エラーの場合はログインページにリダイレクト
+      if (error instanceof Error && error.message.includes('Not authenticated')) {
+        console.log('🔄 Authentication error detected, redirecting to login...');
+        router.push('/login');
+      }
     }
   };
 
@@ -143,11 +214,23 @@ export default function ProfilePage() {
               <div className="mt-6 border-t border-gray-200 pt-6">
                 <div className="grid grid-cols-2 gap-4 text-center">
                   <div>
-                    <div className="text-2xl font-bold text-gray-900">0</div>
+                    {stats.isLoading ? (
+                      <div className="text-2xl font-bold text-gray-400">
+                        <div className="animate-pulse">-</div>
+                      </div>
+                    ) : (
+                      <div className="text-2xl font-bold text-gray-900">{stats.projectCount}</div>
+                    )}
                     <div className="text-sm text-gray-600">プロジェクト</div>
                   </div>
                   <div>
-                    <div className="text-2xl font-bold text-gray-900">0</div>
+                    {stats.isLoading ? (
+                      <div className="text-2xl font-bold text-gray-400">
+                        <div className="animate-pulse">-</div>
+                      </div>
+                    ) : (
+                      <div className="text-2xl font-bold text-gray-900">{stats.taskCount}</div>
+                    )}
                     <div className="text-sm text-gray-600">タスク</div>
                   </div>
                 </div>
