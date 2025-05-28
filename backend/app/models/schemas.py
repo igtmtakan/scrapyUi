@@ -255,11 +255,23 @@ class UserResponse(UserBase):
         from_attributes = True
 
 # Admin user management schemas
+class UserAdminCreate(BaseModel):
+    email: str = Field(..., pattern=r'^[^@]+@[^@]+\.[^@]+$')
+    username: str = Field(..., min_length=3, max_length=50)
+    full_name: Optional[str] = None
+    password: str = Field(..., min_length=8)
+    role: Optional[str] = "user"  # 文字列として受け取り、後でUserRoleに変換
+    is_active: Optional[bool] = True
+    is_superuser: Optional[bool] = False
+    avatar_url: Optional[str] = None
+    timezone: Optional[str] = "UTC"
+    preferences: Optional[Dict[str, Any]] = {}
+
 class UserAdminUpdate(BaseModel):
     full_name: Optional[str] = None
     is_active: Optional[bool] = None
     is_superuser: Optional[bool] = None
-    role: Optional[UserRole] = None
+    role: Optional[str] = None  # 文字列として受け取り、後でUserRoleに変換
     avatar_url: Optional[str] = None
     timezone: Optional[str] = None
     preferences: Optional[Dict[str, Any]] = None
@@ -274,9 +286,12 @@ class UserListResponse(BaseModel):
     role: UserRole
     created_at: datetime
     last_login: Optional[datetime] = None
+    avatar_url: Optional[str] = None
 
     class Config:
         from_attributes = True
+
+
 
 class Token(BaseModel):
     access_token: str

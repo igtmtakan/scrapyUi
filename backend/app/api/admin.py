@@ -7,9 +7,10 @@ from typing import List, Optional
 from datetime import datetime
 
 from ..database import get_db, User, UserRole
-from ..models.schemas import UserListResponse, UserAdminUpdate, UserResponse
+from ..models.schemas import UserListResponse, UserAdminUpdate, UserAdminCreate, UserResponse
 from .auth import get_current_active_user
 from ..auth.jwt_handler import PasswordHandler
+import uuid
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -77,6 +78,60 @@ async def get_user_by_id(
 
     return user
 
+@router.post("/users", response_model=UserResponse)
+async def create_user(
+    user_create: UserAdminCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin_role)
+):
+    """
+    新しいユーザーを作成（管理者のみ）
+    """
+    # メールアドレスの重複チェック
+    existing_user = db.query(User).filter(User.email == user_create.email).first()
+    if existing_user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="このメールアドレスは既に使用されています"
+        )
+
+    # ユーザー名の重複チェック
+    existing_username = db.query(User).filter(User.username == user_create.username).first()
+    if existing_username:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="このユーザー名は既に使用されています"
+        )
+
+    # ロールを文字列からUserRoleに変換
+    role_mapping = {
+        "user": UserRole.USER,
+        "admin": UserRole.ADMIN,
+        "moderator": UserRole.MODERATOR
+    }
+    user_role = role_mapping.get(user_create.role, UserRole.USER)
+
+    # 新しいユーザーを作成
+    new_user = User(
+        id=str(uuid.uuid4()),
+        email=user_create.email,
+        username=user_create.username,
+        full_name=user_create.full_name,
+        hashed_password=PasswordHandler.hash_password(user_create.password),
+        is_active=user_create.is_active,
+        is_superuser=user_create.is_superuser,
+        role=user_role,
+        avatar_url=user_create.avatar_url,
+        timezone=user_create.timezone,
+        preferences=user_create.preferences or {}
+    )
+
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+
+    return new_user
+
 @router.put("/users/{user_id}", response_model=UserResponse)
 async def update_user(
     user_id: str,
@@ -94,17 +149,28 @@ async def update_user(
             detail="ユーザーが見つかりません"
         )
 
+    # ロール変換の準備
+    role_mapping = {
+        "user": UserRole.USER,
+        "admin": UserRole.ADMIN,
+        "moderator": UserRole.MODERATOR
+    }
+
     # 自分自身の管理者権限を削除することを防ぐ
-    if user.id == current_user.id and user_update.role and user_update.role != UserRole.ADMIN:
+    if user.id == current_user.id and user_update.role and user_update.role != "admin":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="自分自身の管理者権限を削除することはできません"
         )
 
     # 更新可能なフィールドを更新
-    update_data = user_update.dict(exclude_unset=True)
+    update_data = user_update.model_dump(exclude_unset=True)
     for field, value in update_data.items():
-        setattr(user, field, value)
+        if field == "role" and value is not None:
+            # ロールを文字列からUserRoleに変換
+            setattr(user, field, role_mapping.get(value, UserRole.USER))
+        else:
+            setattr(user, field, value)
 
     user.updated_at = datetime.utcnow()
     db.commit()

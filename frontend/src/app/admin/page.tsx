@@ -42,6 +42,325 @@ interface UserStats {
   recent_registrations: number;
 }
 
+// User Create Modal Component
+interface UserCreateModalProps {
+  onClose: () => void;
+  onSuccess: () => void;
+}
+
+function UserCreateModal({ onClose, onSuccess }: UserCreateModalProps) {
+  const [formData, setFormData] = useState({
+    email: '',
+    username: '',
+    full_name: '',
+    password: '',
+    role: 'user' as 'user' | 'admin' | 'moderator',
+    is_active: true,
+  });
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+
+    // バリデーション
+    if (!formData.email || !formData.username || !formData.password) {
+      setError('必須フィールドを入力してください');
+      setLoading(false);
+      return;
+    }
+
+    if (formData.password.length < 8) {
+      setError('パスワードは8文字以上で入力してください');
+      setLoading(false);
+      return;
+    }
+
+    console.log('Creating user with data:', formData);
+
+    try {
+      const { apiClient } = await import('@/lib/api');
+      const result = await apiClient.createUser(formData);
+      console.log('User created successfully:', result);
+      onSuccess();
+    } catch (error) {
+      console.error('User creation error:', error);
+      setError(error instanceof Error ? error.message : 'ユーザーの作成に失敗しました');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-lg p-6 w-full max-w-md">
+        <h2 className="text-xl font-bold mb-4">新規ユーザー作成</h2>
+
+        {error && (
+          <div className="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded">
+            {error}
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              メールアドレス *
+            </label>
+            <input
+              type="email"
+              required
+              value={formData.email}
+              onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              ユーザー名 *
+            </label>
+            <input
+              type="text"
+              required
+              value={formData.username}
+              onChange={(e) => setFormData({ ...formData, username: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              フルネーム
+            </label>
+            <input
+              type="text"
+              value={formData.full_name}
+              onChange={(e) => setFormData({ ...formData, full_name: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              パスワード *
+            </label>
+            <input
+              type="password"
+              required
+              minLength={8}
+              value={formData.password}
+              onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              ロール
+            </label>
+            <select
+              value={formData.role}
+              onChange={(e) => setFormData({ ...formData, role: e.target.value as 'user' | 'admin' | 'moderator' })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="user">一般ユーザー</option>
+              <option value="moderator">モデレーター</option>
+              <option value="admin">管理者</option>
+            </select>
+          </div>
+
+          <div className="flex items-center">
+            <input
+              type="checkbox"
+              id="is_active"
+              checked={formData.is_active}
+              onChange={(e) => setFormData({ ...formData, is_active: e.target.checked })}
+              className="mr-2"
+            />
+            <label htmlFor="is_active" className="text-sm text-gray-700">
+              アクティブ
+            </label>
+          </div>
+
+          <div className="flex justify-end space-x-3 pt-4">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50"
+            >
+              キャンセル
+            </button>
+            <button
+              type="submit"
+              disabled={loading}
+              className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
+            >
+              {loading ? '作成中...' : '作成'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// User Edit Modal Component
+interface UserEditModalProps {
+  user: User;
+  onClose: () => void;
+  onSuccess: () => void;
+}
+
+function UserEditModal({ user, onClose, onSuccess }: UserEditModalProps) {
+  const [formData, setFormData] = useState({
+    full_name: user.full_name || '',
+    role: user.role,
+    is_active: user.is_active,
+  });
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+
+    try {
+      const { apiClient } = await import('@/lib/api');
+      await apiClient.updateUser(user.id, formData);
+      onSuccess();
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'ユーザーの更新に失敗しました');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-lg p-6 w-full max-w-md">
+        <h2 className="text-xl font-bold mb-4">ユーザー編集</h2>
+
+        {error && (
+          <div className="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded">
+            {error}
+          </div>
+        )}
+
+        <div className="mb-4 p-3 bg-gray-100 rounded">
+          <p className="text-sm text-gray-600">メールアドレス: {user.email}</p>
+          <p className="text-sm text-gray-600">ユーザー名: {user.username}</p>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              フルネーム
+            </label>
+            <input
+              type="text"
+              value={formData.full_name}
+              onChange={(e) => setFormData({ ...formData, full_name: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              ロール
+            </label>
+            <select
+              value={formData.role}
+              onChange={(e) => setFormData({ ...formData, role: e.target.value as 'user' | 'admin' | 'moderator' })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="user">一般ユーザー</option>
+              <option value="moderator">モデレーター</option>
+              <option value="admin">管理者</option>
+            </select>
+          </div>
+
+          <div className="flex items-center">
+            <input
+              type="checkbox"
+              id="edit_is_active"
+              checked={formData.is_active}
+              onChange={(e) => setFormData({ ...formData, is_active: e.target.checked })}
+              className="mr-2"
+            />
+            <label htmlFor="edit_is_active" className="text-sm text-gray-700">
+              アクティブ
+            </label>
+          </div>
+
+          <div className="flex justify-end space-x-3 pt-4">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50"
+            >
+              キャンセル
+            </button>
+            <button
+              type="submit"
+              disabled={loading}
+              className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
+            >
+              {loading ? '更新中...' : '更新'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// User Delete Modal Component
+interface UserDeleteModalProps {
+  user: User;
+  onClose: () => void;
+  onConfirm: () => void;
+}
+
+function UserDeleteModal({ user, onClose, onConfirm }: UserDeleteModalProps) {
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-lg p-6 w-full max-w-md">
+        <h2 className="text-xl font-bold mb-4 text-red-600">ユーザー削除確認</h2>
+
+        <div className="mb-6">
+          <p className="text-gray-700 mb-2">以下のユーザーを削除しますか？</p>
+          <div className="p-3 bg-gray-100 rounded">
+            <p className="font-medium">{user.full_name || user.username}</p>
+            <p className="text-sm text-gray-600">{user.email}</p>
+          </div>
+          <p className="text-red-600 text-sm mt-2">
+            ⚠️ この操作は取り消せません。ユーザーに関連するすべてのデータが削除されます。
+          </p>
+        </div>
+
+        <div className="flex justify-end space-x-3">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50"
+          >
+            キャンセル
+          </button>
+          <button
+            onClick={onConfirm}
+            className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700"
+          >
+            削除
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function AdminPage() {
   const { user, isAuthenticated } = useAuthStore();
   const router = useRouter();
@@ -53,6 +372,10 @@ export default function AdminPage() {
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [showUserModal, setShowUserModal] = useState(false);
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [userToDelete, setUserToDelete] = useState<User | null>(null);
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -116,6 +439,22 @@ export default function AdminPage() {
       fetchStats();
     } catch (error) {
       console.error(`Failed to ${action} user:`, error);
+    }
+  };
+
+  const handleDeleteUser = async () => {
+    if (!userToDelete) return;
+
+    try {
+      const { apiClient } = await import('@/lib/api');
+      await apiClient.deleteUser(userToDelete.id);
+
+      setShowDeleteModal(false);
+      setUserToDelete(null);
+      fetchUsers();
+      fetchStats();
+    } catch (error) {
+      console.error('Failed to delete user:', error);
     }
   };
 
@@ -190,9 +529,18 @@ export default function AdminPage() {
     <div className="min-h-screen bg-gray-50 py-8">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold text-gray-900">ユーザー管理</h1>
-          <p className="mt-2 text-gray-600">システムユーザーの管理と統計情報</p>
+        <div className="mb-8 flex justify-between items-center">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900">ユーザー管理</h1>
+            <p className="mt-2 text-gray-600">システムユーザーの管理と統計情報</p>
+          </div>
+          <button
+            onClick={() => setShowCreateModal(true)}
+            className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+          >
+            <UserPlus className="w-4 h-4 mr-2" />
+            新規ユーザー追加
+          </button>
         </div>
 
         {/* Stats Cards */}
@@ -366,14 +714,36 @@ export default function AdminPage() {
                             setShowUserModal(true);
                           }}
                           className="text-blue-600 hover:text-blue-900"
+                          title="詳細表示"
                         >
                           <Eye className="w-4 h-4" />
                         </button>
                         <button
+                          onClick={() => {
+                            setSelectedUser(user);
+                            setShowEditModal(true);
+                          }}
+                          className="text-gray-600 hover:text-gray-900"
+                          title="編集"
+                        >
+                          <Edit className="w-4 h-4" />
+                        </button>
+                        <button
                           onClick={() => handleUserAction(user.id, user.is_active ? 'deactivate' : 'activate')}
                           className={`${user.is_active ? 'text-red-600 hover:text-red-900' : 'text-green-600 hover:text-green-900'}`}
+                          title={user.is_active ? '非アクティブ化' : 'アクティブ化'}
                         >
                           {user.is_active ? <UserX className="w-4 h-4" /> : <UserCheck className="w-4 h-4" />}
+                        </button>
+                        <button
+                          onClick={() => {
+                            setUserToDelete(user);
+                            setShowDeleteModal(true);
+                          }}
+                          className="text-red-600 hover:text-red-900"
+                          title="削除"
+                        >
+                          <Trash2 className="w-4 h-4" />
                         </button>
                       </div>
                     </td>
@@ -391,6 +761,47 @@ export default function AdminPage() {
             </div>
           )}
         </div>
+
+        {/* User Create Modal */}
+        {showCreateModal && (
+          <UserCreateModal
+            onClose={() => setShowCreateModal(false)}
+            onSuccess={() => {
+              setShowCreateModal(false);
+              fetchUsers();
+              fetchStats();
+            }}
+          />
+        )}
+
+        {/* User Edit Modal */}
+        {showEditModal && selectedUser && (
+          <UserEditModal
+            user={selectedUser}
+            onClose={() => {
+              setShowEditModal(false);
+              setSelectedUser(null);
+            }}
+            onSuccess={() => {
+              setShowEditModal(false);
+              setSelectedUser(null);
+              fetchUsers();
+              fetchStats();
+            }}
+          />
+        )}
+
+        {/* User Delete Modal */}
+        {showDeleteModal && userToDelete && (
+          <UserDeleteModal
+            user={userToDelete}
+            onClose={() => {
+              setShowDeleteModal(false);
+              setUserToDelete(null);
+            }}
+            onConfirm={handleDeleteUser}
+          />
+        )}
       </div>
     </div>
   );
