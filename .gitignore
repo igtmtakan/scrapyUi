@@ -81,6 +81,7 @@ out/
 *.png
 *.jpg
 *.jpeg
+.scrapy/
 
 # Test files and temporary data
 test_*
