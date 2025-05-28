@@ -3,7 +3,20 @@ const nextConfig = {
   // フロントエンドを4000番ポートで固定
   // Puppeteerが3001番ポートを使用するため
   experimental: {
-    // 必要に応じて実験的機能を有効化
+    // Next.js 15.3.2の安定性向上
+  },
+
+  // Server External Packages (Next.js 15.3.2の新しい設定)
+  // serverExternalPackages: ['lucide-react'], // transpilePackagesと競合するため無効化
+
+  // TypeScript設定
+  typescript: {
+    ignoreBuildErrors: false,
+  },
+
+  // ESLint設定
+  eslint: {
+    ignoreDuringBuilds: false,
   },
 
   // 開発サーバーの設定

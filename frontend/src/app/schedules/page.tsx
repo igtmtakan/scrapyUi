@@ -148,10 +148,36 @@ export default function SchedulesPage() {
         return
       }
 
+      console.log('🔍 Loading task progress for', schedules.length, 'schedules')
+      console.log('🔑 Auth token available:', !!authToken)
+
       // 各スケジュールの最新タスクを取得
       for (const schedule of schedules) {
         try {
-          const apiUrl = `${window.location.origin}/api/tasks/?project_id=${schedule.project_id}&spider_id=${schedule.spider_id}&limit=1&status=RUNNING,PENDING`
+          // URLパラメータを適切にエンコード
+          const params = new URLSearchParams({
+            project_id: schedule.project_id,
+            spider_id: schedule.spider_id,
+            limit: '1'
+          });
+
+          // RUNNINGとPENDINGのタスクを個別に取得
+          const runningParams = new URLSearchParams({
+            project_id: schedule.project_id,
+            spider_id: schedule.spider_id,
+            limit: '1',
+            status: 'RUNNING'
+          });
+
+          const pendingParams = new URLSearchParams({
+            project_id: schedule.project_id,
+            spider_id: schedule.spider_id,
+            limit: '1',
+            status: 'PENDING'
+          });
+
+          // まずRUNNINGタスクを確認
+          let apiUrl = `${window.location.origin}/api/tasks/?${runningParams.toString()}`
 
           const response = await fetch(apiUrl, {
             method: 'GET',
@@ -163,7 +189,25 @@ export default function SchedulesPage() {
           })
 
           if (response.ok) {
-            const tasks = await response.json()
+            let tasks = await response.json()
+            let foundTask = null
+
+            // RUNNINGタスクが見つからない場合、PENDINGタスクを確認
+            if (tasks.length === 0) {
+              const pendingUrl = `${window.location.origin}/api/tasks/?${pendingParams.toString()}`
+              const pendingResponse = await fetch(pendingUrl, {
+                method: 'GET',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${authToken}`
+                },
+                credentials: 'include'
+              });
+
+              if (pendingResponse.ok) {
+                tasks = await pendingResponse.json()
+              }
+            }
 
             if (tasks.length > 0) {
               const task = tasks[0]
@@ -201,6 +245,33 @@ export default function SchedulesPage() {
           // エラーの詳細を表示
           if (error instanceof TypeError && error.message.includes('fetch')) {
             console.error('Fetch failed - possible network or CORS issue')
+            console.error('Attempted URL:', `${window.location.origin}/api/tasks/?${runningParams.toString()}`)
+          } else if (error instanceof Error) {
+            console.error('Error details:', {
+              message: error.message,
+              name: error.name,
+              stack: error.stack
+            })
+          }
+
+          // フォールバック: 基本的なタスク取得を試行
+          try {
+            const fallbackUrl = `${window.location.origin}/api/tasks/?project_id=${schedule.project_id}&limit=1`
+            console.log('Trying fallback URL:', fallbackUrl)
+
+            const fallbackResponse = await fetch(fallbackUrl, {
+              method: 'GET',
+              headers: {
+                'Authorization': `Bearer ${authToken}`
+              }
+            })
+
+            if (fallbackResponse.ok) {
+              const fallbackTasks = await fallbackResponse.json()
+              console.log('Fallback response:', fallbackTasks)
+            }
+          } catch (fallbackError) {
+            console.error('Fallback also failed:', fallbackError)
           }
         }
       }
@@ -319,7 +390,13 @@ export default function SchedulesPage() {
       }
 
       // 最新のタスクを取得してダウンロード
-      const apiUrl = `${window.location.origin}/api/tasks?project_id=${schedule.project_id}&spider_id=${schedule.spider_id}&limit=1`
+      const params = new URLSearchParams({
+        project_id: schedule.project_id,
+        spider_id: schedule.spider_id,
+        limit: '1'
+      });
+
+      const apiUrl = `${window.location.origin}/api/tasks?${params.toString()}`
 
       const response = await fetch(apiUrl, {
         method: 'GET',

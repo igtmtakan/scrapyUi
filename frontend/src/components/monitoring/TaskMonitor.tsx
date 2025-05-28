@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState, useEffect } from 'react'
-import { useWebSocket } from '@/hooks/useWebSocket'
+// import { useWebSocket } from '@/hooks/useWebSocket' // WebSocket機能を無効化
 import { apiClient } from '@/lib/api'
 import {
   Play,
@@ -154,37 +154,44 @@ export default function TaskMonitor({ taskId, showAllTasks = false }: TaskMonito
   React.useEffect(() => {
     if (mounted) {
       loadTasks()
-      // 定期的にタスクデータを更新
-      const interval = setInterval(loadTasks, 5000) // 5秒ごと
+      // 定期的にタスクデータを更新（WebSocket無効化のため頻度を上げる）
+      const interval = setInterval(loadTasks, 3000) // 3秒ごと
       return () => clearInterval(interval)
     }
   }, [mounted, showAllTasks])
 
-  const { isConnected, connectionStatus, lastMessage, subscribeToTask, unsubscribeFromTask } = useWebSocket({
-    url: mounted && clientId ? `${process.env.NEXT_PUBLIC_WS_URL}/ws/${clientId}` : '',
-    onMessage: (message) => {
-      console.log('WebSocket message received:', message)
-      handleWebSocketMessage(message)
-    },
-    onConnect: () => {
-      console.log('WebSocket connected successfully')
-      if (taskId) {
-        console.log('Subscribing to task:', taskId)
-        subscribeToTask(taskId)
-      }
-    },
-    onDisconnect: () => {
-      console.log('WebSocket disconnected')
-    },
-    onError: (error) => {
-      console.error('WebSocket error in TaskMonitor:', {
-        error,
-        url: `${process.env.NEXT_PUBLIC_WS_URL}/ws/${clientId}`,
-        clientId,
-        mounted
-      })
-    }
-  })
+  // WebSocket機能を無効化（HTTPポーリングのみ使用）
+  const isConnected = false
+  const connectionStatus = 'disconnected'
+  const lastMessage = null
+  const subscribeToTask = () => false
+  const unsubscribeFromTask = () => false
+
+  // const { isConnected, connectionStatus, lastMessage, subscribeToTask, unsubscribeFromTask } = useWebSocket({
+  //   url: mounted && clientId ? `${process.env.NEXT_PUBLIC_WS_URL}/ws/${clientId}` : '',
+  //   onMessage: (message) => {
+  //     console.log('WebSocket message received:', message)
+  //     handleWebSocketMessage(message)
+  //   },
+  //   onConnect: () => {
+  //     console.log('WebSocket connected successfully')
+  //     if (taskId) {
+  //       console.log('Subscribing to task:', taskId)
+  //       subscribeToTask(taskId)
+  //     }
+  //   },
+  //   onDisconnect: () => {
+  //     console.log('WebSocket disconnected')
+  //   },
+  //   onError: (error) => {
+  //     console.error('WebSocket error in TaskMonitor:', {
+  //       error,
+  //       url: `${process.env.NEXT_PUBLIC_WS_URL}/ws/${clientId}`,
+  //       clientId,
+  //       mounted
+  //     })
+  //   }
+  // })
 
   const handleWebSocketMessage = (message: any) => {
     switch (message.type) {

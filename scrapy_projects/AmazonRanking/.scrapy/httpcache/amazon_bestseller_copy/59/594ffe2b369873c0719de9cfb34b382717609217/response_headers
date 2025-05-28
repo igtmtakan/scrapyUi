@@ -1,0 +1,24 @@
+Content-Type: text/html;charset=UTF-8
+Server: Server
+Date: Tue, 27 May 2025 22:30:13 GMT
+X-Amz-Rid: HK2X23DGZSJ6F27EN0MP
+Set-Cookie: session-token="JS9cnOUDrnFq4/xM0RluJc20XmGUtf7B+Wfv/019RPu0ed/YI3KDKF8cHH7nn+VUoWYSwkhn3Xuf5N8rcUEz6ietvYQNn9AY/Z1fbXa/YOkuhrUwoqXpCEHRV4OrR5pLZiYuf8kY4lSjy6nQZdNc75KIqyhuid5mWDkHDBDp72q41Z06QMGiwf3SevVffkOQSAn2/6dLGs89L+Mou2uKaZsVP7ii0T+D/uO//Km2gnjlls75M4RcMq2Hwidm5Dh199dcIsOiU68FE/eym6ZZER+p1znY/OEp7SN1zCWYgsH+bH6FtoYsUPfoCCK47z4BhPEkhxVW553Vz5RsuMt32ArINWK0qOqFXtfhE7mGu3M="; Version=1; Domain=.amazon.co.jp; Max-Age=31536000; Expires=Wed, 27-May-2026 22:30:13 GMT; Path=/; Secure
+Content-Language: ja-JP
+Content-Security-Policy-Report-Only: default-src 'self' blob: https: data: mediastream: 'unsafe-eval' 'unsafe-inline';report-uri https://metrics.media-amazon.com/
+X-Content-Type-Options: nosniff
+Content-Encoding: gzip
+X-Xss-Protection: 1;
+Content-Security-Policy: upgrade-insecure-requests;report-uri https://metrics.media-amazon.com/
+Accept-Ch: ect,rtt,downlink,device-memory,sec-ch-device-memory,viewport-width,sec-ch-viewport-width,dpr,sec-ch-dpr,sec-ch-ua-platform,sec-ch-ua-platform-version
+Pragma: no-cache
+Cache-Control: no-cache
+Expires: -1
+Accept-Ch-Lifetime: 86400
+Strict-Transport-Security: max-age=47474747; includeSubDomains; preload
+Vary: Content-Type,Accept-Encoding,User-Agent
+X-Frame-Options: SAMEORIGIN
+X-Cache: Miss from cloudfront
+Via: 1.1 7845f38c0a5db63f077293fe22a1a366.cloudfront.net (CloudFront)
+X-Amz-Cf-Pop: NRT57-P9
+Alt-Svc: h3=":443"; ma=86400
+X-Amz-Cf-Id: _otYANiWj_4__WWISrR-VFVeOOzMS4bYhZvN0txS27Ktn5YFHCv-Nw==

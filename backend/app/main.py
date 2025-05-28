@@ -1,4 +1,5 @@
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.openapi.docs import get_swagger_ui_html
@@ -398,13 +399,22 @@ app.add_middleware(ErrorHandlingMiddleware)
 app.add_middleware(RequestLoggingMiddleware)
 app.add_middleware(PerformanceLoggingMiddleware, slow_request_threshold=2.0)
 
-# 標準CORSミドルウェアを適用
+# 強化されたCORSミドルウェア設定
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://localhost:4000",
+        "http://localhost:4001",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:4000",
+        "http://127.0.0.1:4001"
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],  # 全てのHTTPメソッドを許可
+    allow_headers=["*"],  # 全てのヘッダーを許可
+    expose_headers=["*"],  # 全てのヘッダーを公開
+    max_age=86400,  # プリフライトキャッシュ時間（24時間）
 )
 
 # APIルーターの登録
@@ -520,6 +530,8 @@ async def api_health_check():
         "status": "healthy",
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
+
+# OPTIONSハンドラーを削除 - CORSMiddlewareに任せる
 
 def start_server():
     """Start the ScrapyUI server using shell script."""
