@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useAuthStore } from '@/stores/authStore';
 import { useRouter } from 'next/navigation';
+import { validateUserForm, sanitizeUsername } from '@/lib/validation';
 import {
   Users,
   UserPlus,
@@ -59,21 +60,18 @@ function UserCreateModal({ onClose, onSuccess }: UserCreateModalProps) {
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError('');
+    setFieldErrors({});
 
-    // バリデーション
-    if (!formData.email || !formData.username || !formData.password) {
-      setError('必須フィールドを入力してください');
-      setLoading(false);
-      return;
-    }
-
-    if (formData.password.length < 8) {
-      setError('パスワードは8文字以上で入力してください');
+    // フォーム全体の検証
+    const validation = validateUserForm(formData);
+    if (!validation.isValid) {
+      setFieldErrors(validation.errors);
       setLoading(false);
       return;
     }
@@ -113,9 +111,22 @@ function UserCreateModal({ onClose, onSuccess }: UserCreateModalProps) {
               type="email"
               required
               value={formData.email}
-              onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              onChange={(e) => {
+                setFormData({ ...formData, email: e.target.value });
+                // フィールドエラーをクリア
+                if (fieldErrors.email) {
+                  setFieldErrors({ ...fieldErrors, email: '' });
+                }
+              }}
+              className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 ${
+                fieldErrors.email
+                  ? 'border-red-300 focus:ring-red-500'
+                  : 'border-gray-300 focus:ring-blue-500'
+              }`}
             />
+            {fieldErrors.email && (
+              <p className="mt-1 text-sm text-red-600">{fieldErrors.email}</p>
+            )}
           </div>
 
           <div>
@@ -126,9 +137,27 @@ function UserCreateModal({ onClose, onSuccess }: UserCreateModalProps) {
               type="text"
               required
               value={formData.username}
-              onChange={(e) => setFormData({ ...formData, username: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              onChange={(e) => {
+                const sanitized = sanitizeUsername(e.target.value);
+                setFormData({ ...formData, username: sanitized });
+                // フィールドエラーをクリア
+                if (fieldErrors.username) {
+                  setFieldErrors({ ...fieldErrors, username: '' });
+                }
+              }}
+              className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 ${
+                fieldErrors.username
+                  ? 'border-red-300 focus:ring-red-500'
+                  : 'border-gray-300 focus:ring-blue-500'
+              }`}
+              placeholder="例: user123, testuser"
             />
+            {fieldErrors.username && (
+              <p className="mt-1 text-sm text-red-600">{fieldErrors.username}</p>
+            )}
+            <p className="mt-1 text-xs text-gray-500">
+              アルファベット（a-z, A-Z）と数字（0-9）のみ使用できます
+            </p>
           </div>
 
           <div>
@@ -152,9 +181,25 @@ function UserCreateModal({ onClose, onSuccess }: UserCreateModalProps) {
               required
               minLength={8}
               value={formData.password}
-              onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              onChange={(e) => {
+                setFormData({ ...formData, password: e.target.value });
+                // フィールドエラーをクリア
+                if (fieldErrors.password) {
+                  setFieldErrors({ ...fieldErrors, password: '' });
+                }
+              }}
+              className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 ${
+                fieldErrors.password
+                  ? 'border-red-300 focus:ring-red-500'
+                  : 'border-gray-300 focus:ring-blue-500'
+              }`}
             />
+            {fieldErrors.password && (
+              <p className="mt-1 text-sm text-red-600">{fieldErrors.password}</p>
+            )}
+            <p className="mt-1 text-xs text-gray-500">
+              8文字以上で入力してください
+            </p>
           </div>
 
           <div>

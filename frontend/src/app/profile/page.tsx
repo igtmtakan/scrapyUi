@@ -63,9 +63,9 @@ export default function ProfilePage() {
       const projects = await apiClient.getProjects();
       console.log('📁 Projects loaded:', projects.length);
 
-      // タスク数を取得
+      // タスク数を取得（各スパイダーの最新5件のみ）
       console.log('📋 Fetching tasks...');
-      const tasks = await apiClient.getTasks();
+      const tasks = await apiClient.getTasks({ per_spider: 5 });
       console.log('📋 Tasks loaded:', tasks.length);
 
       setStats({

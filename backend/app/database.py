@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, Column, String, Integer, DateTime, Text, JSON, ForeignKey, Enum, Boolean
+from sqlalchemy import create_engine, Column, String, Integer, DateTime, Text, JSON, ForeignKey, Enum, Boolean, UniqueConstraint
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from sqlalchemy.sql import func
@@ -67,11 +67,12 @@ class Project(Base):
     __tablename__ = "projects"
 
     id = Column(String, primary_key=True, index=True)
-    name = Column(String, unique=True, index=True, nullable=False)
+    name = Column(String, index=True, nullable=False)
     description = Column(Text)
     path = Column(String, unique=True, nullable=False)
     scrapy_version = Column(String, default="2.11.0")
     settings = Column(JSON)
+    is_active = Column(Boolean, default=True)  # is_activeフィールドを追加
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
@@ -82,6 +83,12 @@ class Project(Base):
     user = relationship("User")
     spiders = relationship("Spider", back_populates="project", cascade="all, delete-orphan")
     tasks = relationship("Task", back_populates="project", cascade="all, delete-orphan")
+    project_files = relationship("ProjectFile", back_populates="project", cascade="all, delete-orphan")
+
+    # ユーザー別のプロジェクト名一意制約
+    __table_args__ = (
+        UniqueConstraint('name', 'user_id', name='unique_project_name_per_user'),
+    )
 
 class Spider(Base):
     __tablename__ = "spiders"
@@ -106,6 +113,30 @@ class Spider(Base):
     user = relationship("User")
     tasks = relationship("Task", back_populates="spider", cascade="all, delete-orphan")
 
+class ProjectFile(Base):
+    __tablename__ = "project_files"
+
+    id = Column(String, primary_key=True, index=True)
+    name = Column(String, nullable=False)  # ファイル名 (settings.py, items.py, etc.)
+    path = Column(String, nullable=False)  # ファイルパス (project_name/settings.py)
+    content = Column(Text, nullable=False)  # ファイル内容
+    file_type = Column(String, default="python")  # ファイルタイプ (python, config, etc.)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    # Foreign Keys
+    project_id = Column(String, ForeignKey("projects.id"), nullable=False)
+    user_id = Column(String, ForeignKey("users.id"), nullable=False)
+
+    # Relationships
+    project = relationship("Project", back_populates="project_files")
+    user = relationship("User")
+
+    # プロジェクト内でのファイル名一意制約
+    __table_args__ = (
+        UniqueConstraint('name', 'project_id', name='unique_file_name_per_project'),
+    )
+
 class Task(Base):
     __tablename__ = "tasks"
 
@@ -118,6 +149,7 @@ class Task(Base):
     error_count = Column(Integer, default=0)
     log_level = Column(String, default="INFO")
     settings = Column(JSON)
+    celery_task_id = Column(String, nullable=True)  # CeleryタスクIDとの関連付け
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 

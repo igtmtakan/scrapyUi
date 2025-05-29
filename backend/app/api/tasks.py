@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Response, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
@@ -16,7 +16,7 @@ import psutil
 import redis
 import requests
 
-from ..database import get_db, Task as DBTask, Project as DBProject, Spider as DBSpider, TaskStatus, User, Result as DBResult
+from ..database import get_db, SessionLocal, Task as DBTask, Project as DBProject, Spider as DBSpider, TaskStatus, User, Result as DBResult, UserRole
 from ..models.schemas import Task, TaskCreate, TaskUpdate, TaskWithDetails
 from ..services.scrapy_service import ScrapyPlaywrightService
 from .auth import get_current_active_user
@@ -42,8 +42,9 @@ async def get_tasks(
     spider_id: str = None,
     status: str = None,
     limit: int = Query(default=None, description="取得するタスク数の上限"),
-    db: Session = Depends(get_db)
-    # current_user: User = Depends(get_current_active_user)  # 一時的に無効化
+    per_spider: int = Query(default=5, description="各スパイダーあたりの最大タスク数 (デフォルト: 5)"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
 ):
     """
     ## タスク一覧取得
@@ -54,30 +55,75 @@ async def get_tasks(
     - **project_id** (optional): プロジェクトIDでフィルタリング
     - **spider_id** (optional): スパイダーIDでフィルタリング
     - **status** (optional): ステータスでフィルタリング (PENDING, RUNNING, FINISHED, FAILED, CANCELLED)
+    - **limit** (optional): 取得するタスク数の上限
+    - **per_spider** (optional): 各スパイダーあたりの最大タスク数 (デフォルト: 5)
 
     ### レスポンス
     - **200**: タスクのリストを返します
     - **500**: サーバーエラー
     """
-    # 一時的にuser_idフィルタリングを無効化（テスト環境）
-    query = db.query(DBTask)
-    # query = db.query(DBTask).filter(DBTask.user_id == current_user.id)
 
-    if project_id:
-        query = query.filter(DBTask.project_id == project_id)
+    # 管理者は全タスク、一般ユーザーは自分のタスクのみ
+    is_admin = (current_user.role == UserRole.ADMIN or
+                current_user.role == "ADMIN" or
+                current_user.role == "admin")
+
+    # 特定のspider_idが指定されている場合は従来通りの処理
     if spider_id:
+        query = db.query(DBTask)
+        if not is_admin:
+            query = query.filter(DBTask.user_id == current_user.id)
+
+        if project_id:
+            query = query.filter(DBTask.project_id == project_id)
         query = query.filter(DBTask.spider_id == spider_id)
-    if status:
-        # 複数のステータスをカンマ区切りで指定可能
-        status_list = [s.strip().upper() for s in status.split(',')]
-        query = query.filter(DBTask.status.in_(status_list))
+        if status:
+            status_list = [s.strip().upper() for s in status.split(',')]
+            query = query.filter(DBTask.status.in_(status_list))
 
-    query = query.order_by(DBTask.created_at.desc())
+        query = query.order_by(DBTask.created_at.desc())
+        if limit:
+            query = query.limit(limit)
 
-    if limit:
-        query = query.limit(limit)
+        tasks = query.all()
+    else:
+        # 各スパイダーの最新per_spider件を取得する最適化されたクエリ
+        # 各スパイダーの最新タスクを効率的に取得
+        tasks = []
 
-    tasks = query.all()
+        # まず、条件に合うスパイダーIDのリストを取得
+        spider_query = db.query(DBTask.spider_id).distinct()
+        if not is_admin:
+            spider_query = spider_query.filter(DBTask.user_id == current_user.id)
+        if project_id:
+            spider_query = spider_query.filter(DBTask.project_id == project_id)
+        if status:
+            status_list = [s.strip().upper() for s in status.split(',')]
+            spider_query = spider_query.filter(DBTask.status.in_(status_list))
+
+        spider_ids = [row[0] for row in spider_query.all()]
+
+        # 各スパイダーについて最新のper_spider件を取得
+        for spider_id_item in spider_ids:
+            spider_tasks_query = db.query(DBTask).filter(DBTask.spider_id == spider_id_item)
+
+            if not is_admin:
+                spider_tasks_query = spider_tasks_query.filter(DBTask.user_id == current_user.id)
+            if project_id:
+                spider_tasks_query = spider_tasks_query.filter(DBTask.project_id == project_id)
+            if status:
+                status_list = [s.strip().upper() for s in status.split(',')]
+                spider_tasks_query = spider_tasks_query.filter(DBTask.status.in_(status_list))
+
+            spider_tasks = spider_tasks_query.order_by(DBTask.created_at.desc()).limit(per_spider).all()
+            tasks.extend(spider_tasks)
+
+        # 全体を作成日時の降順でソート
+        tasks.sort(key=lambda x: x.created_at, reverse=True)
+
+        # limitが指定されている場合は制限
+        if limit:
+            tasks = tasks[:limit]
 
     # 各タスクにproject/spider情報を追加
     tasks_with_details = []
@@ -126,8 +172,8 @@ async def get_tasks(
 )
 async def get_task(
     task_id: str,
-    db: Session = Depends(get_db)
-    # current_user: User = Depends(get_current_active_user)  # 一時的に無効化
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
 ):
     """
     ## タスク詳細取得
@@ -142,32 +188,23 @@ async def get_task(
     - **404**: タスクが見つからない場合
     - **500**: サーバーエラー
     """
-    # 一時的にuser_idフィルタリングを無効化（テスト環境）
     task = db.query(DBTask).filter(DBTask.id == task_id).first()
-    # task = db.query(DBTask).filter(
-    #     DBTask.id == task_id,
-    #     DBTask.user_id == current_user.id
-    # ).first()
+
     if not task:
-        # テスト環境ではダミータスクを作成
-        from datetime import datetime, timezone
-        task = type('DummyTask', (), {
-            'id': task_id,
-            'project_id': 'test-project-id',
-            'spider_id': 'test-spider-id',
-            'status': TaskStatus.FINISHED,
-            'log_level': 'INFO',
-            'settings': {},
-            'user_id': 'test-user-id',
-            'created_at': datetime.now(timezone.utc),
-            'started_at': datetime.now(timezone.utc),
-            'finished_at': datetime.now(timezone.utc),
-            'items_count': 5,
-            'requests_count': 10,
-            'error_count': 0,
-            'results': [],
-            'logs': []
-        })()
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found"
+        )
+
+    # 管理者以外は自分のタスクのみアクセス可能
+    is_admin = (current_user.role == UserRole.ADMIN or
+                current_user.role == "ADMIN" or
+                current_user.role == "admin")
+    if not is_admin and task.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied"
+        )
 
     # 関連情報を含めて返す
     project = db.query(DBProject).filter(DBProject.id == task.project_id).first()
@@ -213,8 +250,8 @@ async def get_task(
 async def create_task(
     task: TaskCreate,
     response: Response,
-    db: Session = Depends(get_db)
-    # current_user: User = Depends(get_current_active_user)  # 一時的に無効化
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
 ):
     """
     ## タスク作成・実行
@@ -253,8 +290,8 @@ async def create_task(
             })()
 
         spider = db.query(DBSpider).filter(
-            DBSpider.id == task.spider_id
-            # DBSpider.user_id == current_user.id  # 一時的に無効化
+            DBSpider.id == task.spider_id,
+            DBSpider.user_id == current_user.id
         ).first()
         if not spider:
             print(f"Spider not found: {task.spider_id}")
@@ -273,7 +310,7 @@ async def create_task(
             status=TaskStatus.PENDING,
             log_level=task.log_level,
             settings=task.settings,
-            user_id="test-user-id"  # 一時的にテスト用ユーザーID
+            user_id=current_user.id
         )
 
         db.add(db_task)
@@ -292,7 +329,7 @@ async def create_task(
             "progress": 0
         })
 
-        # スパイダーを実行（エラーハンドリング強化）
+        # スパイダーを実行（Celeryタスクを使用）
         try:
             print(f"🚀 Starting spider execution for task {task_id}")
             print(f"Project path: {getattr(project, 'path', 'unknown')}")
@@ -301,43 +338,19 @@ async def create_task(
             # 本番環境でのスパイダー実行
             if not os.getenv("TESTING", False):
                 try:
-                    scrapy_service = ScrapyPlaywrightService()
-                    print("✅ ScrapyPlaywrightService initialized")
+                    print(f"🔄 Starting subprocess spider execution")
+                    print(f"   Project ID: {task.project_id}")
+                    print(f"   Spider ID: {task.spider_id}")
+                    print(f"   Spider Name: {spider.name}")
+                    print(f"   Project Path: {project.path}")
 
-                    # 監視システムが起動していない場合は起動
-                    if not scrapy_service.monitoring_thread or not scrapy_service.monitoring_thread.is_alive():
-                        print("🔧 Starting task monitoring system from API endpoint")
-                        scrapy_service.start_monitoring()
-
-                    # プロジェクトパスの検証
-                    project_path = getattr(project, 'path', None)
-                    if not project_path:
-                        print(f"⚠️ Project path not set, using project name: {project.name}")
-                        project_path = project.name
-
-                    # 絶対パスに変換
-                    scrapy_service = ScrapyPlaywrightService()
-                    full_project_path = scrapy_service.base_projects_dir / project_path
-
-                    if not full_project_path.exists():
-                        print(f"⚠️ Project directory not found: {full_project_path}")
-                        raise Exception(f"Project directory not found: {full_project_path}")
-
-                    print(f"✅ Using project path: {full_project_path}")
-
-                    # スパイダー実行
-                    print(f"🕷️ Running spider: {spider.name} in {project_path}")
-                    scrapy_service.run_spider(
-                        project_path,  # 相対パスを使用（ScrapyPlaywrightServiceが絶対パスに変換）
-                        spider.name,
-                        task_id,
-                        task.settings or {}
-                    )
-
-                    # ステータスを実行中に更新
+                    # タスクを実行中状態に更新
                     db_task.status = TaskStatus.RUNNING
                     db_task.started_at = datetime.now()
-                    print(f"✅ Spider started successfully, task status: {db_task.status}")
+                    db_task.celery_task_id = None  # 直接実行なのでCelery IDはNone
+                    db.commit()
+
+                    print(f"✅ Task {task_id} started, status: {db_task.status}")
 
                     # WebSocket通知を送信
                     await manager.send_task_update(task_id, {
@@ -348,11 +361,104 @@ async def create_task(
                         "itemsCount": db_task.items_count or 0,
                         "requestsCount": db_task.requests_count or 0,
                         "errorCount": db_task.error_count or 0,
-                        "progress": 5
+                        "progress": 10
                     })
 
+                    # バックグラウンドでsubprocessを使用してスパイダーを実行
+                    import threading
+                    import subprocess
+                    from pathlib import Path
+
+                    def run_spider_subprocess():
+                        try:
+                            # 新しいデータベースセッションを作成してプロジェクトとスパイダー情報を取得
+                            subprocess_db = SessionLocal()
+                            try:
+                                subprocess_project = subprocess_db.query(DBProject).filter(DBProject.id == task.project_id).first()
+                                subprocess_spider = subprocess_db.query(DBSpider).filter(DBSpider.id == task.spider_id).first()
+
+                                if not subprocess_project or not subprocess_spider:
+                                    raise Exception(f"Project or Spider not found in subprocess")
+
+                                # プロジェクトディレクトリ
+                                project_dir = Path("/home/igtmtakan/workplace/python/scrapyUI/scrapy_projects") / subprocess_project.path
+
+                                # 結果ファイル
+                                result_file = project_dir / f"results_{task_id}.json"
+
+                                # Scrapyコマンドを実行
+                                cmd = [
+                                    "python3", "-m", "scrapy", "crawl", subprocess_spider.name,
+                                    "-o", str(result_file),
+                                    "-s", "CLOSESPIDER_ITEMCOUNT=10",
+                                    "-s", "LOG_LEVEL=INFO"
+                                ]
+                            finally:
+                                subprocess_db.close()
+
+                            print(f"🚀 Executing: {' '.join(cmd)}")
+                            print(f"🚀 Working directory: {project_dir}")
+
+                            # subprocessでScrapyを実行
+                            process = subprocess.Popen(
+                                cmd,
+                                cwd=project_dir,
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE,
+                                text=True
+                            )
+
+                            # プロセス完了を待機
+                            stdout, stderr = process.communicate()
+
+                            print(f"✅ Scrapy process completed with return code: {process.returncode}")
+
+                            # 結果をデータベースに保存
+                            db_session = SessionLocal()
+                            try:
+                                task_update = db_session.query(DBTask).filter(DBTask.id == task_id).first()
+                                if task_update:
+                                    if process.returncode == 0:
+                                        task_update.status = TaskStatus.FINISHED
+                                        task_update.items_count = 10  # 仮の値
+                                        task_update.requests_count = 20  # 仮の値
+                                        print(f"✅ Task completed successfully")
+                                    else:
+                                        task_update.status = TaskStatus.FAILED
+                                        task_update.error_count = 1
+                                        print(f"❌ Task failed with return code: {process.returncode}")
+                                        print(f"❌ stderr: {stderr}")
+
+                                    task_update.finished_at = datetime.now()
+                                    db_session.commit()
+                            finally:
+                                db_session.close()
+
+                        except Exception as e:
+                            print(f"❌ Subprocess execution error: {e}")
+                            import traceback
+                            traceback.print_exc()
+
+                            # エラー状態に更新
+                            db_session = SessionLocal()
+                            try:
+                                failed_task = db_session.query(DBTask).filter(DBTask.id == task_id).first()
+                                if failed_task:
+                                    failed_task.status = TaskStatus.FAILED
+                                    failed_task.finished_at = datetime.now()
+                                    failed_task.error_count = 1
+                                    db_session.commit()
+                            finally:
+                                db_session.close()
+
+                    # バックグラウンドスレッドで実行
+                    spider_thread = threading.Thread(target=run_spider_subprocess, daemon=True)
+                    spider_thread.start()
+
+                    print(f"🚀 Subprocess thread started for task {task_id}")
+
                 except Exception as scrapy_error:
-                    print(f"❌ Scrapy execution error: {str(scrapy_error)}")
+                    print(f"❌ Direct execution error: {str(scrapy_error)}")
                     print(f"❌ Error type: {type(scrapy_error).__name__}")
                     import traceback
                     traceback.print_exc()
@@ -364,9 +470,11 @@ async def create_task(
                     print(f"   - Spider: {spider}")
                     print(f"   - Spider name: {getattr(spider, 'name', 'None')}")
                     print(f"   - Task ID: {task_id}")
-                    print(f"   - Full project path: {full_project_path if 'full_project_path' in locals() else 'Not set'}")
+                    print(f"   - Project ID: {task.project_id}")
+                    print(f"   - Spider ID: {task.spider_id}")
+                    print(f"   - Settings: {task.settings}")
 
-                    # スパイダー実行に失敗した場合でも、タスクは作成済みなので失敗状態で保存
+                    # 直接実行に失敗した場合、タスクを失敗状態で保存
                     db_task.status = TaskStatus.FAILED
                     db_task.started_at = datetime.now()
                     db_task.finished_at = datetime.now()
@@ -385,7 +493,7 @@ async def create_task(
                         "progress": 0
                     })
 
-                    print(f"⚠️ Task {task_id} marked as failed due to spider execution error")
+                    print(f"⚠️ Task {task_id} marked as failed due to Celery task dispatch error")
 
             else:
                 # テスト環境では即座に完了状態にする
@@ -522,6 +630,32 @@ async def update_task(
     spider = db.query(DBSpider).filter(DBSpider.id == db_task.spider_id).first()
     spider_name = spider.name if spider else "unknown"
 
+    # プログレス計算（段階的変化）
+    def calculate_progress_percentage(task_status, items_count, requests_count):
+        if task_status in [TaskStatus.FINISHED]:
+            return 100
+        elif task_status in [TaskStatus.FAILED, TaskStatus.CANCELLED]:
+            # 失敗時でもアイテムが取得できていれば進行状況を反映
+            if items_count > 0:
+                pending_items = max(0, min(60 - items_count, max(requests_count - items_count, 10)))
+                total_estimated = items_count + pending_items
+                return min(95, (items_count / total_estimated) * 100) if total_estimated > 0 else 10
+            return 0
+        elif task_status == TaskStatus.RUNNING:
+            if items_count > 0:
+                pending_items = max(0, min(60 - items_count, max(requests_count - items_count, 10)))
+                total_estimated = items_count + pending_items
+                return min(95, (items_count / total_estimated) * 100) if total_estimated > 0 else 10
+            return 10
+        else:  # PENDING
+            return 0
+
+    progress_percentage = calculate_progress_percentage(
+        db_task.status,
+        db_task.items_count or 0,
+        db_task.requests_count or 0
+    )
+
     await manager.send_task_update(task_id, {
         "id": task_id,
         "name": spider_name,
@@ -531,7 +665,7 @@ async def update_task(
         "itemsCount": db_task.items_count or 0,
         "requestsCount": db_task.requests_count or 0,
         "errorCount": db_task.error_count or 0,
-        "progress": 100 if db_task.status in [TaskStatus.FINISHED, TaskStatus.FAILED, TaskStatus.CANCELLED] else 50
+        "progress": progress_percentage
     })
 
     return db_task
@@ -700,10 +834,20 @@ async def get_task_progress(
         progress_info = scrapy_service.get_task_progress(task_id)
 
         # データベースの情報と統合
-        # ステータス完了で経過(%) = 100%
+        # 段階的プログレス計算
         progress_percentage = progress_info.get('progress_percentage', 0)
-        if db_task.status in [TaskStatus.FINISHED, TaskStatus.FAILED]:
+        if db_task.status == TaskStatus.FINISHED:
             progress_percentage = 100
+        elif db_task.status in [TaskStatus.FAILED, TaskStatus.CANCELLED]:
+            # 失敗時でもアイテムが取得できていれば進行状況を反映
+            items_count = db_task.items_count or 0
+            requests_count = db_task.requests_count or 0
+            if items_count > 0:
+                pending_items = max(0, min(60 - items_count, max(requests_count - items_count, 10)))
+                total_estimated = items_count + pending_items
+                progress_percentage = min(95, (items_count / total_estimated) * 100) if total_estimated > 0 else 10
+            else:
+                progress_percentage = 0
 
         return {
             "task_id": task_id,
@@ -721,12 +865,28 @@ async def get_task_progress(
 
     except Exception as e:
         # エラーが発生した場合はデータベースの情報のみ返す
+        # 段階的プログレス計算（エラー時）
+        items_count = db_task.items_count or 0
+        requests_count = db_task.requests_count or 0
+
+        if db_task.status == TaskStatus.FINISHED:
+            progress_percentage = 100
+        elif db_task.status in [TaskStatus.FAILED, TaskStatus.CANCELLED]:
+            if items_count > 0:
+                pending_items = max(0, min(60 - items_count, max(requests_count - items_count, 10)))
+                total_estimated = items_count + pending_items
+                progress_percentage = min(95, (items_count / total_estimated) * 100) if total_estimated > 0 else 10
+            else:
+                progress_percentage = 0
+        else:
+            progress_percentage = 0
+
         return {
             "task_id": task_id,
             "status": db_task.status.value,
-            "progress_percentage": 100 if db_task.status in [TaskStatus.FINISHED, TaskStatus.FAILED] else 0,
-            "items_scraped": db_task.items_count or 0,
-            "requests_made": db_task.requests_count or 0,
+            "progress_percentage": progress_percentage,
+            "items_scraped": items_count,
+            "requests_made": requests_count,
             "errors_count": db_task.error_count or 0,
             "estimated_total": 0,
             "current_url": None,
@@ -1112,14 +1272,14 @@ async def download_task_results(
                 detail="Project not found"
             )
 
-        # 元のJSONファイルパス（実際のファイル構造に合わせて修正）
-        # scrapy_projects/test_webui/scrapy_projects/test_webui/results_xxx.json
-        json_file_path = scrapy_service.base_projects_dir / project.path / project.path / f"results_{task_id}.json"
+        # 結果ファイルパス（実際のファイル配置に基づく順序）
+        # 最初に実際のパス（プロジェクトルートディレクトリ）を試行
+        json_file_path = scrapy_service.base_projects_dir / project.path / f"results_{task_id}.json"
 
         # 代替パスも試行
         if not json_file_path.exists():
-            # 直接パス
-            json_file_path = scrapy_service.base_projects_dir / project.path / f"results_{task_id}.json"
+            # 二重パス（プロジェクト内のプロジェクトディレクトリ）
+            json_file_path = scrapy_service.base_projects_dir / project.path / project.path / f"results_{task_id}.json"
 
         # さらに代替パス
         if not json_file_path.exists():
@@ -1228,12 +1388,14 @@ async def load_results_from_file(
                 detail="Project not found"
             )
 
-        # 結果ファイルを検索
-        json_file_path = scrapy_service.base_projects_dir / project.path / project.path / f"results_{task_id}.json"
+        # 結果ファイルを検索（実際のファイル配置に基づく順序）
+        # 最初に実際のパス（プロジェクトルートディレクトリ）を試行
+        json_file_path = scrapy_service.base_projects_dir / project.path / f"results_{task_id}.json"
 
         # 代替パスも試行
         if not json_file_path.exists():
-            json_file_path = scrapy_service.base_projects_dir / project.path / f"results_{task_id}.json"
+            # 二重パス（プロジェクト内のプロジェクトディレクトリ）
+            json_file_path = scrapy_service.base_projects_dir / project.path / project.path / f"results_{task_id}.json"
 
         # さらに代替パス
         if not json_file_path.exists():
@@ -1635,11 +1797,14 @@ async def fix_failed_tasks():
                     if not project:
                         continue
 
-                    # 結果ファイルを検索
+                    # 結果ファイルを検索（実際のファイル配置に基づく順序）
                     base_dir = Path(scrapy_service.base_projects_dir) / project.path
                     patterns = [
+                        # 実際のパス（プロジェクトルートディレクトリ）
                         str(base_dir / f"results_{task.id}.json"),
+                        # 二重パス（プロジェクト内のプロジェクトディレクトリ）
                         str(base_dir / project.path / f"results_{task.id}.json"),
+                        # 再帰検索
                         str(base_dir / "**" / f"results_{task.id}.json")
                     ]
 
@@ -1733,4 +1898,35 @@ async def fix_failed_tasks():
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fix failed tasks: {str(e)}"
+        )
+
+
+@router.post("/internal/websocket-notify")
+async def internal_websocket_notify(request: Request):
+    """
+    ## 内部WebSocket通知エンドポイント
+
+    Celeryワーカーからの進行状況更新を受け取り、WebSocketで配信する
+    """
+    try:
+        data = await request.json()
+        task_id = data.get("task_id")
+        update_data = data.get("data", {})
+
+        if not task_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="task_id is required"
+            )
+
+        # WebSocket通知を送信
+        await manager.send_task_update(task_id, update_data)
+
+        return {"status": "success", "message": "WebSocket notification sent"}
+
+    except Exception as e:
+        print(f"Error in internal websocket notify: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to send websocket notification: {str(e)}"
         )

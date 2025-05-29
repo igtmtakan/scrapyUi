@@ -2,21 +2,25 @@
 
 import { useEffect } from 'react';
 import { useAuthStore } from '@/stores/authStore';
+import AuthGuard from '@/components/AuthGuard';
 
 interface AuthProviderProps {
   children: React.ReactNode;
 }
 
 export default function AuthProvider({ children }: AuthProviderProps) {
-  const { getCurrentUser, isAuthenticated } = useAuthStore();
+  const { initialize, isInitialized } = useAuthStore();
 
   useEffect(() => {
-    // Check if user is authenticated on app load
-    const token = localStorage.getItem('access_token');
-    if (token && !isAuthenticated) {
-      getCurrentUser();
+    // Initialize auth store on app load
+    if (!isInitialized) {
+      initialize();
     }
-  }, [getCurrentUser, isAuthenticated]);
+  }, [initialize, isInitialized]);
 
-  return <>{children}</>;
+  return (
+    <AuthGuard>
+      {children}
+    </AuthGuard>
+  );
 }

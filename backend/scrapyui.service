@@ -1,0 +1,28 @@
+[Unit]
+Description=ScrapyUI Web Application
+After=network.target redis.service
+Wants=redis.service
+
+[Service]
+Type=simple
+User=igtmtakan
+Group=igtmtakan
+WorkingDirectory=/home/igtmtakan/workplace/python/scrapyUI/backend
+Environment=PATH=/home/igtmtakan/.pyenv/versions/3.13.2/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PYTHONPATH=/home/igtmtakan/workplace/python/scrapyUI/backend
+ExecStart=/home/igtmtakan/.pyenv/versions/3.13.2/bin/python watchdog.py monitor
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=scrapyui
+
+# セキュリティ設定
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/home/igtmtakan/workplace/python/scrapyUI
+
+[Install]
+WantedBy=multi-user.target

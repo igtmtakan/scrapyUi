@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from typing import List
 import uuid
 
-from ..database import get_db, Spider as DBSpider, Project as DBProject
+from ..database import get_db, Spider as DBSpider, Project as DBProject, User as DBUser, UserRole
 from ..models.schemas import Spider, SpiderCreate, SpiderUpdate
 from ..services.scrapy_service import ScrapyPlaywrightService
 from ..services.integrity_service import integrity_service
@@ -24,7 +24,11 @@ router = APIRouter(
     description="指定されたプロジェクトまたは全てのスパイダーの一覧を取得します。",
     response_description="スパイダーのリスト"
 )
-async def get_spiders(project_id: str = None, db: Session = Depends(get_db)):
+async def get_spiders(
+    project_id: str = None,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_active_user)
+):
     """
     ## スパイダー一覧取得
 
@@ -38,6 +42,14 @@ async def get_spiders(project_id: str = None, db: Session = Depends(get_db)):
     - **500**: サーバーエラー
     """
     query = db.query(DBSpider)
+
+    # 管理者は全スパイダー、一般ユーザーは自分のスパイダーのみ
+    is_admin = (current_user.role == UserRole.ADMIN or
+                current_user.role == "ADMIN" or
+                current_user.role == "admin")
+    if not is_admin:
+        query = query.filter(DBSpider.user_id == current_user.id)
+
     if project_id:
         query = query.filter(DBSpider.project_id == project_id)
 
@@ -45,7 +57,11 @@ async def get_spiders(project_id: str = None, db: Session = Depends(get_db)):
     return spiders
 
 @router.get("/{spider_id}", response_model=Spider)
-async def get_spider(spider_id: str, db: Session = Depends(get_db)):
+async def get_spider(
+    spider_id: str,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_active_user)
+):
     """特定のスパイダーを取得"""
     spider = db.query(DBSpider).filter(DBSpider.id == spider_id).first()
     if not spider:
@@ -53,6 +69,17 @@ async def get_spider(spider_id: str, db: Session = Depends(get_db)):
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Spider not found"
         )
+
+    # 管理者以外は自分のスパイダーのみアクセス可能
+    is_admin = (current_user.role == UserRole.ADMIN or
+                current_user.role == "ADMIN" or
+                current_user.role == "admin")
+    if not is_admin and spider.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied"
+        )
+
     return spider
 
 def update_spider_name_in_code(code: str, spider_name: str) -> str:
@@ -211,6 +238,27 @@ def auto_fix_spider_indentation(code: str) -> tuple[str, list[str]]:
                     fixed_lines.append(fixed_line)
                     fixes_applied.append(f"Line {i+1}: Fixed indentation for method definition")
                     print(f"🔧 Fixed line {i+1}: method definition")
+                    continue
+                else:
+                    # 既に正しいインデント
+                    fixed_lines.append(line)
+                    continue
+
+            # メソッド内のコード（8スペースインデント）
+            elif line.strip() and (line.startswith('yield ') or line.startswith('return ') or
+                                   line.strip().startswith('yield ') or line.strip().startswith('return ') or
+                                   line.strip().startswith('{') or line.strip().startswith('}') or
+                                   line.strip().startswith('"') or line.strip().startswith("'") or
+                                   re.match(r'^\s*[a-zA-Z_][a-zA-Z0-9_]*\s*[=:]', line.strip())):
+                stripped_line = line.lstrip()
+                expected_indent = '        '  # 8スペース（メソッド内）
+
+                # インデントが正しくない場合
+                if not line.startswith(expected_indent) and not line.startswith('    def '):
+                    fixed_line = expected_indent + stripped_line
+                    fixed_lines.append(fixed_line)
+                    fixes_applied.append(f"Line {i+1}: Fixed indentation for method body")
+                    print(f"🔧 Fixed line {i+1}: method body indentation")
                     continue
                 else:
                     # 既に正しいインデント
@@ -376,8 +424,8 @@ def update_project_imports_in_code(code: str, old_project_name: str, new_project
 @router.post("/", response_model=Spider, status_code=status.HTTP_201_CREATED)
 async def create_spider(
     spider: SpiderCreate,
-    db: Session = Depends(get_db)
-    # current_user = Depends(get_current_active_user)  # 一時的に無効化
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_active_user)
 ):
     """新しいスパイダーを作成"""
 
@@ -413,10 +461,13 @@ async def create_spider(
     print(f"DEBUG: Updated spider code name to: {spider.name}")
     print(f"DEBUG: Ensured scrapy.Spider inheritance")
 
-    # バリデーションを実行
-    validation_result = validate_spider_inheritance(updated_code)
+    # バリデーションと自動修正を実行
+    validation_result = validate_spider_inheritance(updated_code, auto_fix=True)
     if validation_result["warnings"]:
         print(f"DEBUG: Validation warnings: {validation_result['warnings']}")
+    if validation_result["fixes_applied"]:
+        print(f"DEBUG: Auto-fixed issues: {validation_result['fixes_applied']}")
+        updated_code = validation_result["fixed_code"]
     if not validation_result["valid"]:
         print(f"DEBUG: Validation errors: {validation_result['errors']}")
         raise HTTPException(
@@ -424,9 +475,9 @@ async def create_spider(
             detail=f"Spider code validation failed: {'; '.join(validation_result['errors'])}"
         )
 
-    # 一時的にデフォルトユーザーIDを使用
-    user_id = "admin-user-id"
-    print(f"DEBUG: Using default user_id = {user_id}")
+    # user_idの設定（認証されたユーザーから取得）
+    user_id = current_user.id
+    print(f"DEBUG: Using authenticated user_id = {user_id} (user: {current_user.email})")
 
     # ファイルシステムでの重複チェック
     scrapy_service = ScrapyPlaywrightService()
@@ -496,7 +547,8 @@ async def create_spider(
 async def update_spider(
     spider_id: str,
     spider_update: SpiderUpdate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_active_user)
 ):
     """スパイダーを更新"""
     db_spider = db.query(DBSpider).filter(DBSpider.id == spider_id).first()
@@ -531,7 +583,11 @@ async def update_spider(
     return db_spider
 
 @router.delete("/{spider_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_spider(spider_id: str, db: Session = Depends(get_db)):
+async def delete_spider(
+    spider_id: str,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_active_user)
+):
     """スパイダーを削除"""
     db_spider = db.query(DBSpider).filter(DBSpider.id == spider_id).first()
     if not db_spider:
@@ -620,7 +676,7 @@ async def save_spider_code(
 
 @router.post("/{spider_id}/validate")
 async def validate_spider_code(spider_id: str, code_data: dict, db: Session = Depends(get_db)):
-    """スパイダーコードの構文チェック"""
+    """スパイダーコードの構文チェック（強化版）"""
     code = code_data.get("code", "")
     if not code:
         raise HTTPException(
@@ -630,13 +686,112 @@ async def validate_spider_code(spider_id: str, code_data: dict, db: Session = De
 
     try:
         scrapy_service = ScrapyPlaywrightService()
-        result = scrapy_service.validate_spider_code(code)
+
+        # 基本的な構文チェック
+        basic_result = scrapy_service.validate_spider_code(code)
+
+        # 追加の構文チェック（括弧の不一致など）
+        enhanced_result = validate_enhanced_syntax(code)
+
+        # 結果をマージ
+        result = {
+            "valid": basic_result["valid"] and enhanced_result["valid"],
+            "errors": basic_result["errors"] + enhanced_result["errors"],
+            "warnings": enhanced_result.get("warnings", []),
+            "suggestions": enhanced_result.get("suggestions", [])
+        }
+
         return result
     except Exception as e:
         return {
             "valid": False,
             "errors": [f"Validation error: {str(e)}"]
         }
+
+def validate_enhanced_syntax(code: str) -> dict:
+    """強化された構文チェック"""
+    result = {
+        "valid": True,
+        "errors": [],
+        "warnings": [],
+        "suggestions": []
+    }
+
+    if not code.strip():
+        result["valid"] = False
+        result["errors"].append("Code is empty")
+        return result
+
+    lines = code.split('\n')
+
+    # 括弧の不一致チェック
+    bracket_stack = []
+    bracket_pairs = {'(': ')', '[': ']', '{': '}'}
+
+    for line_num, line in enumerate(lines, 1):
+        for char_pos, char in enumerate(line):
+            if char in bracket_pairs:
+                bracket_stack.append((char, line_num, char_pos))
+            elif char in bracket_pairs.values():
+                if not bracket_stack:
+                    result["valid"] = False
+                    result["errors"].append(f"Line {line_num}: Unmatched closing bracket '{char}'")
+                else:
+                    open_bracket, _, _ = bracket_stack.pop()
+                    if bracket_pairs[open_bracket] != char:
+                        result["valid"] = False
+                        result["errors"].append(f"Line {line_num}: Mismatched bracket. Expected '{bracket_pairs[open_bracket]}' but found '{char}'")
+
+    # 未閉じの括弧チェック
+    if bracket_stack:
+        for bracket, line_num, _ in bracket_stack:
+            result["valid"] = False
+            result["errors"].append(f"Line {line_num}: Unclosed bracket '{bracket}'")
+
+    # 引用符の不一致チェック
+    for line_num, line in enumerate(lines, 1):
+        in_string = False
+        quote_char = None
+        i = 0
+        while i < len(line):
+            char = line[i]
+            if char in ['"', "'"]:
+                if not in_string:
+                    in_string = True
+                    quote_char = char
+                elif char == quote_char:
+                    # エスケープされていない場合のみ
+                    if i == 0 or line[i-1] != '\\':
+                        in_string = False
+                        quote_char = None
+            i += 1
+
+        if in_string:
+            result["warnings"].append(f"Line {line_num}: Unclosed string literal")
+
+    # インデントの一貫性チェック
+    indent_levels = []
+    for line_num, line in enumerate(lines, 1):
+        if line.strip():  # 空行は無視
+            leading_spaces = len(line) - len(line.lstrip())
+            if leading_spaces > 0:
+                indent_levels.append((line_num, leading_spaces))
+
+    # 4の倍数でないインデントを警告
+    for line_num, indent in indent_levels:
+        if indent % 4 != 0:
+            result["warnings"].append(f"Line {line_num}: Indentation is not a multiple of 4 spaces")
+
+    # 基本的なPython構文チェック
+    try:
+        compile(code, '<string>', 'exec')
+    except SyntaxError as e:
+        result["valid"] = False
+        result["errors"].append(f"Line {e.lineno}: {e.msg}")
+    except Exception as e:
+        result["warnings"].append(f"Compilation warning: {str(e)}")
+
+    return result
 
 @router.get(
     "/integrity/check",

@@ -4,8 +4,8 @@ from typing import List
 import uuid
 import os
 
-from ..database import get_db, Project as DBProject, Spider as DBSpider
-from ..models.schemas import Project, ProjectCreate, ProjectUpdate, ProjectWithSpiders, Spider, SpiderCreate
+from ..database import get_db, Project as DBProject, Spider as DBSpider, User as DBUser, UserRole
+from ..models.schemas import Project, ProjectCreate, ProjectUpdate, ProjectWithSpiders, ProjectWithUser, Spider, SpiderCreate
 from ..services.scrapy_service import ScrapyPlaywrightService
 from ..api.auth import get_current_active_user
 
@@ -33,12 +33,15 @@ router = APIRouter(
 
 @router.get(
     "/",
-    response_model=List[Project],
+    response_model=List[ProjectWithUser],
     summary="プロジェクト一覧取得",
     description="登録されているすべてのScrapyプロジェクトの一覧を取得します。",
     response_description="プロジェクトのリスト"
 )
-async def get_projects(db: Session = Depends(get_db)):
+async def get_projects(
+    db: Session = Depends(get_db),
+    current_user: DBUser = Depends(get_current_active_user)
+):
     """
     ## プロジェクト一覧取得
 
@@ -48,11 +51,38 @@ async def get_projects(db: Session = Depends(get_db)):
     - **200**: プロジェクトのリストを返します
     - **500**: サーバーエラー
     """
-    projects = db.query(DBProject).all()
-    return projects
+    # 管理者は全プロジェクト、一般ユーザーは自分のプロジェクトのみ
+    if current_user.role == UserRole.ADMIN or current_user.role == "admin" or current_user.role == "ADMIN":
+        projects = db.query(DBProject).join(DBUser).all()
+    else:
+        projects = db.query(DBProject).filter(DBProject.user_id == current_user.id).join(DBUser).all()
+
+    # ユーザー名を含むレスポンスを作成
+    result = []
+    for project in projects:
+        project_dict = {
+            "id": project.id,
+            "name": project.name,
+            "description": project.description,
+            "path": project.path,
+            "scrapy_version": project.scrapy_version,
+            "settings": project.settings,
+            "created_at": project.created_at,
+            "updated_at": project.updated_at,
+            "user_id": project.user_id,
+            "username": project.user.username if project.user else None,
+            "is_active": project.is_active  # is_activeフィールドを追加
+        }
+        result.append(project_dict)
+
+    return result
 
 @router.get("/{project_id}", response_model=ProjectWithSpiders)
-async def get_project(project_id: str, db: Session = Depends(get_db)):
+async def get_project(
+    project_id: str,
+    db: Session = Depends(get_db),
+    current_user: DBUser = Depends(get_current_active_user)
+):
     """特定のプロジェクトを取得（スパイダー情報含む）"""
     project = db.query(DBProject).filter(DBProject.id == project_id).first()
     if not project:
@@ -61,15 +91,57 @@ async def get_project(project_id: str, db: Session = Depends(get_db)):
             detail="Project not found"
         )
 
+    # 管理者以外は自分のプロジェクトのみアクセス可能
+    is_admin = (current_user.role == UserRole.ADMIN or
+                current_user.role == "admin" or
+                current_user.role == "ADMIN")
+    if not is_admin and project.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied"
+        )
+
     # スパイダー情報も含めて返す
     spiders = db.query(DBSpider).filter(DBSpider.project_id == project_id).all()
-    project_dict = project.__dict__.copy()
-    project_dict['spiders'] = spiders
+
+    # スパイダー情報を適切にフォーマット
+    formatted_spiders = []
+    for spider in spiders:
+        spider_dict = {
+            "id": spider.id,
+            "name": spider.name,
+            "description": spider.description or "",
+            "code": spider.code or "# Empty spider code",  # 空の場合はデフォルトコメントを設定
+            "template": spider.template,
+            "framework": spider.framework or "scrapy",
+            "start_urls": spider.start_urls or [],
+            "settings": spider.settings or {},
+            "project_id": spider.project_id,
+            "created_at": spider.created_at,
+            "updated_at": spider.updated_at
+        }
+        formatted_spiders.append(spider_dict)
+
+    project_dict = {
+        "id": project.id,
+        "name": project.name,
+        "description": project.description,
+        "path": project.path,
+        "scrapy_version": project.scrapy_version,
+        "settings": project.settings or {},
+        "created_at": project.created_at,
+        "updated_at": project.updated_at,
+        "spiders": formatted_spiders
+    }
 
     return project_dict
 
 @router.post("/", response_model=Project, status_code=status.HTTP_201_CREATED)
-async def create_project(project: ProjectCreate, db: Session = Depends(get_db)):
+async def create_project(
+    project: ProjectCreate,
+    db: Session = Depends(get_db),
+    current_user: DBUser = Depends(get_current_active_user)
+):
     """新しいプロジェクトを作成"""
 
     try:
@@ -79,22 +151,28 @@ async def create_project(project: ProjectCreate, db: Session = Depends(get_db)):
             extra_data={"project_name": project.name, "description": project.description}
         )
 
-        # プロジェクト名の重複チェック
-        existing_project = db.query(DBProject).filter(DBProject.name == project.name).first()
+        # プロジェクト名の重複チェック（ユーザー別）
+        existing_project = db.query(DBProject).filter(
+            DBProject.name == project.name,
+            DBProject.user_id == current_user.id
+        ).first()
         if existing_project:
-            raise ProjectException(
-                message=f"Project with name '{project.name}' already exists",
-                error_code=ErrorCode.PROJECT_CREATION_FAILED,
-                details={"project_name": project.name}
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"プロジェクト名 '{project.name}' は既に存在します。別の名前を選択してください。"
             )
 
-        # プロジェクト名をそのままパスとして使用（scrapy startproject と同じ動作）
-        project_path = project.name
+        # ユーザー名ベースのプロジェクトパスを生成
+        # フォーマット: <username>_<projectname>
+        username = current_user.username.lower().replace(' ', '_').replace('-', '_')
+        project_name_clean = project.name.lower().replace(' ', '_').replace('-', '_')
+        project_path = f"{username}_{project_name_clean}"
 
-        # プロジェクトパスの重複チェック
+        # プロジェクトパスの重複チェック（念のため）
         existing_path = db.query(DBProject).filter(DBProject.path == project_path).first()
         if existing_path:
-            # パスが重複する場合はUUIDを追加
+            # 同じユーザーで同じプロジェクト名の場合は既に上でチェック済み
+            # 異なるユーザーで同じusername_projectnameになる場合のみここに到達
             project_path = f"{project_path}_{str(uuid.uuid4())[:8]}"
 
         # Scrapyプロジェクトの作成（scrapy startproject project_name と同じ動作）
@@ -125,7 +203,7 @@ async def create_project(project: ProjectCreate, db: Session = Depends(get_db)):
             path=project_path,
             scrapy_version=project.scrapy_version or "2.11.0",
             settings=project.settings or {},
-            user_id="test-user-id"  # テスト用の固定ユーザーID
+            user_id=current_user.id  # 現在のユーザーIDを設定
         )
 
         db.add(db_project)
@@ -141,6 +219,9 @@ async def create_project(project: ProjectCreate, db: Session = Depends(get_db)):
 
         return db_project
 
+    except HTTPException:
+        # HTTPExceptionの場合は再発生
+        raise
     except ProjectException:
         # 既にProjectExceptionの場合は再発生
         raise

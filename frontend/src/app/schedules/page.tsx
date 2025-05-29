@@ -27,8 +27,11 @@ import {
 } from 'lucide-react'
 import { Schedule, scheduleService } from '@/services/scheduleService'
 import ScheduleModal from '@/components/schedules/ScheduleModal'
+import { apiClient } from '@/lib/api'
+import { useAuthStore } from '@/stores/authStore'
 
 export default function SchedulesPage() {
+  const { isAuthenticated, isInitialized, user } = useAuthStore()
   const [schedules, setSchedules] = useState<Schedule[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -57,10 +60,10 @@ export default function SchedulesPage() {
 
   // データ取得（SSR対応）
   useEffect(() => {
-    if (typeof window !== 'undefined') {
+    if (typeof window !== 'undefined' && isInitialized && isAuthenticated && user) {
       loadSchedules()
     }
-  }, [])
+  }, [isInitialized, isAuthenticated, user])
 
   // 統計情報の更新
   useEffect(() => {
@@ -69,7 +72,7 @@ export default function SchedulesPage() {
 
   // 自動更新の設定（SSR対応）
   useEffect(() => {
-    if (typeof window === 'undefined') return
+    if (typeof window === 'undefined' || !isAuthenticated || !user) return
 
     let interval: NodeJS.Timeout | null = null
 
@@ -85,14 +88,14 @@ export default function SchedulesPage() {
         clearInterval(interval)
       }
     }
-  }, [autoRefresh])
+  }, [autoRefresh, isAuthenticated, user])
 
   // 初回タスク進行状況取得（SSR対応）
   useEffect(() => {
-    if (typeof window !== 'undefined' && schedules.length > 0) {
+    if (typeof window !== 'undefined' && schedules.length > 0 && isAuthenticated && user) {
       loadTaskProgress()
     }
-  }, [schedules])
+  }, [schedules, isAuthenticated, user])
 
   const loadSchedules = async () => {
     try {
@@ -131,25 +134,16 @@ export default function SchedulesPage() {
   }
 
   const loadTaskProgress = async () => {
+    // 認証されていない場合はスキップ
+    if (!isAuthenticated || !user) {
+      console.log('SchedulesPage: Not authenticated, skipping task progress load')
+      return
+    }
+
     try {
       const progressData: {[scheduleId: string]: any} = {}
 
-      // 認証トークンの取得（SSR対応）
-      const getAuthToken = () => {
-        if (typeof window !== 'undefined') {
-          return localStorage.getItem('access_token')
-        }
-        return null
-      }
-
-      const authToken = getAuthToken()
-      if (!authToken) {
-        console.warn('No auth token available for task progress loading')
-        return
-      }
-
       console.log('🔍 Loading task progress for', schedules.length, 'schedules')
-      console.log('🔑 Auth token available:', !!authToken)
 
       // 各スケジュールの最新タスクを取得
       for (const schedule of schedules) {
@@ -177,65 +171,28 @@ export default function SchedulesPage() {
           });
 
           // まずRUNNINGタスクを確認
-          let apiUrl = `${window.location.origin}/api/tasks/?${runningParams.toString()}`
+          let tasks = await apiClient.request(`/api/tasks/?${runningParams.toString()}`)
 
-          const response = await fetch(apiUrl, {
-            method: 'GET',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${authToken}`
-            },
-            credentials: 'include'
-          })
+          // RUNNINGタスクが見つからない場合、PENDINGタスクを確認
+          if (tasks.length === 0) {
+            tasks = await apiClient.request(`/api/tasks/?${pendingParams.toString()}`)
+          }
 
-          if (response.ok) {
-            let tasks = await response.json()
-            let foundTask = null
+          if (tasks.length > 0) {
+            const task = tasks[0]
 
-            // RUNNINGタスクが見つからない場合、PENDINGタスクを確認
-            if (tasks.length === 0) {
-              const pendingUrl = `${window.location.origin}/api/tasks/?${pendingParams.toString()}`
-              const pendingResponse = await fetch(pendingUrl, {
-                method: 'GET',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'Authorization': `Bearer ${authToken}`
-                },
-                credentials: 'include'
-              });
-
-              if (pendingResponse.ok) {
-                tasks = await pendingResponse.json()
+            // 実行中または待機中のタスクがある場合
+            if (task.status === 'RUNNING' || task.status === 'PENDING') {
+              progressData[schedule.id] = {
+                taskId: task.id,
+                status: task.status.toLowerCase(),
+                itemsScraped: task.items_count || 0,
+                requestsCount: task.requests_count || 0,
+                errorsCount: task.error_count || 0,
+                startedAt: task.started_at,
+                elapsedTime: task.started_at ?
+                  Math.floor((new Date().getTime() - new Date(task.started_at).getTime()) / 1000) : 0
               }
-            }
-
-            if (tasks.length > 0) {
-              const task = tasks[0]
-
-              // 実行中または待機中のタスクがある場合
-              if (task.status === 'RUNNING' || task.status === 'PENDING') {
-                progressData[schedule.id] = {
-                  taskId: task.id,
-                  status: task.status.toLowerCase(),
-                  itemsScraped: task.items_count || 0,
-                  requestsCount: task.requests_count || 0,
-                  errorsCount: task.error_count || 0,
-                  startedAt: task.started_at,
-                  elapsedTime: task.started_at ?
-                    Math.floor((new Date().getTime() - new Date(task.started_at).getTime()) / 1000) : 0
-                }
-              }
-            }
-          } else {
-            // HTTPエラーの詳細ログ
-            const errorText = await response.text().catch(() => 'Unknown error')
-            console.error(`HTTP ${response.status} for schedule ${schedule.id}:`, errorText)
-
-            // 401エラーの場合は認証エラー
-            if (response.status === 401) {
-              console.warn('Authentication failed, redirecting to login')
-              // 必要に応じてログインページにリダイレクト
-              // window.location.href = '/login'
             }
           }
         } catch (error) {
@@ -256,20 +213,9 @@ export default function SchedulesPage() {
 
           // フォールバック: 基本的なタスク取得を試行
           try {
-            const fallbackUrl = `${window.location.origin}/api/tasks/?project_id=${schedule.project_id}&limit=1`
-            console.log('Trying fallback URL:', fallbackUrl)
-
-            const fallbackResponse = await fetch(fallbackUrl, {
-              method: 'GET',
-              headers: {
-                'Authorization': `Bearer ${authToken}`
-              }
-            })
-
-            if (fallbackResponse.ok) {
-              const fallbackTasks = await fallbackResponse.json()
-              console.log('Fallback response:', fallbackTasks)
-            }
+            console.log('Trying fallback for schedule:', schedule.id)
+            const fallbackTasks = await apiClient.request(`/api/tasks/?project_id=${schedule.project_id}&limit=1`)
+            console.log('Fallback response:', fallbackTasks)
           } catch (fallbackError) {
             console.error('Fallback also failed:', fallbackError)
           }
@@ -382,9 +328,8 @@ export default function SchedulesPage() {
   // 結果ダウンロード
   const handleDownloadResults = async (schedule: Schedule) => {
     try {
-      // 認証トークンの取得（SSR対応）
-      const authToken = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null
-      if (!authToken) {
+      // 認証チェック
+      if (!isAuthenticated || !user) {
         alert('認証が必要です。ログインしてください。')
         return
       }
@@ -396,28 +341,14 @@ export default function SchedulesPage() {
         limit: '1'
       });
 
-      const apiUrl = `${window.location.origin}/api/tasks?${params.toString()}`
+      const tasks = await apiClient.request(`/api/tasks?${params.toString()}`)
 
-      const response = await fetch(apiUrl, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${authToken}`
-        },
-        credentials: 'include'
-      })
-
-      if (response.ok) {
-        const tasks = await response.json()
-        if (tasks.length > 0) {
-          const latestTask = tasks[0]
-          // タスク結果ページを新しいタブで開く
-          window.open(`/projects/${schedule.project_id}/tasks/${latestTask.id}/results`, '_blank')
-        } else {
-          alert('このスケジュールの実行結果がありません')
-        }
+      if (tasks.length > 0) {
+        const latestTask = tasks[0]
+        // タスク結果ページを新しいタブで開く
+        window.open(`/projects/${schedule.project_id}/tasks/${latestTask.id}/results`, '_blank')
       } else {
-        alert('タスク情報の取得に失敗しました')
+        alert('このスケジュールの実行結果がありません')
       }
     } catch (error) {
       console.error('Failed to get task results:', error)
@@ -445,6 +376,22 @@ export default function SchedulesPage() {
 
     return matchesSearch && matchesActive && matchesProject
   })
+
+  // 認証されていない場合の表示
+  if (!isInitialized || !isAuthenticated || !user) {
+    return (
+      <div className="min-h-screen bg-gray-900 text-white">
+        <div className="flex items-center justify-center h-screen">
+          <div className="text-center">
+            <Calendar className="w-12 h-12 mx-auto mb-4 opacity-50 text-gray-400" />
+            <p className="text-lg text-gray-400">
+              {!isInitialized ? 'Initializing...' : 'Authentication required'}
+            </p>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="min-h-screen bg-gray-900 text-white">

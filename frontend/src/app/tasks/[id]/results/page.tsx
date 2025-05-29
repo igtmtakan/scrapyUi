@@ -77,21 +77,14 @@ export default function TaskResultsPage() {
       if (resultsData.length === 0 && taskData.items_count > 0) {
         try {
           console.log('No results in database, trying to load from file...');
-          // 結果ファイルから読み込み
-          const response = await fetch(`http://localhost:8000/api/tasks/${taskId}/results/load-from-file`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
+          // apiClientを使用（認証あり）
+          const loadResult = await apiClient.request(`/api/tasks/${taskId}/results/load-from-file`, {
+            method: 'POST'
           });
+          console.log('Loaded results from file:', loadResult);
 
-          if (response.ok) {
-            const loadResult = await response.json();
-            console.log('Loaded results from file:', loadResult);
-
-            // 再度結果データを取得
-            resultsData = await apiClient.getResults({ task_id: taskId });
-          }
+          // 再度結果データを取得
+          resultsData = await apiClient.getResults({ task_id: taskId });
         } catch (fileError) {
           console.error('Failed to load from file:', fileError);
         }

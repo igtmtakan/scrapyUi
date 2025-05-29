@@ -1,6 +1,8 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { apiClient } from '@/lib/api';
+import { useAuthStore } from '@/stores/authStore';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -61,6 +63,7 @@ interface AnalyticsData {
 }
 
 export default function Analytics() {
+  const { isAuthenticated, isInitialized, user } = useAuthStore();
   const [analyticsData, setAnalyticsData] = useState<AnalyticsData>({
     totalTasks: 0,
     activeTasks: 0,
@@ -78,48 +81,36 @@ export default function Analytics() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    loadAnalyticsData();
-    const interval = setInterval(loadAnalyticsData, 30000); // 30秒ごと更新
-    return () => clearInterval(interval);
-  }, []);
+    if (isInitialized && isAuthenticated && user) {
+      loadAnalyticsData();
+      const interval = setInterval(loadAnalyticsData, 30000); // 30秒ごと更新
+      return () => clearInterval(interval);
+    }
+  }, [isInitialized, isAuthenticated, user]);
 
   const loadAnalyticsData = async () => {
+    // 認証されていない場合はスキップ
+    if (!isAuthenticated || !user) {
+      console.log('Analytics: Not authenticated, skipping data load');
+      setIsLoading(false);
+      return;
+    }
+
     try {
       setIsLoading(true);
 
-      const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      // apiClientを使用（認証あり）- 各スパイダーの最新10件のみ取得
+      const tasks = await apiClient.getTasks({ per_spider: 10 });
 
-      // タスクデータを取得
-      const tasksResponse = await fetch(`${baseUrl}/api/tasks/`, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          'Origin': window.location.origin,
-        },
-        credentials: 'omit'
-      });
-
-      if (!tasksResponse.ok) {
-        throw new Error(`Tasks API failed: ${tasksResponse.status} ${tasksResponse.statusText}`);
+      // 結果データを取得（まだAPIが存在しない場合は空配列）
+      let results = [];
+      try {
+        // results APIが存在する場合は取得、存在しない場合は空配列
+        results = await apiClient.request('/api/results/');
+      } catch (error) {
+        console.log('Results API not available, using empty array');
+        results = [];
       }
-
-      const tasks = await tasksResponse.json();
-
-      // 結果データを取得
-      const resultsResponse = await fetch(`${baseUrl}/api/results/`, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          'Origin': window.location.origin,
-        },
-        credentials: 'omit'
-      });
-
-      if (!resultsResponse.ok) {
-        throw new Error(`Results API failed: ${resultsResponse.status} ${resultsResponse.statusText}`);
-      }
-
-      const results = await resultsResponse.json();
 
       // データを分析
       const analytics = analyzeData(tasks, results);
@@ -330,6 +321,24 @@ export default function Analytics() {
       }
     }
   };
+
+  // 認証されていない場合の表示
+  if (!isInitialized || !isAuthenticated || !user) {
+    return (
+      <div className="h-full overflow-y-auto">
+        <div className="p-6">
+          <div className="flex items-center justify-center h-64">
+            <div className="text-center">
+              <Activity className="w-8 h-8 mx-auto mb-2 opacity-50 text-gray-400" />
+              <p className="text-sm text-gray-400">
+                {!isInitialized ? 'Initializing...' : 'Authentication required'}
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (isLoading) {
     return (

@@ -67,11 +67,15 @@ export default function MonitoringPage() {
         )}
 
         {activeTab === 'analytics' && (
-          <Analytics />
+          <div className="h-full overflow-y-auto">
+            <Analytics />
+          </div>
         )}
 
         {activeTab === 'system' && (
-          <SystemStatus />
+          <div className="h-full overflow-y-auto">
+            <SystemStatus />
+          </div>
         )}
       </div>
     </div>

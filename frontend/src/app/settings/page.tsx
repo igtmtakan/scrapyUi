@@ -54,17 +54,6 @@ export default function SettingsPage() {
     auto_save: true,
     dark_mode: false,
     default_log_level: 'INFO',
-    concurrent_requests: 16,
-    download_delay: 0,
-    randomize_download_delay: true,
-    auto_throttle_enabled: true,
-    auto_throttle_start_delay: 1,
-    auto_throttle_max_delay: 60,
-    auto_throttle_target_concurrency: 1.0,
-    cookies_enabled: true,
-    retry_enabled: true,
-    retry_times: 2,
-    retry_http_codes: [500, 502, 503, 504, 408, 429],
   });
   const [generalLoading, setGeneralLoading] = useState(false);
   const [generalMessage, setGeneralMessage] = useState<{type: 'success' | 'error', text: string} | null>(null);
@@ -139,17 +128,6 @@ export default function SettingsPage() {
         auto_save: true,
         dark_mode: false,
         default_log_level: 'INFO',
-        concurrent_requests: 16,
-        download_delay: 0,
-        randomize_download_delay: true,
-        auto_throttle_enabled: true,
-        auto_throttle_start_delay: 1,
-        auto_throttle_max_delay: 60,
-        auto_throttle_target_concurrency: 1.0,
-        cookies_enabled: true,
-        retry_enabled: true,
-        retry_times: 2,
-        retry_http_codes: [500, 502, 503, 504, 408, 429],
       });
 
       setGeneralMessage({ type: 'success', text: '設定がデフォルト値に戻されました。' });
@@ -295,81 +273,6 @@ export default function SettingsPage() {
       description: 'スパイダー実行時のデフォルトログレベル',
       type: 'select',
       options: ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL']
-    },
-    {
-      key: 'concurrent_requests',
-      title: '同時リクエスト数',
-      description: 'Scrapyの同時リクエスト数',
-      type: 'number',
-      min: 1,
-      max: 100
-    },
-    {
-      key: 'download_delay',
-      title: 'ダウンロード遅延（秒）',
-      description: 'リクエスト間の遅延時間',
-      type: 'number',
-      min: 0,
-      max: 10,
-      step: 0.1
-    },
-    {
-      key: 'randomize_download_delay',
-      title: 'ダウンロード遅延のランダム化',
-      description: 'ダウンロード遅延をランダム化する',
-      type: 'boolean'
-    },
-    {
-      key: 'auto_throttle_enabled',
-      title: 'AutoThrottle有効',
-      description: '自動スロットリング機能を有効にする',
-      type: 'boolean'
-    },
-    {
-      key: 'auto_throttle_start_delay',
-      title: 'AutoThrottle開始遅延',
-      description: 'AutoThrottleの初期遅延時間（秒）',
-      type: 'number',
-      min: 0,
-      max: 10,
-      step: 0.1
-    },
-    {
-      key: 'auto_throttle_max_delay',
-      title: 'AutoThrottle最大遅延',
-      description: 'AutoThrottleの最大遅延時間（秒）',
-      type: 'number',
-      min: 1,
-      max: 300
-    },
-    {
-      key: 'auto_throttle_target_concurrency',
-      title: 'AutoThrottle目標同時実行数',
-      description: 'AutoThrottleの目標同時実行数',
-      type: 'number',
-      min: 0.1,
-      max: 10,
-      step: 0.1
-    },
-    {
-      key: 'cookies_enabled',
-      title: 'Cookie有効',
-      description: 'Cookieの処理を有効にする',
-      type: 'boolean'
-    },
-    {
-      key: 'retry_enabled',
-      title: 'リトライ有効',
-      description: '失敗したリクエストのリトライを有効にする',
-      type: 'boolean'
-    },
-    {
-      key: 'retry_times',
-      title: 'リトライ回数',
-      description: '失敗したリクエストのリトライ回数',
-      type: 'number',
-      min: 0,
-      max: 10
     }
   ];
 
@@ -409,7 +312,15 @@ export default function SettingsPage() {
                 一般設定
               </button>
 
-              {settingsSections.map((section) => (
+              {settingsSections
+                .filter(section => {
+                  // データベース設定は管理者のみ表示
+                  if (section.id === 'database') {
+                    return user?.role === 'admin';
+                  }
+                  return true;
+                })
+                .map((section) => (
                 <div key={section.id}>
                   {section.href ? (
                     <Link
@@ -465,7 +376,7 @@ export default function SettingsPage() {
                     <div>
                       <h3 className="text-lg font-medium text-gray-900 mb-4">基本設定</h3>
                       <div className="space-y-6">
-                        {settingItems.slice(0, 5).map((item) => (
+                        {settingItems.map((item) => (
                           <div key={item.key} className="flex items-center justify-between">
                             <div className="flex-1">
                               <h4 className="text-sm font-medium text-gray-900">{item.title}</h4>
@@ -507,77 +418,6 @@ export default function SettingsPage() {
                                   className="px-3 py-2 border border-gray-300 rounded-md shadow-sm bg-gray-50 text-gray-500"
                                   readOnly
                                 />
-                              ) : item.type === 'number' ? (
-                                <input
-                                  type="number"
-                                  value={generalSettings[item.key as keyof typeof generalSettings] as number}
-                                  onChange={(e) => setGeneralSettings(prev => ({
-                                    ...prev,
-                                    [item.key]: parseFloat(e.target.value) || 0
-                                  }))}
-                                  min={item.min}
-                                  max={item.max}
-                                  step={item.step}
-                                  className="px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 w-24"
-                                  disabled={generalLoading}
-                                />
-                              ) : (
-                                <input
-                                  type="text"
-                                  value={generalSettings[item.key as keyof typeof generalSettings] as string}
-                                  onChange={(e) => setGeneralSettings(prev => ({
-                                    ...prev,
-                                    [item.key]: e.target.value
-                                  }))}
-                                  className="px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                                  disabled={generalLoading}
-                                />
-                              )}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Scrapy設定セクション */}
-                    <div className="border-t border-gray-200 pt-8">
-                      <h3 className="text-lg font-medium text-gray-900 mb-4">Scrapy設定</h3>
-                      <div className="space-y-6">
-                        {settingItems.slice(5).map((item) => (
-                          <div key={item.key} className="flex items-center justify-between">
-                            <div className="flex-1">
-                              <h4 className="text-sm font-medium text-gray-900">{item.title}</h4>
-                              <p className="text-sm text-gray-500">{item.description}</p>
-                            </div>
-                            <div className="ml-4">
-                              {item.type === 'boolean' ? (
-                                <label className="relative inline-flex items-center cursor-pointer">
-                                  <input
-                                    type="checkbox"
-                                    className="sr-only peer"
-                                    checked={generalSettings[item.key as keyof typeof generalSettings] as boolean}
-                                    onChange={(e) => setGeneralSettings(prev => ({
-                                      ...prev,
-                                      [item.key]: e.target.checked
-                                    }))}
-                                    disabled={generalLoading}
-                                  />
-                                  <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-                                </label>
-                              ) : item.type === 'select' ? (
-                                <select
-                                  value={generalSettings[item.key as keyof typeof generalSettings] as string}
-                                  onChange={(e) => setGeneralSettings(prev => ({
-                                    ...prev,
-                                    [item.key]: e.target.value
-                                  }))}
-                                  className="px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                                  disabled={generalLoading}
-                                >
-                                  {item.options?.map((option) => (
-                                    <option key={option} value={option}>{option}</option>
-                                  ))}
-                                </select>
                               ) : item.type === 'number' ? (
                                 <input
                                   type="number"

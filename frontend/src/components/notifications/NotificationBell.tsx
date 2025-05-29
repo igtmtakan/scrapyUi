@@ -3,22 +3,37 @@
 import React, { useState, useEffect } from 'react'
 import { Bell } from 'lucide-react'
 import NotificationCenter from './NotificationCenter'
+import { useAuthStore } from '@/stores/authStore'
 
 export default function NotificationBell() {
+  const { isAuthenticated, isInitialized, user } = useAuthStore()
   const [isOpen, setIsOpen] = useState(false)
   const [unreadCount, setUnreadCount] = useState(0)
 
   useEffect(() => {
-    // 未読通知数を取得
-    fetchUnreadCount()
+    if (isInitialized && isAuthenticated && user) {
+      // 未読通知数を取得
+      fetchUnreadCount()
 
-    // 定期的に未読数を更新
-    const interval = setInterval(fetchUnreadCount, 30000) // 30秒ごと
+      // 定期的に未読数を更新
+      const interval = setInterval(() => {
+        if (isAuthenticated && user) {
+          fetchUnreadCount()
+        }
+      }, 30000) // 30秒ごと
 
-    return () => clearInterval(interval)
-  }, [])
+      return () => clearInterval(interval)
+    }
+  }, [isInitialized, isAuthenticated, user])
 
   const fetchUnreadCount = async () => {
+    // 認証されていない場合はスキップ
+    if (!isAuthenticated || !user) {
+      console.log('NotificationBell: Not authenticated, skipping unread count fetch')
+      setUnreadCount(0)
+      return
+    }
+
     try {
       // Use the notification store instead of direct API call
       const { unreadCount: count } = await import('@/stores/notificationStore').then(m => m.useNotificationStore.getState())

@@ -1,11 +1,11 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { 
-  Activity, 
-  Cpu, 
-  MemoryStick, 
-  HardDrive, 
+import {
+  Activity,
+  Cpu,
+  MemoryStick,
+  HardDrive,
   Network,
   TrendingUp,
   TrendingDown,
@@ -15,6 +15,7 @@ import {
   Zap
 } from 'lucide-react';
 import { apiClient } from '@/lib/api';
+import { useAuthStore } from '@/stores/authStore';
 
 interface PerformanceStats {
   cpu_avg: number;
@@ -32,17 +33,31 @@ interface PerformanceDashboardProps {
 }
 
 export default function PerformanceDashboard({ projectId }: PerformanceDashboardProps) {
+  const { isAuthenticated, isInitialized, user } = useAuthStore();
   const [stats, setStats] = useState<PerformanceStats | null>(null);
   const [isMonitoring, setIsMonitoring] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    loadStats();
-    const interval = setInterval(loadStats, 5000); // 5秒ごとに更新
-    return () => clearInterval(interval);
-  }, [projectId]);
+    if (isInitialized && isAuthenticated && user && projectId) {
+      loadStats();
+      const interval = setInterval(() => {
+        if (isAuthenticated && user) {
+          loadStats();
+        }
+      }, 5000); // 5秒ごとに更新
+      return () => clearInterval(interval);
+    }
+  }, [isInitialized, isAuthenticated, user, projectId]);
 
   const loadStats = async () => {
+    // 認証されていない場合はスキップ
+    if (!isAuthenticated || !user) {
+      console.log('PerformanceDashboard: Not authenticated, skipping data load');
+      setIsLoading(false);
+      return;
+    }
+
     try {
       const data = await apiClient.request(`/api/projects/${projectId}/monitoring/stats`);
       setStats(data);
@@ -136,7 +151,7 @@ export default function PerformanceDashboard({ projectId }: PerformanceDashboard
             </button>
           </div>
         </div>
-        
+
         <div className="flex items-center space-x-2">
           <div className={`w-3 h-3 rounded-full ${isMonitoring ? 'bg-green-400 animate-pulse' : 'bg-gray-400'}`}></div>
           <span className="text-gray-300">
@@ -160,7 +175,7 @@ export default function PerformanceDashboard({ projectId }: PerformanceDashboard
             {stats ? `${stats.cpu_avg.toFixed(1)}%` : 'N/A'}
           </div>
           <div className="mt-2 bg-gray-700 rounded-full h-2">
-            <div 
+            <div
               className="bg-blue-400 h-2 rounded-full transition-all duration-300"
               style={{ width: `${stats ? Math.min(stats.cpu_avg, 100) : 0}%` }}
             ></div>
@@ -180,7 +195,7 @@ export default function PerformanceDashboard({ projectId }: PerformanceDashboard
             {stats ? `${stats.memory_avg.toFixed(1)}%` : 'N/A'}
           </div>
           <div className="mt-2 bg-gray-700 rounded-full h-2">
-            <div 
+            <div
               className="bg-green-400 h-2 rounded-full transition-all duration-300"
               style={{ width: `${stats ? Math.min(stats.memory_avg, 100) : 0}%` }}
             ></div>
@@ -200,7 +215,7 @@ export default function PerformanceDashboard({ projectId }: PerformanceDashboard
             {stats ? `${stats.disk_usage.toFixed(1)}%` : 'N/A'}
           </div>
           <div className="mt-2 bg-gray-700 rounded-full h-2">
-            <div 
+            <div
               className="bg-purple-400 h-2 rounded-full transition-all duration-300"
               style={{ width: `${stats ? Math.min(stats.disk_usage, 100) : 0}%` }}
             ></div>
@@ -259,7 +274,7 @@ export default function PerformanceDashboard({ projectId }: PerformanceDashboard
             {stats ? `${stats.success_rate.toFixed(1)}%` : 'N/A'}
           </div>
           <div className="mt-2 bg-gray-700 rounded-full h-2">
-            <div 
+            <div
               className="bg-green-400 h-2 rounded-full transition-all duration-300"
               style={{ width: `${stats ? stats.success_rate : 0}%` }}
             ></div>

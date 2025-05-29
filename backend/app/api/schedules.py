@@ -5,10 +5,11 @@ import uuid
 from datetime import datetime
 from croniter import croniter
 
-from ..database import get_db, Schedule as DBSchedule, Project as DBProject, Spider as DBSpider, Task as DBTask
+from ..database import get_db, Schedule as DBSchedule, Project as DBProject, Spider as DBSpider, Task as DBTask, User as DBUser, UserRole
 from ..models.schemas import Schedule, ScheduleCreate, ScheduleUpdate
 from ..tasks.scrapy_tasks import scheduled_spider_run
 from ..services.scheduler_service import scheduler_service
+from .auth import get_current_active_user
 
 router = APIRouter(
     responses={
@@ -27,7 +28,8 @@ router = APIRouter(
 async def get_schedules(
     project_id: str = None,
     is_active: bool = None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_active_user)
 ):
     """
     ## スケジュール一覧取得
@@ -52,6 +54,13 @@ async def get_schedules(
     ).join(
         DBSpider, DBSchedule.spider_id == DBSpider.id
     )
+
+    # 管理者は全スケジュール、一般ユーザーは自分のプロジェクトのスケジュールのみ
+    is_admin = (current_user.role == UserRole.ADMIN or
+                current_user.role == "ADMIN" or
+                current_user.role == "admin")
+    if not is_admin:
+        query = query.filter(DBProject.user_id == current_user.id)
 
     if project_id:
         query = query.filter(DBSchedule.project_id == project_id)

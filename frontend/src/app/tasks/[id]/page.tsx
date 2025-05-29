@@ -2,13 +2,13 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter, useParams } from 'next/navigation';
-import { 
-  ArrowLeft, 
-  Play, 
-  Square, 
-  Download, 
-  Clock, 
-  CheckCircle, 
+import {
+  ArrowLeft,
+  Play,
+  Square,
+  Download,
+  Clock,
+  CheckCircle,
   XCircle,
   AlertCircle,
   Database,
@@ -17,6 +17,7 @@ import {
   Activity
 } from 'lucide-react';
 import { apiClient } from '@/lib/api';
+import { useAuthStore } from '@/stores/authStore';
 
 interface Task {
   id: string;
@@ -51,25 +52,35 @@ interface Log {
 }
 
 export default function TaskDetailPage() {
+  const { isAuthenticated, isInitialized, user } = useAuthStore();
   const router = useRouter();
   const params = useParams();
   const taskId = params.id as string;
-  
+
   const [task, setTask] = useState<Task | null>(null);
   const [logs, setLogs] = useState<Log[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'overview' | 'logs' | 'settings'>('overview');
 
   useEffect(() => {
-    loadTaskDetails();
-  }, [taskId]);
+    if (isInitialized && isAuthenticated && user && taskId) {
+      loadTaskDetails();
+    }
+  }, [isInitialized, isAuthenticated, user, taskId]);
 
   const loadTaskDetails = async () => {
+    // 認証されていない場合はスキップ
+    if (!isAuthenticated || !user) {
+      console.log('TaskDetailPage: Not authenticated, skipping data load');
+      setIsLoading(false);
+      return;
+    }
+
     try {
       setIsLoading(true);
       const taskData = await apiClient.getTask(taskId);
       setTask(taskData);
-      
+
       // Load logs if available
       // Note: This would need to be implemented in the API
       // const logsData = await apiClient.getTaskLogs(taskId);
@@ -155,15 +166,29 @@ export default function TaskDetailPage() {
 
   const formatDuration = (startedAt?: string, finishedAt?: string) => {
     if (!startedAt) return '-';
-    
+
     const start = new Date(startedAt);
     const end = finishedAt ? new Date(finishedAt) : new Date();
     const duration = Math.floor((end.getTime() - start.getTime()) / 1000);
-    
+
     if (duration < 60) return `${duration}秒`;
     if (duration < 3600) return `${Math.floor(duration / 60)}分`;
     return `${Math.floor(duration / 3600)}時間${Math.floor((duration % 3600) / 60)}分`;
   };
+
+  // 認証されていない場合の表示
+  if (!isInitialized || !isAuthenticated || !user) {
+    return (
+      <div className="min-h-screen bg-gray-900 text-white flex items-center justify-center">
+        <div className="text-center">
+          <Activity className="w-12 h-12 mx-auto mb-4 opacity-50 text-gray-400" />
+          <p className="text-lg text-gray-400">
+            {!isInitialized ? 'Initializing...' : 'Authentication required'}
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   if (isLoading) {
     return (
@@ -214,12 +239,12 @@ export default function TaskDetailPage() {
                 </div>
               </div>
             </div>
-            
+
             <div className="flex items-center space-x-3">
               <span className={`px-3 py-1 rounded-full text-sm font-medium ${getStatusColor(task.status)}`}>
                 {getStatusText(task.status)}
               </span>
-              
+
               {task.status === 'FINISHED' && (
                 <button
                   onClick={() => router.push(`/tasks/${task.id}/results`)}
@@ -229,7 +254,7 @@ export default function TaskDetailPage() {
                   <span>結果表示</span>
                 </button>
               )}
-              
+
               {(task.status === 'PENDING' || task.status === 'RUNNING') && (
                 <button
                   onClick={handleCancelTask}
@@ -257,7 +282,7 @@ export default function TaskDetailPage() {
               </div>
             </div>
           </div>
-          
+
           <div className="bg-gray-800 rounded-lg p-6">
             <div className="flex items-center">
               <Activity className="h-8 w-8 text-green-400" />
@@ -267,7 +292,7 @@ export default function TaskDetailPage() {
               </div>
             </div>
           </div>
-          
+
           <div className="bg-gray-800 rounded-lg p-6">
             <div className="flex items-center">
               <XCircle className="h-8 w-8 text-red-400" />
@@ -277,7 +302,7 @@ export default function TaskDetailPage() {
               </div>
             </div>
           </div>
-          
+
           <div className="bg-gray-800 rounded-lg p-6">
             <div className="flex items-center">
               <Clock className="h-8 w-8 text-purple-400" />
@@ -343,7 +368,7 @@ export default function TaskDetailPage() {
                     <p className="text-sm text-gray-400">{formatDate(task.created_at)}</p>
                   </div>
                 </div>
-                
+
                 {task.started_at && (
                   <div className="flex items-center space-x-3">
                     <div className="w-2 h-2 bg-green-400 rounded-full"></div>
@@ -353,7 +378,7 @@ export default function TaskDetailPage() {
                     </div>
                   </div>
                 )}
-                
+
                 {task.finished_at && (
                   <div className="flex items-center space-x-3">
                     <div className={`w-2 h-2 rounded-full ${
@@ -437,7 +462,7 @@ export default function TaskDetailPage() {
                 <label className="block text-sm font-medium text-gray-400 mb-1">ログレベル</label>
                 <p className="text-white">{task.log_level}</p>
               </div>
-              
+
               {task.settings && (
                 <div>
                   <label className="block text-sm font-medium text-gray-400 mb-1">カスタム設定</label>

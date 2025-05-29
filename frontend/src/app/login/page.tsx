@@ -27,8 +27,12 @@ export default function LoginPage() {
     if (isInitialized && isAuthenticated) {
       // リダイレクト先を確認（デフォルトはプロジェクト一覧ページ）
       const redirectTo = searchParams.get('redirect') || '/projects';
-      console.log('🔄 Redirecting to:', redirectTo);
-      router.push(redirectTo);
+      console.log('🔄 Authenticated user detected, redirecting to:', redirectTo);
+
+      // 無限ループを防ぐため、現在のパスと異なる場合のみリダイレクト
+      if (window.location.pathname !== redirectTo) {
+        router.push(redirectTo);
+      }
     }
   }, [isInitialized, isAuthenticated, router, searchParams]);
 

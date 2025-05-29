@@ -17,6 +17,7 @@ const healthRoutes = require('./routes/health');
 const metricsRoutes = require('./routes/metrics');
 const workflowRoutes = require('./routes/workflow');
 const schedulerRoutes = require('./routes/scheduler');
+const commandRoutes = require('./routes/command');
 
 // Import middleware
 const errorHandler = require('./middleware/errorHandler');
@@ -48,7 +49,11 @@ app.use(helmet({
 
 // CORS設定を最初に配置（プリフライトリクエストを適切に処理）
 app.use(cors({
-  origin: true, // 開発環境では全てのオリジンを許可
+  origin: function (origin, callback) {
+    // 開発環境では全てのオリジンを許可
+    logger.info(`CORS request from origin: ${origin || 'null'}`);
+    callback(null, true);
+  },
   credentials: false,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'x-api-key'],
@@ -74,6 +79,13 @@ app.use(rateLimiter);
 
 // API key authentication for protected routes
 app.use('/api', apiKeyAuth);
+
+// Request logging middleware
+app.use((req, res, next) => {
+  logger.info(`Incoming request: ${req.method} ${req.url} from ${req.ip}`);
+  logger.info(`Headers: ${JSON.stringify(req.headers, null, 2)}`);
+  next();
+});
 
 // Make services available to routes
 app.use((req, res, next) => {
@@ -105,6 +117,7 @@ app.use('/api/scheduler', schedulerRoutes);
 app.use('/api/scraping', scrapingRoutes);
 app.use('/api/pdf', pdfRoutes);
 app.use('/api/screenshot', screenshotRoutes);
+app.use('/api/command', commandRoutes);
 
 // Root endpoint
 app.get('/', (req, res) => {
@@ -116,7 +129,8 @@ app.get('/', (req, res) => {
       health: '/api/health',
       scraping: '/api/scraping',
       pdf: '/api/pdf',
-      screenshot: '/api/screenshot'
+      screenshot: '/api/screenshot',
+      command: '/api/command'
     },
     documentation: '/api/docs'
   });
@@ -134,7 +148,11 @@ app.get('/api/docs', (req, res) => {
       'POST /api/scraping/dynamic': 'Scrape dynamic content',
       'POST /api/pdf/generate': 'Generate PDF from HTML/URL',
       'POST /api/screenshot/capture': 'Capture page screenshots',
-      'GET /api/screenshot/full-page': 'Full page screenshot'
+      'GET /api/screenshot/full-page': 'Full page screenshot',
+      'POST /api/command/exec': 'Execute shell commands',
+      'POST /api/command/spawn': 'Spawn processes with streaming output',
+      'POST /api/command/sync': 'Execute commands synchronously',
+      'GET /api/command/allowed': 'Get list of allowed commands'
     }
   });
 });
@@ -151,7 +169,8 @@ app.use('*', (req, res) => {
       '/api/health',
       '/api/scraping',
       '/api/pdf',
-      '/api/screenshot'
+      '/api/screenshot',
+      '/api/command'
     ]
   });
 });

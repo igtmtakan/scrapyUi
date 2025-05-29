@@ -23,17 +23,6 @@ DEFAULT_GENERAL_SETTINGS = {
     "auto_save": True,
     "dark_mode": False,
     "default_log_level": "INFO",
-    "concurrent_requests": 16,
-    "download_delay": 0,
-    "randomize_download_delay": True,
-    "auto_throttle_enabled": True,
-    "auto_throttle_start_delay": 1,
-    "auto_throttle_max_delay": 60,
-    "auto_throttle_target_concurrency": 1.0,
-    "cookies_enabled": True,
-    "retry_enabled": True,
-    "retry_times": 2,
-    "retry_http_codes": [500, 502, 503, 504, 408, 429],
 }
 
 # 設定ファイルのパス

@@ -15,15 +15,33 @@ from ..websocket.manager import manager
 def _safe_websocket_notify(task_id: str, data: dict):
     """Celeryワーカー内で安全にWebSocket通知を送信"""
     try:
-        # イベントループが存在するかチェック
-        loop = asyncio.get_running_loop()
-        # 新しいタスクとして非同期実行を試行
-        asyncio.create_task(manager.send_task_update(task_id, data))
-    except RuntimeError:
-        # Celeryワーカー内ではイベントループが存在しないため、ログ出力のみ
-        print(f"📡 WebSocket notification skipped (Celery worker): Task {task_id} - {data.get('status', 'update')}")
+        # HTTPリクエストでWebSocket通知を送信（Celeryワーカーから安全に実行可能）
+        import requests
+        import json
+
+        # バックエンドのWebSocket通知エンドポイントに送信
+        notification_url = "http://localhost:8000/api/tasks/internal/websocket-notify"
+        payload = {
+            "task_id": task_id,
+            "data": data
+        }
+
+        # 非同期でHTTPリクエストを送信（タイムアウト設定）
+        response = requests.post(
+            notification_url,
+            json=payload,
+            timeout=1.0,  # 1秒でタイムアウト
+            headers={"Content-Type": "application/json"}
+        )
+
+        if response.status_code == 200:
+            print(f"📡 WebSocket notification sent: Task {task_id} - {data.get('status', 'update')}")
+        else:
+            print(f"📡 WebSocket notification failed: {response.status_code}")
+
+    except requests.exceptions.Timeout:
+        print(f"📡 WebSocket notification timeout: Task {task_id}")
     except Exception as e:
-        # その他のエラーもログ出力のみ
         print(f"📡 WebSocket notification error: {str(e)}")
 
 @celery_app.task(bind=True, soft_time_limit=1800, time_limit=2100)  # 30分のソフトタイムアウト、35分のハードタイムアウト
@@ -32,7 +50,7 @@ def run_spider_task(self, project_id: str, spider_id: str, settings: dict = None
     Celeryタスクとしてスパイダーを実行
     """
     db = SessionLocal()
-    task_id = self.request.id
+    celery_task_id = self.request.id
 
     try:
         # データベースからプロジェクトとスパイダー情報を取得
@@ -45,19 +63,32 @@ def run_spider_task(self, project_id: str, spider_id: str, settings: dict = None
             print(f"   Spider ID: {spider_id} -> Found: {spider is not None}")
             raise Exception("Project or Spider not found")
 
-        # タスクレコードを作成
-        db_task = DBTask(
-            id=task_id,
-            project_id=project_id,
-            spider_id=spider_id,
-            status=TaskStatus.RUNNING,
-            started_at=datetime.now(),
-            log_level=settings.get('log_level', 'INFO') if settings else 'INFO',
-            settings=settings,
-            user_id=settings.get('user_id', 'system') if settings else 'system'
-        )
-        db.add(db_task)
+        # 既存のタスクレコードを検索（celery_task_idで関連付けられたもの）
+        db_task = db.query(DBTask).filter(DBTask.celery_task_id == celery_task_id).first()
+
+        if not db_task:
+            # 新しいタスクレコードを作成（通常はAPIで作成済みのはず）
+            print(f"⚠️ No existing task found for Celery task {celery_task_id}, creating new one")
+            db_task = DBTask(
+                id=str(uuid.uuid4()),
+                project_id=project_id,
+                spider_id=spider_id,
+                status=TaskStatus.RUNNING,
+                started_at=datetime.now(),
+                log_level=settings.get('log_level', 'INFO') if settings else 'INFO',
+                settings=settings,
+                user_id=settings.get('user_id', 'system') if settings else 'system',
+                celery_task_id=celery_task_id
+            )
+            db.add(db_task)
+        else:
+            # 既存のタスクを実行中状態に更新
+            print(f"✅ Found existing task {db_task.id} for Celery task {celery_task_id}")
+            db_task.status = TaskStatus.RUNNING
+            db_task.started_at = datetime.now()
+
         db.commit()
+        task_id = db_task.id  # 実際のタスクIDを使用
 
         # WebSocketで開始通知（Celeryワーカー内では安全にスキップ）
         _safe_websocket_notify(task_id, {
@@ -71,19 +102,50 @@ def run_spider_task(self, project_id: str, spider_id: str, settings: dict = None
 
         # プログレス更新のコールバック
         def progress_callback(items_count, requests_count, error_count):
-            # データベース更新
+            # データベース更新（より詳細な状態管理）
             db_task.items_count = items_count
             db_task.requests_count = requests_count
             db_task.error_count = error_count
+
+            # 実行状態の確実な記録
+            if items_count > 0 or requests_count > 0:
+                db_task.status = TaskStatus.RUNNING
+                if not db_task.started_at:
+                    db_task.started_at = datetime.now()
+
+            # 即座にコミット（WebUIとの同期を確実に）
             db.commit()
 
-            # WebSocket通知（Celeryワーカー内では安全にスキップ）
+            # プログレス計算（改良版 - より正確な進行表示）
+            elapsed_seconds = (datetime.now() - db_task.started_at).total_seconds() if db_task.started_at else 0
+
+            if items_count > 0:
+                # アイテムベースの進行計算
+                pending_items = max(0, min(60 - items_count, max(requests_count - items_count, 10)))
+                total_estimated = items_count + pending_items
+                item_progress = (items_count / total_estimated) * 100 if total_estimated > 0 else 10
+
+                # 時間ベースの進行推定
+                time_progress = min(80, elapsed_seconds * 1.5)  # 時間による進行推定
+
+                # 複合プログレス（より安定した進行表示）
+                progress_percentage = min(95, max(item_progress, time_progress))
+            else:
+                # 初期段階の進行
+                progress_percentage = min(15, elapsed_seconds * 2) if elapsed_seconds > 0 else 5
+
+            # WebSocket通知（HTTPリクエスト経由で送信）
             _safe_websocket_notify(task_id, {
+                "id": task_id,
+                "status": "RUNNING",
                 "items_count": items_count,
                 "requests_count": requests_count,
                 "error_count": error_count,
-                "progress": min(100, (items_count / 100) * 100) if items_count > 0 else 0
+                "progress": progress_percentage,
+                "elapsed_seconds": elapsed_seconds
             })
+
+            print(f"📊 Enhanced progress: Task {task_id} - Items: {items_count}, Requests: {requests_count}, Errors: {error_count}, Progress: {progress_percentage:.1f}%, Elapsed: {elapsed_seconds:.1f}s")
 
         # ログコールバック
         def log_callback(level, message):
@@ -106,6 +168,15 @@ def run_spider_task(self, project_id: str, spider_id: str, settings: dict = None
             except RuntimeError:
                 print(f"📡 WebSocket log skipped: [{level}] {message}")
 
+        # データベースからスパイダーコードをファイルシステムに同期
+        try:
+            print(f"🔄 Syncing spider code from database to filesystem: {spider.name}")
+            scrapy_service.save_spider_code(project.path, spider.name, spider.code)
+            print(f"✅ Spider code synchronized successfully: {spider.name}")
+        except Exception as sync_error:
+            print(f"⚠️ Warning: Failed to sync spider code: {sync_error}")
+            # 同期に失敗してもタスクは継続（既存ファイルがある可能性）
+
         # スパイダー実行
         task_result_id = scrapy_service.run_spider(
             project_path=project.path,
@@ -123,6 +194,45 @@ def run_spider_task(self, project_id: str, spider_id: str, settings: dict = None
         # タスクを実行中状態に更新（実際の完了は ScrapyPlaywrightService の監視システムで処理）
         db_task.status = TaskStatus.RUNNING
         db.commit()
+
+        # progress_callbackが確実に動作するように追加の監視を開始
+        print(f"🔍 Starting additional monitoring for Celery task {task_id}")
+
+        # 結果ファイルパスを推定
+        from pathlib import Path
+        project_path_obj = Path(scrapy_service.base_projects_dir) / project.path
+        output_file = project_path_obj / f"results_{task_id}.json"
+
+        # 追加の監視スレッドを開始（Celery環境用）
+        def celery_monitor():
+            import time
+            monitor_count = 0
+            max_monitors = 30  # 最大60秒監視（2秒間隔）
+
+            while monitor_count < max_monitors:
+                try:
+                    # 結果ファイルから統計情報を取得
+                    items_count, requests_count = scrapy_service._get_real_time_statistics(task_id, str(output_file))
+
+                    if items_count > 0 or requests_count > 0:
+                        # progress_callbackを手動で呼び出し
+                        progress_callback(items_count, requests_count, 0)
+                        print(f"📊 Celery monitor: Task {task_id} - Items: {items_count}, Requests: {requests_count}")
+
+                    time.sleep(2)  # 2秒間隔で監視
+                    monitor_count += 1
+
+                except Exception as monitor_error:
+                    print(f"⚠️ Celery monitor error: {monitor_error}")
+                    break
+
+            print(f"🏁 Celery monitoring completed for task {task_id}")
+
+        # 別スレッドで監視を開始
+        import threading
+        monitor_thread = threading.Thread(target=celery_monitor, daemon=True)
+        monitor_thread.start()
+        print(f"🚀 Celery monitor thread started for task {task_id}")
 
         # 開始通知（Celeryワーカー内では安全にスキップ）
         _safe_websocket_notify(task_id, {

@@ -7,7 +7,7 @@ interface ProjectState {
   spiders: Spider[];
   isLoading: boolean;
   error: string | null;
-  
+
   // Actions
   fetchProjects: () => Promise<void>;
   fetchProject: (id: string) => Promise<void>;
@@ -19,7 +19,7 @@ interface ProjectState {
   updateProject: (id: string, projectData: Partial<Project>) => Promise<void>;
   deleteProject: (id: string) => Promise<void>;
   setCurrentProject: (project: Project | null) => void;
-  
+
   // Spider actions
   fetchSpiders: (projectId?: string) => Promise<void>;
   createSpider: (spiderData: {
@@ -30,7 +30,7 @@ interface ProjectState {
   }) => Promise<Spider>;
   updateSpider: (id: string, spiderData: Partial<Spider>) => Promise<void>;
   deleteSpider: (id: string) => Promise<void>;
-  
+
   clearError: () => void;
 }
 
@@ -44,12 +44,32 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   fetchProjects: async () => {
     set({ isLoading: true, error: null });
     try {
+      // 認証状態をチェック
+      if (!apiClient.isAuthenticated()) {
+        console.warn('Not authenticated, redirecting to login');
+        if (typeof window !== 'undefined' && !window.location.pathname.includes('/login')) {
+          window.location.href = '/login';
+        }
+        return;
+      }
+
       const projects = await apiClient.getProjects();
       set({ projects, isLoading: false });
     } catch (error) {
-      set({ 
-        error: error instanceof Error ? error.message : 'Failed to fetch projects',
-        isLoading: false 
+      const errorMessage = error instanceof Error ? error.message : 'Failed to fetch projects';
+
+      // 認証エラーの場合はログインページにリダイレクト
+      if (errorMessage.includes('認証') || errorMessage.includes('Not authenticated')) {
+        console.warn('Authentication error in fetchProjects, redirecting to login');
+        if (typeof window !== 'undefined' && !window.location.pathname.includes('/login')) {
+          window.location.href = '/login';
+        }
+        return;
+      }
+
+      set({
+        error: errorMessage,
+        isLoading: false
       });
     }
   },
@@ -60,9 +80,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       const project = await apiClient.getProject(id);
       set({ currentProject: project, isLoading: false });
     } catch (error) {
-      set({ 
+      set({
         error: error instanceof Error ? error.message : 'Failed to fetch project',
-        isLoading: false 
+        isLoading: false
       });
     }
   },
@@ -72,15 +92,15 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     try {
       const project = await apiClient.createProject(projectData);
       const { projects } = get();
-      set({ 
+      set({
         projects: [...projects, project],
-        isLoading: false 
+        isLoading: false
       });
       return project;
     } catch (error) {
-      set({ 
+      set({
         error: error instanceof Error ? error.message : 'Failed to create project',
-        isLoading: false 
+        isLoading: false
       });
       throw error;
     }
@@ -91,15 +111,15 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     try {
       const updatedProject = await apiClient.updateProject(id, projectData);
       const { projects, currentProject } = get();
-      set({ 
+      set({
         projects: projects.map(p => p.id === id ? updatedProject : p),
         currentProject: currentProject?.id === id ? updatedProject : currentProject,
-        isLoading: false 
+        isLoading: false
       });
     } catch (error) {
-      set({ 
+      set({
         error: error instanceof Error ? error.message : 'Failed to update project',
-        isLoading: false 
+        isLoading: false
       });
       throw error;
     }
@@ -110,15 +130,15 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     try {
       await apiClient.deleteProject(id);
       const { projects, currentProject } = get();
-      set({ 
+      set({
         projects: projects.filter(p => p.id !== id),
         currentProject: currentProject?.id === id ? null : currentProject,
-        isLoading: false 
+        isLoading: false
       });
     } catch (error) {
-      set({ 
+      set({
         error: error instanceof Error ? error.message : 'Failed to delete project',
-        isLoading: false 
+        isLoading: false
       });
       throw error;
     }
@@ -134,9 +154,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       const spiders = await apiClient.getSpiders(projectId);
       set({ spiders, isLoading: false });
     } catch (error) {
-      set({ 
+      set({
         error: error instanceof Error ? error.message : 'Failed to fetch spiders',
-        isLoading: false 
+        isLoading: false
       });
     }
   },
@@ -146,15 +166,15 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     try {
       const spider = await apiClient.createSpider(spiderData);
       const { spiders } = get();
-      set({ 
+      set({
         spiders: [...spiders, spider],
-        isLoading: false 
+        isLoading: false
       });
       return spider;
     } catch (error) {
-      set({ 
+      set({
         error: error instanceof Error ? error.message : 'Failed to create spider',
-        isLoading: false 
+        isLoading: false
       });
       throw error;
     }
@@ -165,14 +185,14 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     try {
       const updatedSpider = await apiClient.updateSpider(id, spiderData);
       const { spiders } = get();
-      set({ 
+      set({
         spiders: spiders.map(s => s.id === id ? updatedSpider : s),
-        isLoading: false 
+        isLoading: false
       });
     } catch (error) {
-      set({ 
+      set({
         error: error instanceof Error ? error.message : 'Failed to update spider',
-        isLoading: false 
+        isLoading: false
       });
       throw error;
     }
@@ -183,14 +203,14 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     try {
       await apiClient.deleteSpider(id);
       const { spiders } = get();
-      set({ 
+      set({
         spiders: spiders.filter(s => s.id !== id),
-        isLoading: false 
+        isLoading: false
       });
     } catch (error) {
-      set({ 
+      set({
         error: error instanceof Error ? error.message : 'Failed to delete spider',
-        isLoading: false 
+        isLoading: false
       });
       throw error;
     }

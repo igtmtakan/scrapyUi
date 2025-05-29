@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react'
 // import { useWebSocket } from '@/hooks/useWebSocket' // WebSocket機能を無効化
 import { apiClient } from '@/lib/api'
+import { useAuthStore } from '@/stores/authStore'
 import {
   Play,
   Square,
@@ -38,6 +39,7 @@ interface TaskMonitorProps {
 }
 
 export default function TaskMonitor({ taskId, showAllTasks = false }: TaskMonitorProps) {
+  const { isAuthenticated, isInitialized, user } = useAuthStore()
   const [tasks, setTasks] = useState<TaskStatus[]>([])
   const [logs, setLogs] = useState<Array<{ timestamp: string; level: string; message: string }>>([])
   const [selectedTask, setSelectedTask] = useState<string | null>(taskId || null)
@@ -56,17 +58,18 @@ export default function TaskMonitor({ taskId, showAllTasks = false }: TaskMonito
 
   // 実際のタスクデータを取得
   const loadTasks = async () => {
+    // 認証されていない場合はスキップ
+    if (!isAuthenticated || !user) {
+      console.log('TaskMonitor: Not authenticated, skipping task load');
+      setIsLoading(false);
+      return;
+    }
+
     try {
       setIsLoading(true)
 
-      // 直接fetchを使用（認証なし）
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/tasks/`)
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`)
-      }
-
-      const tasksData = await response.json()
+      // apiClientを使用（認証あり）- 各スパイダーの最新2件のみ取得
+      const tasksData = await apiClient.getTasks({ per_spider: 2 })
 
       // 実行中のタスクのみフィルタリング（showAllTasksがfalseの場合）
       const filteredTasks = showAllTasks
@@ -99,10 +102,27 @@ export default function TaskMonitor({ taskId, showAllTasks = false }: TaskMonito
     }
   }
 
-  // プログレス計算（新方式: pendingアイテム数ベース）
+  // プログレス計算（改善版: FAILEDでもアイテム数を反映）
   const calculateProgress = (task: any) => {
     if (task.status === 'FINISHED') return 100
-    if (task.status === 'FAILED' || task.status === 'CANCELLED') return 0
+
+    // FAILEDやCANCELLEDでもアイテムが取得できていれば進行状況を反映
+    if (task.status === 'FAILED' || task.status === 'CANCELLED') {
+      if (task.items_count > 0) {
+        // pendingアイテム数を推定
+        const pendingItems = Math.max(0, Math.min(
+          60 - task.items_count, // 最大60アイテムと仮定
+          Math.max(task.requests_count - task.items_count, 10) // リクエスト差分または最低10
+        ))
+        const totalEstimated = task.items_count + pendingItems
+
+        if (totalEstimated > 0) {
+          return Math.min(95, (task.items_count / totalEstimated) * 100)
+        }
+      }
+      return 0
+    }
+
     if (task.status === 'PENDING') return 0
 
     if (task.status === 'RUNNING') {
@@ -128,20 +148,16 @@ export default function TaskMonitor({ taskId, showAllTasks = false }: TaskMonito
   const loadTaskLogs = async (taskId: string) => {
     try {
       setIsLoadingLogs(true)
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/tasks/${taskId}/logs?limit=100`)
 
-      if (response.ok) {
-        const logsData = await response.json()
-        const formattedLogs = logsData.map((log: any) => ({
-          timestamp: log.timestamp || new Date().toISOString(),
-          level: log.level || 'INFO',
-          message: log.message || ''
-        }))
-        setLogs(formattedLogs)
-      } else {
-        console.error('Failed to load logs:', response.status)
-        setLogs([])
-      }
+      // apiClientを使用（認証あり）
+      const logsData = await apiClient.getTaskLogs(taskId, 100)
+
+      const formattedLogs = logsData.map((log: any) => ({
+        timestamp: log.timestamp || new Date().toISOString(),
+        level: log.level || 'INFO',
+        message: log.message || ''
+      }))
+      setLogs(formattedLogs)
     } catch (error) {
       console.error('Error loading logs:', error)
       setLogs([])
@@ -152,13 +168,13 @@ export default function TaskMonitor({ taskId, showAllTasks = false }: TaskMonito
 
   // 初期データ読み込み
   React.useEffect(() => {
-    if (mounted) {
+    if (mounted && isInitialized && isAuthenticated && user) {
       loadTasks()
       // 定期的にタスクデータを更新（WebSocket無効化のため頻度を上げる）
       const interval = setInterval(loadTasks, 3000) // 3秒ごと
       return () => clearInterval(interval)
     }
-  }, [mounted, showAllTasks])
+  }, [mounted, isInitialized, isAuthenticated, user, showAllTasks])
 
   // WebSocket機能を無効化（HTTPポーリングのみ使用）
   const isConnected = false
@@ -304,6 +320,22 @@ export default function TaskMonitor({ taskId, showAllTasks = false }: TaskMonito
     if (task && (task.status === 'FAILED' || task.status === 'FINISHED' || task.errorCount > 0)) {
       loadTaskLogs(taskId)
     }
+  }
+
+  // 認証されていない場合の表示
+  if (!isInitialized || !isAuthenticated || !user) {
+    return (
+      <div className="h-full flex flex-col bg-gray-900 text-white">
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center">
+            <Activity className="w-8 h-8 mx-auto mb-2 opacity-50" />
+            <p className="text-sm text-gray-400">
+              {!isInitialized ? 'Initializing...' : 'Authentication required'}
+            </p>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (

@@ -20,6 +20,8 @@ import {
   Activity
 } from 'lucide-react';
 import { nodejsService } from '@/services/nodejsService';
+import { apiClient } from '@/lib/api';
+import { useAuthStore } from '@/stores/authStore';
 
 interface WorkflowStep {
   name: string;
@@ -62,6 +64,7 @@ interface WorkflowManagerProps {
 }
 
 export default function WorkflowManager({ className }: WorkflowManagerProps) {
+  const { isAuthenticated, isInitialized, user } = useAuthStore();
   const [workflows, setWorkflows] = useState<WorkflowDefinition[]>([]);
   const [scheduledJobs, setScheduledJobs] = useState<ScheduledJob[]>([]);
   const [loading, setLoading] = useState(true);
@@ -69,10 +72,19 @@ export default function WorkflowManager({ className }: WorkflowManagerProps) {
   const [activeTab, setActiveTab] = useState('workflows');
 
   useEffect(() => {
-    fetchData();
-  }, []);
+    if (isInitialized && isAuthenticated && user) {
+      fetchData();
+    }
+  }, [isInitialized, isAuthenticated, user]);
 
   const fetchData = async () => {
+    // 認証されていない場合はスキップ
+    if (!isAuthenticated || !user) {
+      console.log('WorkflowManager: Not authenticated, skipping data load');
+      setLoading(false);
+      return;
+    }
+
     try {
       setLoading(true);
       setError(null);
@@ -130,11 +142,9 @@ export default function WorkflowManager({ className }: WorkflowManagerProps) {
 
   const toggleJob = async (jobId: string, action: 'start' | 'stop') => {
     try {
-      const response = await fetch(`/api/nodejs/scheduler/jobs/${jobId}/${action}`, {
+      const data = await apiClient.request(`/api/nodejs/scheduler/jobs/${jobId}/${action}`, {
         method: 'POST'
       });
-
-      const data = await response.json();
 
       if (data.success) {
         fetchData();
@@ -148,11 +158,9 @@ export default function WorkflowManager({ className }: WorkflowManagerProps) {
 
   const executeJob = async (jobId: string) => {
     try {
-      const response = await fetch(`/api/nodejs/scheduler/jobs/${jobId}/execute`, {
+      const data = await apiClient.request(`/api/nodejs/scheduler/jobs/${jobId}/execute`, {
         method: 'POST'
       });
-
-      const data = await response.json();
 
       if (data.success) {
         alert('Job executed successfully!');
@@ -182,6 +190,22 @@ export default function WorkflowManager({ className }: WorkflowManagerProps) {
     if (job.runCount === 0) return 100;
     return Math.round((job.successCount / job.runCount) * 100);
   };
+
+  // 認証されていない場合の表示
+  if (!isInitialized || !isAuthenticated || !user) {
+    return (
+      <Card className={className}>
+        <CardContent className="flex items-center justify-center py-8">
+          <div className="text-center">
+            <Workflow className="w-8 h-8 mx-auto mb-2 opacity-50 text-gray-400" />
+            <p className="text-sm text-gray-400">
+              {!isInitialized ? 'Initializing...' : 'Authentication required'}
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
 
   if (loading) {
     return (

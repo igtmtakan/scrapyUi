@@ -16,6 +16,7 @@ import {
   Download
 } from 'lucide-react';
 import { apiClient } from '@/lib/api';
+import { useAuthStore } from '@/stores/authStore';
 
 interface DatabaseConfig {
   type: string;
@@ -50,6 +51,7 @@ interface DatabaseStats {
 }
 
 export default function DatabaseSettingsPage() {
+  const { isAuthenticated, isInitialized, user } = useAuthStore();
   const [config, setConfig] = useState<DatabaseConfig | null>(null);
   const [allConfigs, setAllConfigs] = useState<Record<string, DatabaseConfig>>({});
   const [health, setHealth] = useState<DatabaseHealth[]>([]);
@@ -60,10 +62,19 @@ export default function DatabaseSettingsPage() {
   const [testResult, setTestResult] = useState<any>(null);
 
   useEffect(() => {
-    loadDatabaseInfo();
-  }, []);
+    if (isInitialized && isAuthenticated && user) {
+      loadDatabaseInfo();
+    }
+  }, [isInitialized, isAuthenticated, user]);
 
   const loadDatabaseInfo = async () => {
+    // 認証されていない場合はスキップ
+    if (!isAuthenticated || !user) {
+      console.log('DatabaseSettingsPage: Not authenticated, skipping data load');
+      setLoading(false);
+      return;
+    }
+
     try {
       setLoading(true);
 
@@ -162,6 +173,35 @@ export default function DatabaseSettingsPage() {
         return <AlertTriangle className="h-5 w-5 text-yellow-500" />;
     }
   };
+
+  // 認証されていない場合の表示
+  if (!isInitialized || !isAuthenticated || !user) {
+    return (
+      <div className="min-h-screen bg-gray-900 text-white flex items-center justify-center">
+        <div className="text-center">
+          <Database className="w-12 h-12 mx-auto mb-4 opacity-50 text-gray-400" />
+          <p className="text-lg text-gray-400">
+            {!isInitialized ? 'Initializing...' : 'Authentication required'}
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // 管理者権限チェック
+  if (user.role !== 'admin') {
+    return (
+      <div className="min-h-screen bg-gray-900 text-white flex items-center justify-center">
+        <div className="text-center">
+          <Database className="w-12 h-12 mx-auto mb-4 opacity-50 text-red-400" />
+          <p className="text-lg text-red-400 mb-2">Access Denied</p>
+          <p className="text-gray-400">
+            Administrator privileges required to access database settings.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   if (loading) {
     return (

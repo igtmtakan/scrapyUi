@@ -37,7 +37,7 @@ sleep 3
 # バックエンドサーバーを起動
 echo "🔧 バックエンドサーバーを起動中 (ポート: ${BACKEND_PORT})..."
 cd backend
-python3 -m uvicorn app.main:app --host 0.0.0.0 --port ${BACKEND_PORT} --reload &
+python3 -m uvicorn app.main:app --host 0.0.0.0 --port ${BACKEND_PORT} --reload --reload-dir app --reload-dir database &
 BACKEND_PID=$!
 cd ..
 

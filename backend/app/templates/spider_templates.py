@@ -32,6 +32,21 @@ class {spider_name.capitalize()}Spider(scrapy.Spider):
         'AUTOTHROTTLE_ENABLED': False,
     }}
 
+    # 新しいstart()メソッド（Scrapy 2.13.0+対応）
+    async def start(self):
+        for url in self.start_urls:
+            yield scrapy.Request(
+                url,
+                meta={{
+                    'playwright': True,
+                    'playwright_page_methods': [
+                        PageMethod('wait_for_load_state', 'domcontentloaded'),
+                    ],
+                }},
+                callback=self.parse
+            )
+
+    # 後方互換性のためのstart_requests()メソッド（非推奨）
     def start_requests(self):
         for url in self.start_urls:
             yield scrapy.Request(
@@ -110,6 +125,22 @@ class {spider_name.capitalize()}Spider(scrapy.Spider):
         'USER_AGENT': 'ScrapyUI Advanced Spider 1.0',
     }}
 
+    # 新しいstart()メソッド（Scrapy 2.13.0+対応）
+    async def start(self):
+        for url in self.start_urls:
+            yield scrapy.Request(
+                url,
+                meta={{
+                    'playwright': True,
+                    'playwright_page_methods': [
+                        PageMethod('wait_for_load_state', 'domcontentloaded'),
+                        PageMethod('wait_for_timeout', 500),
+                    ],
+                }},
+                callback=self.parse
+            )
+
+    # 後方互換性のためのstart_requests()メソッド（非推奨）
     def start_requests(self):
         for url in self.start_urls:
             yield scrapy.Request(

@@ -41,6 +41,18 @@ class Project(ProjectBase):
     class Config:
         from_attributes = True
 
+class ProjectWithUser(ProjectBase):
+    id: str
+    path: str
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    user_id: str
+    username: Optional[str] = None  # ユーザー名を追加
+    is_active: bool = True  # is_activeフィールドを追加
+
+    class Config:
+        from_attributes = True
+
 # Spider schemas
 class SpiderBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
@@ -224,7 +236,7 @@ class ScheduleWithDetails(Schedule):
 # User authentication schemas
 class UserBase(BaseModel):
     email: str = Field(..., pattern=r'^[^@]+@[^@]+\.[^@]+$')
-    username: str = Field(..., min_length=3, max_length=50)
+    username: str = Field(..., min_length=3, max_length=50, pattern=r'^[a-zA-Z0-9]+$')
     full_name: Optional[str] = None
 
 class UserCreate(UserBase):
@@ -257,7 +269,7 @@ class UserResponse(UserBase):
 # Admin user management schemas
 class UserAdminCreate(BaseModel):
     email: str = Field(..., pattern=r'^[^@]+@[^@]+\.[^@]+$')
-    username: str = Field(..., min_length=3, max_length=50)
+    username: str = Field(..., min_length=3, max_length=50, pattern=r'^[a-zA-Z0-9]+$')
     full_name: Optional[str] = None
     password: str = Field(..., min_length=8)
     role: Optional[str] = "user"  # 文字列として受け取り、後でUserRoleに変換
@@ -334,19 +346,34 @@ class Proxy(ProxyBase):
 
 # Project Files
 class ProjectFileBase(BaseModel):
-    path: str
-    content: str
+    name: str = Field(..., min_length=1, max_length=255)
+    path: str = Field(..., min_length=1, max_length=500)
+    content: str = Field(..., min_length=0)
+    file_type: Optional[str] = "python"
 
 class ProjectFileCreate(ProjectFileBase):
     pass
 
 class ProjectFileUpdate(BaseModel):
-    content: str
+    content: str = Field(..., min_length=0)
 
 class ProjectFileResponse(ProjectFileBase):
-    name: str
-    size: int
+    id: str
+    project_id: str
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    size: Optional[int] = None
     modified_at: Optional[float] = None
+
+    class Config:
+        from_attributes = True
+
+class ProjectFile(ProjectFileBase):
+    id: str
+    project_id: str
+    user_id: str
+    created_at: datetime
+    updated_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True

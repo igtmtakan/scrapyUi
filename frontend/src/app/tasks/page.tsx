@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useAuthStore } from '@/stores/authStore';
 import {
   Play,
@@ -47,7 +47,7 @@ interface Task {
 }
 
 export default function TasksPage() {
-  const { user, isAuthenticated } = useAuthStore();
+  const { user, isAuthenticated, isInitialized } = useAuthStore();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -55,22 +55,40 @@ export default function TasksPage() {
   const [projectFilter, setProjectFilter] = useState<string>('all');
   const [spiderFilter, setSpiderFilter] = useState<string>('all');
   const [selectedTask, setSelectedTask] = useState<string | null>(null);
+  const [isLoadingTasks, setIsLoadingTasks] = useState(false);
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
+  const loadingRef = useRef(false);
 
   useEffect(() => {
-    if (isAuthenticated) {
+    if (isInitialized && isAuthenticated && user && !isLoadingTasks && !hasLoadedOnce && !loadingRef.current) {
       loadTasks();
+    } else if (isInitialized && !isAuthenticated) {
+      setIsLoading(false);
     }
-  }, [isAuthenticated]);
+  }, [isAuthenticated, isInitialized, user]);
 
   const loadTasks = async () => {
+    if (isLoadingTasks || loadingRef.current) {
+      console.log('🔄 Tasks already loading, skipping...');
+      return;
+    }
+
     try {
+      loadingRef.current = true;
+      setIsLoadingTasks(true);
       setIsLoading(true);
-      const tasksData = await apiClient.getTasks();
+      console.log('📡 Loading tasks...');
+      // 各スパイダーの最新3件のタスクのみを取得
+      const tasksData = await apiClient.getTasks({ per_spider: 3 });
+      console.log('✅ Tasks loaded:', tasksData.length);
       setTasks(tasksData);
+      setHasLoadedOnce(true);
     } catch (error) {
-      console.error('Failed to load tasks:', error);
+      console.error('❌ Failed to load tasks:', error);
     } finally {
       setIsLoading(false);
+      setIsLoadingTasks(false);
+      loadingRef.current = false;
     }
   };
 
@@ -162,7 +180,20 @@ export default function TasksPage() {
       return 100;
     }
 
+    // FAILEDやCANCELLEDでもアイテムが取得できていれば進行状況を反映
     if (task.status === 'FAILED' || task.status === 'CANCELLED') {
+      if (task.items_count > 0) {
+        // pendingアイテム数を推定
+        const pendingItems = Math.max(0, Math.min(
+          60 - task.items_count, // 最大60アイテムと仮定
+          Math.max(task.requests_count - task.items_count, 10) // リクエスト差分または最低10
+        ));
+        const totalEstimated = task.items_count + pendingItems;
+
+        if (totalEstimated > 0) {
+          return Math.min(95, (task.items_count / totalEstimated) * 100);
+        }
+      }
       return 0;
     }
 
@@ -222,6 +253,17 @@ export default function TasksPage() {
   const uniqueProjects = Array.from(new Set(tasks.map(task => task.project?.name).filter(Boolean)));
   const uniqueSpiders = Array.from(new Set(tasks.map(task => task.spider?.name).filter(Boolean)));
 
+  if (!isInitialized) {
+    return (
+      <div className="min-h-screen bg-gray-900 text-white flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-white mx-auto mb-4"></div>
+          <h1 className="text-2xl font-bold text-white mb-4">読み込み中...</h1>
+        </div>
+      </div>
+    );
+  }
+
   if (!isAuthenticated) {
     return (
       <div className="min-h-screen bg-gray-900 text-white flex items-center justify-center">
@@ -249,11 +291,16 @@ export default function TasksPage() {
             </div>
             <div className="flex items-center space-x-3">
               <button
-                onClick={loadTasks}
-                className="inline-flex items-center px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
+                onClick={() => {
+                  setHasLoadedOnce(false);
+                  loadingRef.current = false;
+                  loadTasks();
+                }}
+                disabled={isLoadingTasks || loadingRef.current}
+                className="inline-flex items-center px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Database className="w-4 h-4 mr-2" />
-                更新
+                {isLoadingTasks || loadingRef.current ? '更新中...' : '更新'}
               </button>
             </div>
           </div>

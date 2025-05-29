@@ -358,20 +358,10 @@ HTTPCACHE_ENABLED = True
 HTTPCACHE_DIR = 'httpcache'
 HTTPCACHE_EXPIRATION_SECS = 86400  # 1 day
 
-# Fake User Agent settings (for anti-detection)
-DOWNLOADER_MIDDLEWARES = {{
-    'scrapy.downloadermiddlewares.useragent.UserAgentMiddleware': None,
-    'scrapy_fake_useragent.middleware.RandomUserAgentMiddleware': 400,
-    'scrapy_fake_useragent.middleware.RetryUserAgentMiddleware': 401,
-    'scrapy_proxies.RandomProxy': 350,
-}}
-
-# Fake User Agent configuration
-FAKEUSERAGENT_PROVIDERS = [
-    'scrapy_fake_useragent.providers.FakeUserAgentProvider',  # this is the default
-    'scrapy_fake_useragent.providers.FakerProvider',  # fallback
-    'scrapy_fake_useragent.providers.FixedUserAgentProvider',  # fallback
-]
+# Proxy settings (optional - configure as needed)
+# DOWNLOADER_MIDDLEWARES = {{
+#     'scrapy_proxies.RandomProxy': 350,
+# }}
 
 # Proxy settings (optional - configure as needed)
 # PROXY_LIST = '/path/to/proxy/list.txt'

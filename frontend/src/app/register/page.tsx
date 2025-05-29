@@ -5,11 +5,12 @@ import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/stores/authStore';
 import { Eye, EyeOff, Code, AlertCircle, CheckCircle } from 'lucide-react';
 import Link from 'next/link';
+import { validateUserForm, sanitizeUsername } from '@/lib/validation';
 
 export default function RegisterPage() {
   const router = useRouter();
   const { register, isAuthenticated, isLoading, error, clearError } = useAuthStore();
-  
+
   const [formData, setFormData] = useState({
     email: '',
     username: '',
@@ -47,47 +48,22 @@ export default function RegisterPage() {
   }, [formData.password]);
 
   const validateForm = () => {
-    const errors: Record<string, string> = {};
+    // 新しい検証ロジックを使用
+    const validation = validateUserForm({
+      email: formData.email,
+      username: formData.username,
+      full_name: formData.full_name,
+      password: formData.password,
+      confirmPassword: formData.confirmPassword
+    });
 
-    if (!formData.email) {
-      errors.email = 'Email is required';
-    } else if (!/\S+@\S+\.\S+/.test(formData.email)) {
-      errors.email = 'Email is invalid';
-    }
-
-    if (!formData.username) {
-      errors.username = 'Username is required';
-    } else if (formData.username.length < 3) {
-      errors.username = 'Username must be at least 3 characters';
-    } else if (!/^[a-zA-Z0-9_]+$/.test(formData.username)) {
-      errors.username = 'Username can only contain letters, numbers, and underscores';
-    }
-
-    if (!formData.full_name) {
-      errors.full_name = 'Full name is required';
-    } else if (formData.full_name.length < 2) {
-      errors.full_name = 'Full name must be at least 2 characters';
-    }
-
-    if (!formData.password) {
-      errors.password = 'Password is required';
-    } else if (formData.password.length < 8) {
-      errors.password = 'Password must be at least 8 characters';
-    }
-
-    if (!formData.confirmPassword) {
-      errors.confirmPassword = 'Please confirm your password';
-    } else if (formData.password !== formData.confirmPassword) {
-      errors.confirmPassword = 'Passwords do not match';
-    }
-
-    setValidationErrors(errors);
-    return Object.keys(errors).length === 0;
+    setValidationErrors(validation.errors);
+    return validation.isValid;
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!validateForm()) return;
 
     try {
@@ -105,8 +81,15 @@ export default function RegisterPage() {
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
-    setFormData(prev => ({ ...prev, [name]: value }));
-    
+
+    // ユーザー名の場合は入力を制限
+    let processedValue = value;
+    if (name === 'username') {
+      processedValue = sanitizeUsername(value);
+    }
+
+    setFormData(prev => ({ ...prev, [name]: processedValue }));
+
     // Clear validation error when user starts typing
     if (validationErrors[name]) {
       setValidationErrors(prev => ({ ...prev, [name]: '' }));
@@ -195,11 +178,14 @@ export default function RegisterPage() {
                   w-full px-3 py-2 border rounded-lg shadow-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500
                   ${validationErrors.username ? 'border-red-300' : 'border-gray-300'}
                 `}
-                placeholder="Choose a username"
+                placeholder="例: user123, testuser"
               />
               {validationErrors.username && (
                 <p className="mt-1 text-sm text-red-600">{validationErrors.username}</p>
               )}
+              <p className="mt-1 text-xs text-gray-500">
+                アルファベット（a-z, A-Z）と数字（0-9）のみ使用できます
+              </p>
             </div>
 
             {/* Full Name Field */}
@@ -258,13 +244,13 @@ export default function RegisterPage() {
                   )}
                 </button>
               </div>
-              
+
               {/* Password Strength Indicator */}
               {formData.password && (
                 <div className="mt-2">
                   <div className="flex items-center space-x-2">
                     <div className="flex-1 bg-gray-200 rounded-full h-2">
-                      <div 
+                      <div
                         className={`h-2 rounded-full transition-all duration-300 ${getPasswordStrengthColor()}`}
                         style={{ width: `${(passwordStrength / 5) * 100}%` }}
                       ></div>
@@ -273,7 +259,7 @@ export default function RegisterPage() {
                   </div>
                 </div>
               )}
-              
+
               {validationErrors.password && (
                 <p className="mt-1 text-sm text-red-600">{validationErrors.password}</p>
               )}

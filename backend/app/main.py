@@ -560,7 +560,8 @@ def start_server():
             "backend.app.main:app",
             host="0.0.0.0",
             port=8000,
-            reload=True
+            reload=True,
+            reload_excludes=["scrapy_projects/*"]
         )
 
 if __name__ == "__main__":
@@ -568,5 +569,6 @@ if __name__ == "__main__":
         "main:app",
         host="0.0.0.0",
         port=8000,
-        reload=True
+        reload=True,
+        reload_excludes=["scrapy_projects/*"]
     )

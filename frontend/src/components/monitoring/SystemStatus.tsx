@@ -12,6 +12,8 @@ import {
   RefreshCw,
   Clock
 } from 'lucide-react'
+import { apiClient } from '@/lib/api'
+import { useAuthStore } from '@/stores/authStore'
 
 interface ServiceStatus {
   status: 'running' | 'stopped' | 'error' | 'unknown'
@@ -69,6 +71,7 @@ interface SystemMetrics {
 }
 
 export default function SystemStatus() {
+  const { isAuthenticated, isInitialized, user } = useAuthStore()
   const [systemStatus, setSystemStatus] = useState<SystemStatusData | null>(null)
   const [systemMetrics, setSystemMetrics] = useState<SystemMetrics | null>(null)
   const [loading, setLoading] = useState(true)
@@ -76,26 +79,22 @@ export default function SystemStatus() {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
 
   const fetchSystemStatus = async () => {
+    // 認証されていない場合はスキップ
+    if (!isAuthenticated || !user) {
+      console.log('SystemStatus: Not authenticated, skipping data load')
+      setLoading(false)
+      return
+    }
+
     try {
       setLoading(true)
       setError(null)
 
-      // システム状態とメトリクスを並行取得
-      const [statusResponse, metricsResponse] = await Promise.all([
-        fetch('/api/system/status'),
-        fetch('/api/system/metrics')
+      // apiClientを使用（認証あり）
+      const [statusData, metricsData] = await Promise.all([
+        apiClient.request('/api/system/status'),
+        apiClient.request('/api/system/metrics')
       ])
-
-      if (!statusResponse.ok) {
-        throw new Error(`Status API error! status: ${statusResponse.status}`)
-      }
-
-      if (!metricsResponse.ok) {
-        throw new Error(`Metrics API error! status: ${metricsResponse.status}`)
-      }
-
-      const statusData = await statusResponse.json()
-      const metricsData = await metricsResponse.json()
 
       setSystemStatus(statusData)
       setSystemMetrics(metricsData)
@@ -109,13 +108,15 @@ export default function SystemStatus() {
   }
 
   useEffect(() => {
-    fetchSystemStatus()
+    if (isInitialized && isAuthenticated && user) {
+      fetchSystemStatus()
 
-    // 30秒ごとに自動更新
-    const interval = setInterval(fetchSystemStatus, 30000)
+      // 30秒ごとに自動更新
+      const interval = setInterval(fetchSystemStatus, 30000)
 
-    return () => clearInterval(interval)
-  }, [])
+      return () => clearInterval(interval)
+    }
+  }, [isInitialized, isAuthenticated, user])
 
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -195,9 +196,25 @@ export default function SystemStatus() {
     return 'bg-red-500'
   }
 
+  // 認証されていない場合の表示
+  if (!isInitialized || !isAuthenticated || !user) {
+    return (
+      <div className="p-6">
+        <div className="flex items-center justify-center h-64">
+          <div className="text-center">
+            <Server className="w-8 h-8 mx-auto mb-2 opacity-50 text-gray-400" />
+            <p className="text-sm text-gray-400">
+              {!isInitialized ? 'Initializing...' : 'Authentication required'}
+            </p>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   if (loading && !systemStatus) {
     return (
-      <div className="p-6 overflow-y-auto">
+      <div className="p-6">
         <div className="flex items-center justify-center h-64">
           <RefreshCw className="w-8 h-8 text-blue-400 animate-spin" />
           <span className="ml-2 text-gray-400">Loading system status...</span>
@@ -208,7 +225,7 @@ export default function SystemStatus() {
 
   if (error) {
     return (
-      <div className="p-6 overflow-y-auto">
+      <div className="p-6">
         <div className="bg-red-900/20 border border-red-500 rounded-lg p-4">
           <div className="flex items-center space-x-2">
             <XCircle className="w-5 h-5 text-red-500" />
@@ -228,7 +245,7 @@ export default function SystemStatus() {
 
   if (!systemStatus) {
     return (
-      <div className="p-6 overflow-y-auto">
+      <div className="p-6">
         <div className="text-center text-gray-400">No system status data available</div>
       </div>
     )
@@ -238,7 +255,7 @@ export default function SystemStatus() {
   const totalServices = Object.keys(systemStatus.services).length
 
   return (
-    <div className="p-6 overflow-y-auto">
+    <div className="p-6">
       {/* ヘッダー */}
       <div className="flex items-center justify-between mb-6">
         <div>

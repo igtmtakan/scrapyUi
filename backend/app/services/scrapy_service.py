@@ -6,6 +6,7 @@ import asyncio
 import uuid
 import threading
 import time
+import signal
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 import tempfile
@@ -31,6 +32,14 @@ from ..performance.python313_optimizations import (
     performance_monitor,
     jit_optimizer
 )
+
+# Rich progress imports
+try:
+    from ..utils.rich_progress import ScrapyProgressTracker, RichSpiderMonitor
+    RICH_AVAILABLE = True
+except ImportError:
+    RICH_AVAILABLE = False
+    print("⚠️ Rich progress not available - falling back to standard progress")
 
 class ScrapyPlaywrightService:
     """Scrapy + Playwright統合を管理するサービスクラス（シングルトン）"""
@@ -67,6 +76,13 @@ class ScrapyPlaywrightService:
         self.task_progress: Dict[str, Dict[str, Any]] = {}  # タスクの進行状況を追跡
         self.monitoring_thread = None
         self.stop_monitoring = False
+
+        # Rich progress tracker
+        self.rich_tracker = None
+        if RICH_AVAILABLE:
+            self.rich_tracker = ScrapyProgressTracker()
+            print("✨ Rich progress tracking enabled")
+
         self._initialized = True
         print(f"🔧 ScrapyPlaywrightService initialized with base_dir: {self.base_projects_dir.absolute()}")
 
@@ -107,6 +123,9 @@ class ScrapyPlaywrightService:
 
             # scrapy-playwright設定を追加
             self._setup_playwright_config(project_dir / project_name)
+
+            # scrapy.cfgファイルを検証・修正
+            self._validate_and_fix_scrapy_cfg(project_name)
 
             log_with_context(
                 self.logger, "INFO",
@@ -175,20 +194,10 @@ HTTPCACHE_ENABLED = True
 HTTPCACHE_DIR = 'httpcache'
 HTTPCACHE_EXPIRATION_SECS = 86400  # 1 day
 
-# Fake User Agent settings (for anti-detection)
-DOWNLOADER_MIDDLEWARES = {
-    'scrapy.downloadermiddlewares.useragent.UserAgentMiddleware': None,
-    'scrapy_fake_useragent.middleware.RandomUserAgentMiddleware': 400,
-    'scrapy_fake_useragent.middleware.RetryUserAgentMiddleware': 401,
-    'scrapy_proxies.RandomProxy': 350,
-}
-
-# Fake User Agent configuration
-FAKEUSERAGENT_PROVIDERS = [
-    'scrapy_fake_useragent.providers.FakeUserAgentProvider',  # this is the default
-    'scrapy_fake_useragent.providers.FakerProvider',  # fallback
-    'scrapy_fake_useragent.providers.FixedUserAgentProvider',  # fallback
-]
+# Proxy settings (optional - configure as needed)
+# DOWNLOADER_MIDDLEWARES = {
+#     'scrapy_proxies.RandomProxy': 350,
+# }
 
 # Proxy settings (optional - configure as needed)
 # PROXY_LIST = '/path/to/proxy/list.txt'
@@ -198,6 +207,61 @@ FAKEUSERAGENT_PROVIDERS = [
         if settings_file.exists():
             with open(settings_file, 'a', encoding='utf-8') as f:
                 f.write(playwright_settings)
+
+    def _validate_and_fix_scrapy_cfg(self, project_name: str) -> None:
+        """scrapy.cfgファイルを検証し、必要に応じて修正"""
+        try:
+            project_dir = self.base_projects_dir / project_name
+            scrapy_cfg_path = project_dir / "scrapy.cfg"
+
+            if not scrapy_cfg_path.exists():
+                self.logger.warning(f"scrapy.cfg not found: {scrapy_cfg_path}")
+                return
+
+            # 現在の内容を読み込み
+            with open(scrapy_cfg_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+
+            # 設定を確認
+            import re
+            settings_match = re.search(r'default\s*=\s*(.+?)\.settings', content)
+            project_match = re.search(r'project\s*=\s*(.+)', content)
+
+            current_settings_project = settings_match.group(1).strip() if settings_match else None
+            current_deploy_project = project_match.group(1).strip() if project_match else None
+
+            # 修正が必要かチェック
+            needs_fix = (
+                current_settings_project != project_name or
+                current_deploy_project != project_name
+            )
+
+            if needs_fix:
+                self.logger.info(f"Fixing scrapy.cfg for project: {project_name}")
+
+                # 正しい内容で修正
+                correct_content = f"""# Automatically created by: scrapy startproject
+#
+# For more information about the [deploy] section see:
+# https://scrapyd.readthedocs.io/en/latest/deploy.html
+
+[settings]
+default = {project_name}.settings
+
+[deploy]
+#url = http://localhost:6800/
+project = {project_name}
+"""
+
+                with open(scrapy_cfg_path, 'w', encoding='utf-8') as f:
+                    f.write(correct_content)
+
+                self.logger.info(f"Fixed scrapy.cfg: {scrapy_cfg_path}")
+            else:
+                self.logger.info(f"scrapy.cfg is correct for project: {project_name}")
+
+        except Exception as e:
+            self.logger.error(f"Error validating scrapy.cfg for {project_name}: {e}")
 
     def get_spider_code(self, project_path: str, spider_name: str) -> str:
         """スパイダーのコードを取得"""
@@ -243,41 +307,99 @@ FAKEUSERAGENT_PROVIDERS = [
             raise Exception(f"Error reading spider code: {str(e)}")
 
     def _get_spider_custom_settings(self, project_path: str, spider_name: str) -> dict:
-        """スパイダーのcustom_settingsを取得"""
+        """スパイダーのcustom_settingsを取得（改良版）"""
         try:
             # スパイダーファイルを読み込み
             spider_code = self.get_spider_code(project_path, spider_name)
 
-            # custom_settingsを抽出
+            # ASTを使用してより安全にcustom_settingsを抽出
             import ast
-            import re
 
-            # custom_settingsの辞書部分を正規表現で抽出
-            pattern = r'custom_settings\s*=\s*\{([^}]*(?:\{[^}]*\}[^}]*)*)\}'
-            match = re.search(pattern, spider_code, re.DOTALL)
+            try:
+                # Pythonコードを解析
+                tree = ast.parse(spider_code)
 
-            if match:
-                # 辞書の内容を取得
-                settings_content = '{' + match.group(1) + '}'
+                # クラス定義を探す
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.ClassDef):
+                        # クラス内のcustom_settings属性を探す
+                        for item in node.body:
+                            if (isinstance(item, ast.Assign) and
+                                len(item.targets) == 1 and
+                                isinstance(item.targets[0], ast.Name) and
+                                item.targets[0].id == 'custom_settings'):
 
-                try:
-                    # 安全にevalを使用してPython辞書として評価
-                    # セキュリティのため、__builtins__を制限
-                    safe_dict = {"__builtins__": {}, "True": True, "False": False, "None": None}
-                    custom_settings = eval(settings_content, safe_dict)
+                                # 辞書リテラルを評価
+                                if isinstance(item.value, ast.Dict):
+                                    custom_settings = ast.literal_eval(item.value)
+                                    print(f"✅ Extracted custom_settings from {spider_name} using AST: {custom_settings}")
+                                    return custom_settings
 
-                    print(f"✅ Extracted custom_settings from {spider_name}: {custom_settings}")
-                    return custom_settings
+                print(f"ℹ️ No custom_settings found in {spider_name} using AST")
 
-                except Exception as e:
-                    print(f"⚠️ Error parsing custom_settings for {spider_name}: {e}")
-                    return {}
-            else:
-                print(f"ℹ️ No custom_settings found in {spider_name}")
-                return {}
+                # AST解析に失敗した場合は、フォールバック方式を使用
+                return self._fallback_extract_custom_settings(spider_code, spider_name)
+
+            except Exception as ast_error:
+                print(f"⚠️ AST parsing failed for {spider_name}: {ast_error}")
+                # フォールバック方式を使用
+                return self._fallback_extract_custom_settings(spider_code, spider_name)
 
         except Exception as e:
             print(f"⚠️ Error getting custom_settings for {spider_name}: {e}")
+            return {}
+
+    def _fallback_extract_custom_settings(self, spider_code: str, spider_name: str) -> dict:
+        """custom_settings抽出のフォールバック方式"""
+        try:
+            import re
+
+            # より堅牢な正規表現パターン（ネストした辞書に対応）
+            # custom_settings = { ... } の部分を抽出
+            pattern = r'custom_settings\s*=\s*\{'
+            match = re.search(pattern, spider_code)
+
+            if match:
+                start_pos = match.end() - 1  # '{' の位置
+                brace_count = 0
+                end_pos = start_pos
+
+                # 対応する '}' を見つける
+                for i, char in enumerate(spider_code[start_pos:], start_pos):
+                    if char == '{':
+                        brace_count += 1
+                    elif char == '}':
+                        brace_count -= 1
+                        if brace_count == 0:
+                            end_pos = i + 1
+                            break
+
+                if brace_count == 0:
+                    settings_content = spider_code[start_pos:end_pos]
+
+                    try:
+                        # 安全にevalを使用
+                        safe_dict = {"__builtins__": {}, "True": True, "False": False, "None": None}
+                        custom_settings = eval(settings_content, safe_dict)
+                        print(f"✅ Extracted custom_settings from {spider_name} using fallback: {custom_settings}")
+                        return custom_settings
+                    except Exception as e:
+                        print(f"⚠️ Error evaluating custom_settings for {spider_name}: {e}")
+                        # 基本的な設定のみ返す
+                        return {
+                            'DOWNLOAD_DELAY': 3,
+                            'CONCURRENT_REQUESTS': 1,
+                            'CONCURRENT_REQUESTS_PER_DOMAIN': 1
+                        }
+                else:
+                    print(f"⚠️ Unmatched braces in custom_settings for {spider_name}")
+            else:
+                print(f"ℹ️ No custom_settings pattern found in {spider_name}")
+
+            return {}
+
+        except Exception as e:
+            print(f"⚠️ Fallback extraction failed for {spider_name}: {e}")
             return {}
 
     def save_spider_code(self, project_path: str, spider_name: str, code: str) -> bool:
@@ -321,6 +443,32 @@ FAKEUSERAGENT_PROVIDERS = [
             print(f"Error saving spider code: {str(e)}")
             raise Exception(f"Error saving spider code: {str(e)}")
 
+    def save_project_file(self, project_path: str, file_path: str, content: str) -> bool:
+        """プロジェクトファイルを保存（スパイダーファイルと同じ方法）"""
+        try:
+            # プロジェクトディレクトリ内のファイルパスを構築
+            full_path = self.base_projects_dir / project_path
+
+            # ファイルパスを正規化（セキュリティ対策）
+            file_path = file_path.replace("../", "").replace("..\\", "")
+
+            # 実際のファイルパス
+            full_file_path = full_path / file_path
+
+            # ディレクトリが存在しない場合は作成
+            full_file_path.parent.mkdir(parents=True, exist_ok=True)
+
+            # ファイルに保存（スパイダーファイルと同じ方法）
+            with open(full_file_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+
+            print(f"Project file saved: {full_file_path}")
+            return True
+
+        except Exception as e:
+            print(f"Error saving project file: {str(e)}")
+            raise Exception(f"Error saving project file: {str(e)}")
+
     def run_spider(self, project_path: str, spider_name: str, task_id: str, settings: Optional[Dict[str, Any]] = None) -> str:
         """スパイダーを実行（非同期）"""
         try:
@@ -348,29 +496,27 @@ FAKEUSERAGENT_PROVIDERS = [
             # スパイダー固有設定を確認
             spider_custom_settings = self._get_spider_custom_settings(project_path, spider_name)
 
-            # デフォルト設定（スパイダーのcustom_settingsで上書き可能）
+            # 最小限のデフォルト設定（CLIと同じ動作を目指す）
             default_settings = {
-                'RETRY_ENABLED': True,
-                'RETRY_TIMES': 2,
-                'RETRY_HTTP_CODES': '500,502,503,504,408,429',  # 文字列形式に修正
-                'DOWNLOAD_TIMEOUT': 30,
-                'ROBOTSTXT_OBEY': False,
-                'LOG_LEVEL': 'INFO'  # CLI実行と同じレベルに変更
+                'LOG_LEVEL': 'INFO',  # ログレベルのみ設定
+                'ROBOTSTXT_OBEY': False  # robots.txtを無視
             }
 
-            # 設定の優先順位: 1. スパイダーのcustom_settings, 2. ユーザー設定, 3. デフォルト設定
+            # 最小限の設定のみ適用（スパイダーのcustom_settingsを優先）
             final_settings = default_settings.copy()
 
-            # ユーザー設定で上書き（スパイダー設定より優先度低い）
+            # ユーザー設定で上書き（必要最小限）
             if settings:
-                final_settings.update(settings)
+                # 重要な設定のみ適用
+                important_settings = ['LOG_LEVEL', 'ROBOTSTXT_OBEY']
+                for key in important_settings:
+                    if key in settings:
+                        final_settings[key] = settings[key]
 
-            # スパイダーのcustom_settingsで最終上書き（最高優先度）
-            if spider_custom_settings:
-                final_settings.update(spider_custom_settings)
-                print(f"🎯 Using spider custom_settings for {spider_name}: {spider_custom_settings}")
+            print(f"🎯 Using minimal settings for {spider_name}: {final_settings}")
+            print(f"📋 Spider has custom_settings: {bool(spider_custom_settings)}")
 
-            # 設定を追加
+            # 最小限の設定のみコマンドに追加
             for key, value in final_settings.items():
                 cmd.extend(["-s", f"{key}={value}"])
 
@@ -380,28 +526,63 @@ FAKEUSERAGENT_PROVIDERS = [
 
             self.logger.info(f"Executing spider command: {' '.join(cmd)} in {full_path}")
 
-            # 非同期でプロセスを開始
-            process = subprocess.Popen(
-                cmd,
-                cwd=str(full_path),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True
-            )
+            # 手動実行と同じ環境でプロセスを開始
+            env = os.environ.copy()
+            env['PYTHONPATH'] = str(full_path)
+            project_name = full_path.name  # プロジェクト名を取得
+            env['SCRAPY_SETTINGS_MODULE'] = f'{project_name}.settings'
+
+            try:
+                # 手動実行と同じ設定でプロセスを開始
+                process = subprocess.Popen(
+                    cmd,
+                    cwd=str(full_path),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,  # stderrをstdoutにリダイレクト
+                    text=True,
+                    env=env,  # 環境変数を明示的に設定
+                    bufsize=1,  # 行バッファリング
+                    universal_newlines=True
+                )
+                self.logger.info(f"✅ Spider process started successfully: PID {process.pid}")
+            except Exception as e:
+                # フォールバック：最小限の設定で再試行
+                self.logger.warning(f"Failed to start process with advanced settings, using fallback: {e}")
+                process = subprocess.Popen(
+                    cmd,
+                    cwd=str(full_path),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True
+                )
 
             self.running_processes[task_id] = process
 
-            # 進行状況の初期化
+            # 進行状況の初期化（リアルタイム更新対応）
             self.task_progress[task_id] = {
                 'started_at': datetime.now(),
                 'items_scraped': 0,
                 'requests_made': 0,
                 'errors_count': 0,
-                'progress_percentage': 0,
-                'estimated_total': 0,
+                'progress_percentage': 5,  # 開始時は5%
+                'estimated_total': 60,  # 初期推定値
                 'current_url': None,
-                'last_update': datetime.now()
+                'last_update': datetime.now(),
+                'last_notification': datetime.now(),
+                'process': process,  # プロセス参照を保存
+                'output_file': str(output_file)  # 出力ファイルパスを保存
             }
+
+            # Rich progress tracking を開始
+            if self.rich_tracker:
+                self.rich_tracker.add_spider_task(task_id, spider_name, total_pages=100)
+                print(f"✨ Rich progress tracking started for {spider_name}")
+
+            # 初期プログレス通知を送信
+            self._send_initial_progress_notification(task_id)
+
+            # プロセス監視を開始（progress_callbackを呼び出すため）
+            self._start_process_monitoring(task_id, process, str(output_file))
 
             log_with_context(
                 self.logger, "INFO",
@@ -432,6 +613,371 @@ FAKEUSERAGENT_PROVIDERS = [
                 spider_id=spider_name,
                 details={"original_error": str(e)}
             )
+
+    def _send_initial_progress_notification(self, task_id: str):
+        """初期プログレス通知を送信"""
+        try:
+            import requests
+
+            notification_url = "http://localhost:8000/api/tasks/internal/websocket-notify"
+            payload = {
+                "task_id": task_id,
+                "data": {
+                    "id": task_id,
+                    "status": "RUNNING",
+                    "items_count": 0,
+                    "requests_count": 0,
+                    "progress": 5  # 開始時は5%
+                }
+            }
+
+            response = requests.post(
+                notification_url,
+                json=payload,
+                timeout=0.5,
+                headers={"Content-Type": "application/json"}
+            )
+
+            if response.status_code == 200:
+                print(f"📊 Initial progress notification sent: Task {task_id} - 5%")
+
+        except Exception as e:
+            print(f"📡 Initial progress notification error: {str(e)}")
+
+    def _start_process_monitoring(self, task_id: str, process: subprocess.Popen, output_file: str):
+        """プロセス監視を開始してprogress_callbackを呼び出す"""
+        def monitor_process():
+            try:
+                print(f"🔍 Starting process monitoring for task {task_id}")
+
+                # 監視間隔（秒）
+                monitor_interval = 2
+                last_items_count = 0
+                last_requests_count = 0
+                error_count = 0
+
+                while process.poll() is None:  # プロセスが実行中の間
+                    try:
+                        # 結果ファイルから統計情報を取得
+                        current_items, current_requests = self._get_real_time_statistics(task_id, output_file)
+
+                        # 変化があった場合のみprogress_callbackを呼び出し
+                        if (current_items != last_items_count or
+                            current_requests != last_requests_count):
+
+                            print(f"📊 Progress detected: Task {task_id} - Items: {current_items}, Requests: {current_requests}")
+
+                            # progress_callbackを呼び出し（DBに保存）
+                            self._call_progress_callback(task_id, current_items, current_requests, error_count)
+
+                            last_items_count = current_items
+                            last_requests_count = current_requests
+
+                        # 監視間隔で待機
+                        time.sleep(monitor_interval)
+
+                    except Exception as monitor_error:
+                        print(f"⚠️ Monitor error for task {task_id}: {monitor_error}")
+                        error_count += 1
+                        time.sleep(monitor_interval)
+
+                # プロセス完了後の最終統計取得
+                print(f"🏁 Process completed for task {task_id}, getting final statistics")
+                final_items, final_requests = self._get_real_time_statistics(task_id, output_file)
+
+                # 最終progress_callbackを呼び出し
+                self._call_progress_callback(task_id, final_items, final_requests, error_count)
+
+                # 結果ファイルのデータをDBに格納
+                self._store_results_to_db(task_id, output_file)
+
+                # タスク完了処理
+                success = process.returncode == 0
+                self._update_task_completion(task_id, success)
+
+                # Rich progress tracking を完了状態に
+                if self.rich_tracker:
+                    status = "COMPLETED" if success else "FAILED"
+                    self.rich_tracker.complete_task(task_id, status)
+                    print(f"✨ Rich progress tracking completed for task {task_id}: {status}")
+
+                print(f"✅ Process monitoring completed for task {task_id}: success={success}, items={final_items}, requests={final_requests}")
+
+            except Exception as e:
+                print(f"❌ Process monitoring failed for task {task_id}: {str(e)}")
+
+        # 別スレッドで監視を開始
+        monitor_thread = threading.Thread(target=monitor_process, daemon=True)
+        monitor_thread.start()
+        print(f"🚀 Process monitoring thread started for task {task_id}")
+
+    def _get_real_time_statistics(self, task_id: str, output_file: str) -> tuple:
+        """リアルタイムで統計情報を取得"""
+        try:
+            import json
+            from pathlib import Path
+
+            # 結果ファイルをチェック
+            result_path = Path(output_file)
+            if result_path.exists() and result_path.stat().st_size > 0:
+                try:
+                    with open(result_path, 'r', encoding='utf-8') as f:
+                        content = f.read().strip()
+                        if content:
+                            # JSONLファイルの場合（1行1アイテム）
+                            if content.count('\n') > 0:
+                                items = content.strip().split('\n')
+                                items_count = len([line for line in items if line.strip()])
+                            else:
+                                # 単一JSONの場合
+                                data = json.loads(content)
+                                items_count = len(data) if isinstance(data, list) else 1
+
+                            # リクエスト数は推定（アイテム数 + α）
+                            requests_count = max(items_count + 2, 1)
+
+                            return items_count, requests_count
+                except (json.JSONDecodeError, Exception) as e:
+                    # ファイルが不完全な場合は0を返す
+                    pass
+
+            return 0, 0
+
+        except Exception as e:
+            print(f"⚠️ Error getting real-time statistics for {task_id}: {e}")
+            return 0, 0
+
+    def _call_progress_callback(self, task_id: str, items_count: int, requests_count: int, error_count: int):
+        """progress_callbackを呼び出してDBを更新"""
+        try:
+            from ..database import SessionLocal, Task as DBTask, TaskStatus
+
+            db = SessionLocal()
+            try:
+                task = db.query(DBTask).filter(DBTask.id == task_id).first()
+                if task:
+                    # データベース更新（より詳細な状態管理）
+                    task.items_count = items_count
+                    task.requests_count = requests_count
+                    task.error_count = error_count
+
+                    # 実行状態の確実な記録
+                    if items_count > 0 or requests_count > 0:
+                        task.status = TaskStatus.RUNNING
+                        if not task.started_at:
+                            task.started_at = datetime.now()
+
+                    # 即座にコミット（WebUIとの同期を確実に）
+                    db.commit()
+
+                    print(f"📊 Progress callback executed: Task {task_id} - Items: {items_count}, Requests: {requests_count}, Errors: {error_count}")
+
+                    # Rich progress tracking を更新
+                    if self.rich_tracker:
+                        self.rich_tracker.update_progress(
+                            task_id,
+                            items_scraped=items_count,
+                            requests_made=requests_count,
+                            errors=error_count,
+                            pages_visited=min(requests_count // 10, 100)  # 推定ページ数
+                        )
+
+                    # WebSocket通知を送信
+                    self._send_progress_notification(task_id, items_count, requests_count, error_count)
+
+            finally:
+                db.close()
+
+        except Exception as e:
+            print(f"❌ Progress callback error for task {task_id}: {str(e)}")
+
+    def _send_progress_notification(self, task_id: str, items_count: int, requests_count: int, error_count: int):
+        """プログレス通知を送信"""
+        try:
+            import requests
+
+            # プログレス計算
+            elapsed_seconds = 0
+            if task_id in self.task_progress:
+                elapsed_seconds = (datetime.now() - self.task_progress[task_id]['started_at']).total_seconds()
+
+            if items_count > 0:
+                # アイテムベースの進行計算
+                pending_items = max(0, min(60 - items_count, max(requests_count - items_count, 10)))
+                total_estimated = items_count + pending_items
+                item_progress = (items_count / total_estimated) * 100 if total_estimated > 0 else 10
+
+                # 時間ベースの進行推定
+                time_progress = min(80, elapsed_seconds * 1.5)
+
+                # 複合プログレス
+                progress_percentage = min(95, max(item_progress, time_progress))
+            else:
+                # 初期段階の進行
+                progress_percentage = min(15, elapsed_seconds * 2) if elapsed_seconds > 0 else 5
+
+            notification_url = "http://localhost:8000/api/tasks/internal/websocket-notify"
+            payload = {
+                "task_id": task_id,
+                "data": {
+                    "id": task_id,
+                    "status": "RUNNING",
+                    "items_count": items_count,
+                    "requests_count": requests_count,
+                    "error_count": error_count,
+                    "progress": progress_percentage,
+                    "elapsed_seconds": elapsed_seconds
+                }
+            }
+
+            response = requests.post(
+                notification_url,
+                json=payload,
+                timeout=0.5,
+                headers={"Content-Type": "application/json"}
+            )
+
+            if response.status_code == 200:
+                print(f"📡 Progress notification sent: Task {task_id} - {progress_percentage:.1f}%")
+
+        except Exception as e:
+            print(f"📡 Progress notification error: {str(e)}")
+
+    def _store_results_to_db(self, task_id: str, output_file: str):
+        """結果ファイルのデータをDBに格納"""
+        try:
+            import json
+            from pathlib import Path
+            from ..database import SessionLocal, Result as DBResult
+
+            # 複数の可能なファイルパスを確認
+            possible_paths = []
+
+            # 1. 指定されたパス
+            if output_file:
+                possible_paths.append(Path(output_file))
+
+            # 2. プロジェクトディレクトリ内の結果ファイルを検索
+            from ..database import SessionLocal as TempDB, Task as TempTask
+            temp_db = TempDB()
+            try:
+                task = temp_db.query(TempTask).filter(TempTask.id == task_id).first()
+                if task and task.project:
+                    project_path = self.base_projects_dir / task.project.path
+                    # 複数のパターンで検索
+                    patterns = [
+                        f"results_{task_id}.json",
+                        f"results_{task_id}*.json",
+                        f"*{task_id}*.json",
+                        "results_*.json"
+                    ]
+
+                    for pattern in patterns:
+                        files = list(project_path.glob(pattern))
+                        if files:
+                            # 最新のファイルを使用
+                            latest_file = max(files, key=lambda f: f.stat().st_mtime)
+                            possible_paths.append(latest_file)
+                            break
+            finally:
+                temp_db.close()
+
+            # 存在するファイルを見つける
+            result_path = None
+            for path in possible_paths:
+                if path and path.exists() and path.stat().st_size > 0:
+                    result_path = path
+                    break
+
+            if not result_path:
+                print(f"📁 No valid result file found for task {task_id}")
+                print(f"   Searched paths: {[str(p) for p in possible_paths if p]}")
+                return
+
+            print(f"📁 Storing results to DB for task {task_id}: {result_path}")
+
+            db = SessionLocal()
+            try:
+                with open(result_path, 'r', encoding='utf-8') as f:
+                    content = f.read().strip()
+
+                if not content:
+                    print(f"📁 Empty result file for task {task_id}")
+                    return
+
+                # まずJSON配列として解析を試行
+                try:
+                    data = json.loads(content)
+
+                    if isinstance(data, list):
+                        # JSON配列形式の場合（最も一般的）
+                        stored_count = 0
+                        for item in data:
+                            import uuid
+                            db_result = DBResult(
+                                id=str(uuid.uuid4()),  # IDを手動で生成
+                                task_id=task_id,
+                                data=item,
+                                created_at=datetime.now()
+                            )
+                            db.add(db_result)
+                            stored_count += 1
+
+                        db.commit()
+                        print(f"✅ Stored {stored_count} items (JSON array) to DB for task {task_id}")
+
+                    else:
+                        # 単一オブジェクトの場合
+                        import uuid
+                        db_result = DBResult(
+                            id=str(uuid.uuid4()),  # IDを手動で生成
+                            task_id=task_id,
+                            data=data,
+                            created_at=datetime.now()
+                        )
+                        db.add(db_result)
+                        db.commit()
+                        print(f"✅ Stored 1 item (single object) to DB for task {task_id}")
+
+                except json.JSONDecodeError:
+                    # JSON配列として解析できない場合、JSONLファイルとして処理
+                    print(f"📁 Trying JSONL format for task {task_id}")
+
+                    if content.count('\n') > 0:
+                        items = content.strip().split('\n')
+                        stored_count = 0
+
+                        for line in items:
+                            line = line.strip()
+                            if line:
+                                try:
+                                    item_data = json.loads(line)
+
+                                    # DBに結果を保存
+                                    import uuid
+                                    db_result = DBResult(
+                                        id=str(uuid.uuid4()),  # IDを手動で生成
+                                        task_id=task_id,
+                                        data=item_data,
+                                        created_at=datetime.now()
+                                    )
+                                    db.add(db_result)
+                                    stored_count += 1
+
+                                except json.JSONDecodeError as e:
+                                    print(f"⚠️ Invalid JSON in result line: {line[:100]}... Error: {e}")
+                                    continue
+
+                        db.commit()
+                        print(f"✅ Stored {stored_count} items (JSONL format) to DB for task {task_id}")
+                    else:
+                        print(f"❌ Unable to parse result file for task {task_id}: Not valid JSON or JSONL")
+
+            finally:
+                db.close()
+
+        except Exception as e:
+            print(f"❌ Error storing results to DB for task {task_id}: {str(e)}")
 
     @performance_monitor
     @jit_optimizer.hot_function
@@ -536,17 +1082,31 @@ FAKEUSERAGENT_PROVIDERS = [
         return all(file.exists() for file in required_files)
 
     def stop_spider(self, task_id: str) -> bool:
-        """スパイダーの実行を停止"""
+        """スパイダーの実行を停止（Celery環境対応）"""
         try:
             if task_id in self.running_processes:
                 process = self.running_processes[task_id]
+
+                # まず優雅に終了を試行
                 process.terminate()
-                process.wait(timeout=10)
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    # 強制終了（Celery環境では安全な方法を使用）
+                    try:
+                        process.kill()
+                        process.wait()
+                    except Exception as kill_error:
+                        self.logger.warning(f"Failed to kill process {process.pid}: {kill_error}")
+
                 del self.running_processes[task_id]
+                if task_id in self.task_progress:
+                    del self.task_progress[task_id]
                 return True
             return False
         except Exception as e:
-            raise Exception(f"Error stopping spider: {str(e)}")
+            self.logger.error(f"Error stopping spider {task_id}: {str(e)}")
+            return False
 
     def get_task_status(self, task_id: str) -> Dict[str, Any]:
         """タスクの実行状況を取得"""
@@ -600,29 +1160,66 @@ FAKEUSERAGENT_PROVIDERS = [
 
                     # 結果ファイルが存在し、データが取得されている場合は成功とみなす
                     has_results = self._verify_task_results(task_id)
-                    final_success = success or (has_results and actual_items > 0)
 
-                    print(f"🎯 Task {task_id}: Final success determination - has_results={has_results}, final_success={final_success}")
+                    # より詳細な成功判定
+                    # 1. プロセスが正常終了 (success=True)
+                    # 2. アイテムが取得されている (actual_items > 0 or current_items > 0)
+                    # 3. リクエストが送信されている (actual_requests > 0 or current_requests > 0)
+                    # 4. 結果ファイルが存在する (has_results=True)
 
-                    task.status = TaskStatus.FINISHED if final_success else TaskStatus.FAILED
+                    process_success = success
+                    has_items = actual_items > 0 or current_items > 0
+                    has_requests = actual_requests > 0 or current_requests > 0
+
+                    # 最終成功判定（より寛容な条件）
+                    final_success = process_success or (has_results and (has_items or has_requests))
+
+                    print(f"🔍 Task {task_id}: Detailed success analysis:")
+                    print(f"   Process success: {process_success}")
+                    print(f"   Has items: {has_items} (actual: {actual_items}, current: {current_items})")
+                    print(f"   Has requests: {has_requests} (actual: {actual_requests}, current: {current_requests})")
+                    print(f"   Has results file: {has_results}")
+                    print(f"   Final success: {final_success}")
+
+                    # タスクステータスの詳細判定
+                    if final_success:
+                        task.status = TaskStatus.FINISHED
+                        print(f"✅ Task {task_id}: Marked as FINISHED")
+                    else:
+                        # アイテムが取得されている場合は部分成功として完了扱い
+                        if has_items:
+                            task.status = TaskStatus.FINISHED
+                            print(f"🎯 Task {task_id}: Marked as FINISHED (partial success with items)")
+                        else:
+                            task.status = TaskStatus.FAILED
+                            print(f"❌ Task {task_id}: Marked as FAILED (no items retrieved)")
+
                     task.finished_at = datetime.now()
 
-                    # 実際の統計情報を優先的に使用
-                    task.items_count = actual_items if actual_items > 0 else current_items
-                    task.requests_count = actual_requests if actual_requests > 0 else current_requests
+                    # 実際の統計情報を優先的に使用（最大値を採用）
+                    task.items_count = max(actual_items, current_items)
+                    task.requests_count = max(actual_requests, current_requests)
 
                     # エラーカウントの適切な設定
-                    if final_success:
-                        # 成功時はエラーカウントをリセット（データが取得できていれば成功）
-                        task.error_count = 0
+                    if task.status == TaskStatus.FINISHED:
+                        # 成功時はエラーカウントを最小限に
+                        task.error_count = min(current_errors, 1) if current_errors > 0 else 0
                     else:
-                        # 失敗時はエラーカウントを設定
+                        # 失敗時はエラーカウントを設定（最低1）
                         task.error_count = max(current_errors, 1)
 
                     # データベースにコミット
                     db.commit()
 
                     print(f"✅ Task {task_id} completion updated: status={task.status}, items={task.items_count}, requests={task.requests_count}, errors={task.error_count}")
+
+                    # 結果ファイルのデータをDBに格納（完了時に確実に実行）
+                    if final_success and task.items_count > 0:
+                        print(f"📁 Attempting to store results to DB for completed task {task_id}")
+                        try:
+                            self._store_results_to_db(task_id, None)  # ファイルパスは自動検索
+                        except Exception as store_error:
+                            print(f"⚠️ Failed to store results to DB: {store_error}")
 
                     # 安全なWebSocket通知
                     self._safe_websocket_notify_completion(task_id, {
@@ -718,11 +1315,11 @@ FAKEUSERAGENT_PROVIDERS = [
                 if not project:
                     return 0, 0
 
-                # 複数のパスパターンで結果ファイルを検索
+                # 複数のパスパターンで結果ファイルを検索（実際のファイル配置に基づく順序）
                 possible_paths = [
-                    # 標準パス
+                    # 実際のパス（プロジェクトルートディレクトリ）
                     self.base_projects_dir / project.path / f"results_{task_id}.json",
-                    # 二重パス（実際の構造）
+                    # 二重パス（プロジェクト内のプロジェクトディレクトリ）
                     self.base_projects_dir / project.path / project.path / f"results_{task_id}.json",
                 ]
 
@@ -889,8 +1486,8 @@ FAKEUSERAGENT_PROVIDERS = [
                 # 統計情報の更新
                 self._update_monitoring_stats()
 
-                # 5秒間隔でチェック（より頻繁に）
-                time.sleep(5)
+                # 1秒間隔でチェック（リアルタイムプログレス更新のため）
+                time.sleep(1)
 
             except Exception as e:
                 print(f"Error in task monitoring: {str(e)}")
@@ -1200,9 +1797,11 @@ FAKEUSERAGENT_PROVIDERS = [
                 if not project:
                     return {}
 
-                # 結果ファイルを検索
+                # 結果ファイルを検索（実際のファイル配置に基づく順序）
                 possible_paths = [
+                    # 実際のパス（プロジェクトルートディレクトリ）
                     self.base_projects_dir / project.path / f"results_{task_id}.json",
+                    # 二重パス（プロジェクト内のプロジェクトディレクトリ）
                     self.base_projects_dir / project.path / project.path / f"results_{task_id}.json",
                 ]
 
@@ -1265,14 +1864,58 @@ FAKEUSERAGENT_PROVIDERS = [
         """データベースのタスク進行状況を更新"""
         try:
             from ..database import SessionLocal, Task as DBTask
+            import requests
 
             db = SessionLocal()
             try:
                 task = db.query(DBTask).filter(DBTask.id == task_id).first()
                 if task:
-                    task.items_count = progress_info.get('items_scraped', 0)
-                    task.requests_count = progress_info.get('requests_made', 0)
-                    db.commit()
+                    old_items = task.items_count or 0
+                    old_requests = task.requests_count or 0
+
+                    new_items = progress_info.get('items_scraped', 0)
+                    new_requests = progress_info.get('requests_made', 0)
+
+                    # 進行状況が変化した場合のみ更新
+                    if new_items != old_items or new_requests != old_requests:
+                        task.items_count = new_items
+                        task.requests_count = new_requests
+                        db.commit()
+
+                        # プログレス計算
+                        if new_items > 0:
+                            pending_items = max(0, min(60 - new_items, max(new_requests - new_items, 10)))
+                            total_estimated = new_items + pending_items
+                            progress_percentage = min(95, (new_items / total_estimated) * 100) if total_estimated > 0 else 10
+                        else:
+                            progress_percentage = 5
+
+                        # WebSocket通知を送信（HTTPリクエスト経由）
+                        try:
+                            notification_url = "http://localhost:8000/api/tasks/internal/websocket-notify"
+                            payload = {
+                                "task_id": task_id,
+                                "data": {
+                                    "id": task_id,
+                                    "status": "RUNNING",
+                                    "items_count": new_items,
+                                    "requests_count": new_requests,
+                                    "progress": progress_percentage
+                                }
+                            }
+
+                            response = requests.post(
+                                notification_url,
+                                json=payload,
+                                timeout=0.5,
+                                headers={"Content-Type": "application/json"}
+                            )
+
+                            if response.status_code == 200:
+                                print(f"📊 Progress notification sent: Task {task_id} - Items: {new_items}, Progress: {progress_percentage:.1f}%")
+
+                        except Exception as notify_error:
+                            print(f"📡 Progress notification error: {str(notify_error)}")
 
             finally:
                 db.close()
@@ -1341,11 +1984,11 @@ FAKEUSERAGENT_PROVIDERS = [
                 if not project:
                     return False
 
-                # 複数のパスパターンで結果ファイルを検索
+                # 複数のパスパターンで結果ファイルを検索（実際のファイル配置に基づく順序）
                 possible_paths = [
-                    # 標準パス
+                    # 実際のパス（プロジェクトルートディレクトリ）
                     self.base_projects_dir / project.path / f"results_{task_id}.json",
-                    # 二重パス（実際の構造）
+                    # 二重パス（プロジェクト内のプロジェクトディレクトリ）
                     self.base_projects_dir / project.path / project.path / f"results_{task_id}.json",
                 ]
 
