@@ -65,6 +65,11 @@ class WorkflowCreateRequest(BaseModel):
 class WorkflowExecuteRequest(BaseModel):
     variables: Optional[Dict[str, Any]] = None
 
+class CommandExecuteRequest(BaseModel):
+    command: str
+    working_directory: Optional[str] = None
+    timeout: Optional[int] = 30000
+
 @router.get("/health", response_model=NodeJSHealthResponse)
 async def check_nodejs_health():
     """Check Node.js service health and integration status"""
@@ -512,3 +517,57 @@ async def get_workflow_templates(
             status_code=500,
             detail=f"Workflow templates retrieval error: {str(e)}"
         )
+
+@router.post("/execute")
+async def execute_command(
+    request: CommandExecuteRequest,
+    current_user: DBUser = Depends(get_current_active_user)
+):
+    """Execute a command using Node.js service"""
+    try:
+        import os
+
+        # プロジェクトディレクトリが存在しない場合は作成
+        if request.working_directory and not os.path.exists(request.working_directory):
+            # scrapy_projectsディレクトリ内の場合のみ自動作成
+            if "scrapy_projects" in request.working_directory:
+                try:
+                    os.makedirs(request.working_directory, exist_ok=True)
+                    logger.info(f"Created working directory: {request.working_directory}")
+                except Exception as e:
+                    logger.error(f"Failed to create working directory: {str(e)}")
+                    return {
+                        "output": "",
+                        "error": f"Failed to create working directory: {str(e)}",
+                        "exit_code": 1
+                    }
+
+        client = await get_nodejs_client()
+
+        command_data = {
+            "command": request.command,
+            "workingDir": request.working_directory,
+            "timeout": request.timeout
+        }
+
+        response = await client.execute_command(command_data)
+
+        if response.success:
+            return {
+                "output": response.data.get("stdout", ""),
+                "error": response.data.get("stderr", ""),
+                "exit_code": response.data.get("exitCode", 0)
+            }
+        else:
+            return {
+                "output": "",
+                "error": response.error or "Command execution failed",
+                "exit_code": 1
+            }
+    except Exception as e:
+        logger.error(f"Command execution failed: {str(e)}")
+        return {
+            "output": "",
+            "error": f"Command execution error: {str(e)}",
+            "exit_code": 1
+        }

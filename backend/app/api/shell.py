@@ -400,6 +400,12 @@ def get_help_text() -> str:
   fetch()     - 基本的なHTTPリクエスト（高速、軽量）
   pw_fetch()  - Playwright使用（JavaScript実行、SPA対応）
 
+システムコマンド:
+  crontab -l                    - 現在のcronジョブを表示
+  crontab -e                    - cronジョブを編集
+  service cron status           - cronサービスの状態確認
+  systemctl status cron         - cronサービスの詳細状態
+
 その他:
   clear                         - ターミナルをクリア
   help                          - このヘルプを表示

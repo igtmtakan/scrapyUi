@@ -15,7 +15,8 @@ const ALLOWED_COMMANDS = [
   'df', 'du', 'free', 'uptime', 'uname', 'which', 'whereis',
   'python', 'python3', 'node', 'npm', 'pip', 'pip3',
   'git', 'curl', 'wget', 'ping', 'traceroute', 'nslookup',
-  'scrapy', 'celery', 'redis-cli', 'sqlite3'
+  'scrapy', 'celery', 'redis-cli', 'sqlite3',
+  'crontab', 'cron', 'service', 'systemctl'
 ];
 
 const BLOCKED_PATTERNS = [
@@ -172,9 +173,14 @@ router.post('/exec', async (req, res) => {
     const {
       command,
       workingDir = process.cwd(),
-      timeout = 30000,
+      timeout,
       encoding = 'utf8'
     } = req.body;
+
+    // Set timeout based on command type
+    const isScrapyCrawl = command.includes('scrapy crawl');
+    const defaultTimeout = isScrapyCrawl ? 300000 : 30000; // 5 minutes for scrapy crawl, 30 seconds for others
+    const finalTimeout = timeout || defaultTimeout;
 
     // デバッグ用ログ
     logger.info(`Request body: ${JSON.stringify(req.body, null, 2)}`);
@@ -224,11 +230,16 @@ router.post('/exec', async (req, res) => {
     // コマンド実行
     const options = {
       cwd: workingDir,
-      timeout,
+      timeout: finalTimeout,
       encoding,
       maxBuffer: 1024 * 1024, // 1MB
       env: getPythonEnvironment(workingDir)
     };
+
+    // Log timeout information for scrapy crawl
+    if (isScrapyCrawl) {
+      logger.info(`Scrapy crawl command detected. Using extended timeout: ${finalTimeout}ms (${finalTimeout/1000}s)`);
+    }
 
     const { stdout, stderr } = await execAsync(command, options);
     const executionTime = Date.now() - startTime;
@@ -257,7 +268,7 @@ router.post('/exec', async (req, res) => {
         success: false,
         error: 'Command execution timed out',
         command: req.body.command,
-        timeout: req.body.timeout || 30000,
+        timeout: finalTimeout,
         executionTime,
         code: 'TIMEOUT'
       });

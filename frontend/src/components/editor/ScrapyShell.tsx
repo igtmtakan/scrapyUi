@@ -158,6 +158,12 @@ response.xpath('//title/text()').get()
   sel = response.css('div')     - セレクターオブジェクトを作成
   sel.css('a::text').getall()  - ネストした選択
 
+システムコマンド:
+  crontab -l                    - 現在のcronジョブを表示
+  crontab -e                    - cronジョブを編集
+  service cron status           - cronサービスの状態確認
+  systemctl status cron         - cronサービスの詳細状態
+
 その他:
   clear                         - ターミナルをクリア
   history                       - コマンド履歴を表示
@@ -329,7 +335,7 @@ response.xpath('//title/text()').get()
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-gray-900 rounded-lg shadow-xl w-full max-w-6xl h-[80vh] flex flex-col">
+      <div className="bg-gray-900 rounded-lg shadow-xl w-[95vw] max-w-[1400px] h-[90vh] flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-gray-700">
           <div className="flex items-center space-x-3">
@@ -379,7 +385,7 @@ response.xpath('//title/text()').get()
               {/* Terminal Output */}
               <div
                 ref={terminalRef}
-                className="flex-1 p-4 bg-black text-green-400 font-mono text-sm overflow-y-auto scrollbar-thin scrollbar-track-gray-800 scrollbar-thumb-gray-600 hover:scrollbar-thumb-gray-500"
+                className="flex-1 p-4 bg-black text-green-400 font-mono text-xs overflow-y-auto scrollbar-thin scrollbar-track-gray-800 scrollbar-thumb-gray-600 hover:scrollbar-thumb-gray-500"
                 style={{
                   scrollbarWidth: 'thin',
                   scrollbarColor: '#4B5563 #1F2937'
@@ -390,7 +396,7 @@ response.xpath('//title/text()').get()
                     <div className="flex items-center space-x-2 mb-1">
                       <span className="text-blue-400">scrapy&gt;</span>
                       <span className="text-white">{cmd.command}</span>
-                      <span className="text-gray-500 text-xs">
+                      <span className="text-gray-500 text-[10px]">
                         [{cmd.timestamp.toLocaleTimeString()}]
                       </span>
                       {cmd.status === 'running' && (
@@ -492,7 +498,7 @@ response.xpath('//title/text()').get()
                 onChange={(e) => setCurrentCommand(e.target.value)}
                 onKeyDown={handleKeyDown}
                 disabled={isRunning}
-                className="flex-1 bg-transparent text-white font-mono outline-none"
+                className="flex-1 bg-transparent text-white font-mono text-xs outline-none"
                 placeholder="コマンドを入力してください..."
               />
               <button

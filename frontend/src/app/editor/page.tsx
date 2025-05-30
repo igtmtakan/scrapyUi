@@ -863,7 +863,7 @@ class NewSpider(scrapy.Spider):
                     Clear
                   </button>
                 </div>
-                <div className="p-4 h-full overflow-y-auto font-mono text-sm">
+                <div className="p-4 h-full overflow-y-auto font-mono text-xs">
                   {terminalOutput.map((line, index) => (
                     <div key={index} className="text-green-400 mb-1">
                       {line}
@@ -898,7 +898,7 @@ class NewSpider(scrapy.Spider):
                     Clear
                   </button>
                 </div>
-                <div className="p-4 h-full overflow-y-auto font-mono text-sm">
+                <div className="p-4 h-full overflow-y-auto font-mono text-xs">
                   {debugOutput.length > 0 ? (
                     debugOutput.map((line, index) => (
                       <div key={index} className="mb-2 p-2 bg-gray-800 rounded border-l-4 border-red-500">

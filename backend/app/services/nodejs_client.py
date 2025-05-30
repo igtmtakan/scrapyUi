@@ -212,6 +212,10 @@ class NodeJSClient:
         """Get workflow templates"""
         return await self._make_request("GET", "/api/workflows/templates/list")
 
+    async def execute_command(self, command_data: Dict[str, Any]) -> NodeJSServiceResponse:
+        """Execute a command"""
+        return await self._make_request("POST", "/api/command/exec", command_data)
+
 # Singleton instance
 _nodejs_client = None
 
