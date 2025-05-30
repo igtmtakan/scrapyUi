@@ -438,6 +438,26 @@ async def delete_project(project_id: str, db: Session = Depends(get_db)):
             detail="Project not found"
         )
 
+    # プロジェクトに関連するスケジュールを削除
+    try:
+        from ..database import Schedule as DBSchedule
+        related_schedules = db.query(DBSchedule).filter(DBSchedule.project_id == project_id).all()
+
+        if related_schedules:
+            print(f"🗑️ Deleting {len(related_schedules)} schedules related to project {db_project.name}")
+            for schedule in related_schedules:
+                print(f"  - Deleting schedule: {schedule.name} (ID: {schedule.id})")
+                db.delete(schedule)
+
+        # 変更をコミット（スケジュール削除）
+        db.commit()
+        print(f"✅ Successfully deleted {len(related_schedules)} related schedules")
+
+    except Exception as e:
+        print(f"⚠️ Error deleting related schedules: {str(e)}")
+        db.rollback()
+        # スケジュール削除に失敗してもプロジェクト削除は続行
+
     # Scrapyプロジェクトディレクトリの削除（オプション）
     try:
         scrapy_service = ScrapyPlaywrightService()

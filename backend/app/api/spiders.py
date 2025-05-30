@@ -659,6 +659,26 @@ async def delete_spider(
     # プロジェクト情報を取得
     project = db.query(DBProject).filter(DBProject.id == db_spider.project_id).first()
 
+    # スパイダーに関連するスケジュールを削除
+    try:
+        from ..database import Schedule as DBSchedule
+        related_schedules = db.query(DBSchedule).filter(DBSchedule.spider_id == spider_id).all()
+
+        if related_schedules:
+            print(f"🗑️ Deleting {len(related_schedules)} schedules related to spider {db_spider.name}")
+            for schedule in related_schedules:
+                print(f"  - Deleting schedule: {schedule.name} (ID: {schedule.id})")
+                db.delete(schedule)
+
+        # 変更をコミット（スケジュール削除）
+        db.commit()
+        print(f"✅ Successfully deleted {len(related_schedules)} related schedules")
+
+    except Exception as e:
+        print(f"⚠️ Error deleting related schedules: {str(e)}")
+        db.rollback()
+        # スケジュール削除に失敗してもスパイダー削除は続行
+
     # ファイルシステムからスパイダーファイルを削除
     try:
         scrapy_service = ScrapyPlaywrightService()
