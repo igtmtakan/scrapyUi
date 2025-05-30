@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -442,6 +442,47 @@ app.include_router(system.router, prefix="/api", tags=["system"])
 # WebSocketエンドポイント
 app.include_router(websocket_endpoints.router, prefix="/ws")
 
+# リアルタイム進捗監視WebSocketエンドポイント
+from .services.realtime_websocket_manager import realtime_websocket_manager
+
+@app.websocket("/ws/realtime-progress")
+async def websocket_realtime_progress(websocket: WebSocket):
+    """リアルタイム進捗監視WebSocketエンドポイント"""
+    client_ip = websocket.client.host if websocket.client else "unknown"
+    logger.info(f"📡 WebSocket connection attempt from {client_ip}")
+
+    try:
+        await websocket.accept()
+        logger.info(f"✅ WebSocket connection accepted from {client_ip}")
+        realtime_websocket_manager.add_connection(websocket)
+
+        # 接続成功メッセージを送信
+        await websocket.send_text("Connected: WebSocket connection established")
+
+        while True:
+            # クライアントからのメッセージを待機（接続維持）
+            try:
+                data = await websocket.receive_text()
+                logger.info(f"📨 WebSocket message from {client_ip}: {data}")
+
+                # エコーバック（接続確認）
+                await websocket.send_text(f"Connected: {data}")
+
+            except WebSocketDisconnect:
+                logger.info(f"🔌 WebSocket client {client_ip} disconnected normally")
+                break
+            except Exception as msg_error:
+                logger.error(f"❌ WebSocket message error from {client_ip}: {msg_error}")
+                break
+
+    except WebSocketDisconnect:
+        logger.info(f"🔌 WebSocket client {client_ip} disconnected during handshake")
+    except Exception as e:
+        logger.error(f"❌ WebSocket error from {client_ip}: {e}")
+    finally:
+        realtime_websocket_manager.remove_connection(websocket)
+        logger.info(f"🧹 WebSocket connection cleaned up for {client_ip}")
+
 # グローバル変数でScrapyServiceを保持
 scrapy_service_instance = None
 
@@ -468,6 +509,10 @@ async def startup_event():
         # スケジューラーサービスを開始
         scheduler_service.start()
         logger.info("⏰ Schedule service started")
+
+        # リアルタイムWebSocket管理を開始
+        realtime_websocket_manager.start()
+        logger.info("📡 Realtime WebSocket Manager started")
 
         logger.info("✅ ScrapyUI Application started successfully")
         print("✅ ScrapyUI Application started successfully")

@@ -138,23 +138,20 @@ async def execute_script(
     db: Session = Depends(get_db)
 ):
     """
-    スクリプトを実行してデータを抽出（タスクシステムと連携）
+    スクリプトを実行してデータを抽出（Celeryタスクを使用してReactor競合回避）
     """
     execution_id = str(uuid.uuid4())
     started_at = datetime.now().isoformat()
 
     # タスクをデータベースに記録
-    # project_idとspider_idを適切に設定
     project_id = request.project_id or "webui-execution"
-    # spider_idが提供されていない場合は、spider_nameをそのまま使用
-    # （WebUIからの実行では通常spider_idが提供される）
     spider_id = request.spider_id or request.spider_name
 
     task = Task(
         id=execution_id,
         project_id=project_id,
         spider_id=spider_id,
-        status="RUNNING",
+        status="PENDING",
         user_id=current_user.id,
         log_level="INFO",
         settings=request.settings or {}
@@ -164,7 +161,7 @@ async def execute_script(
 
     # 実行状態を初期化
     execution_state = {
-        "status": "running",
+        "status": "pending",
         "output": [],
         "errors": [],
         "extracted_data": [],
@@ -174,58 +171,38 @@ async def execute_script(
     running_executions[execution_id] = execution_state
 
     try:
-        print(f"🚀 Starting script execution: {request.spider_name}")
+        print(f"🚀 Starting script execution via Celery: {request.spider_name}")
         print(f"📝 Start URLs: {request.start_urls}")
         print(f"⚙️ Settings: {request.settings}")
 
-        # スクリプトを実行
-        # スクリプト内容からPlaywrightの使用を検出
-        use_playwright = "scrapy_playwright" in request.script_content or "playwright" in str(request.settings)
-        print(f"🎭 Playwright detection: {use_playwright}")
+        # Celeryタスクでスクリプト実行（Reactor競合回避）
+        from ..tasks.script_tasks import run_script_task
 
-        result = await execute_scrapy_script(
-            request.script_content,
-            request.spider_name,
-            request.start_urls,
-            request.settings or {},
-            use_playwright=use_playwright
+        celery_task = run_script_task.delay(
+            execution_id=execution_id,
+            script_content=request.script_content,
+            spider_name=request.spider_name,
+            start_urls=request.start_urls,
+            settings=request.settings or {},
+            user_id=current_user.id
         )
 
-        execution_state.update({
-            "status": "completed",
-            "output": result["output"],
-            "errors": result["errors"],
-            "extracted_data": result["extracted_data"],
-            "finished_at": datetime.now().isoformat()
-        })
-
-        # タスクステータスを更新
-        task.status = "FINISHED"
-        task.finished_at = datetime.now()
-        task.items_count = len(result["extracted_data"])
+        # CeleryタスクIDを記録
+        task.celery_task_id = celery_task.id
         db.commit()
 
-        # 実行履歴に保存
-        save_execution_history(current_user.id, {
-            "execution_id": execution_id,
-            "spider_name": request.spider_name,
-            "status": "completed",
-            "start_urls": request.start_urls,
-            "extracted_count": len(result["extracted_data"]),
-            "execution_time": result["execution_time"],
-            "started_at": started_at,
-            "finished_at": execution_state["finished_at"]
-        })
+        print(f"✅ Celery script task started: {celery_task.id}")
 
+        # 即座にレスポンスを返す（非同期実行）
         return ScriptExecutionResponse(
             execution_id=execution_id,
-            status="completed",
-            output=result["output"],
-            errors=result["errors"],
-            extracted_data=result["extracted_data"],
-            execution_time=result["execution_time"],
+            status="pending",
+            output=[],
+            errors=[],
+            extracted_data=[],
+            execution_time=0.0,
             started_at=started_at,
-            finished_at=execution_state["finished_at"]
+            finished_at=None
         )
 
     except Exception as e:

@@ -165,43 +165,6 @@ class ExampleSpider(scrapy.Spider):
     ))
   }
 
-  const handleSave = async () => {
-    if (!activeFile) return
-
-    try {
-      addTerminalOutput(`💾 Saving ${activeFile.name}...`)
-
-      const { apiClient } = await import('@/lib/api')
-      const result = await apiClient.saveScript(activeFile.name, activeFile.content)
-
-      setFiles(files.map(file =>
-        file.id === activeFileId
-          ? { ...file, modified: false }
-          : file
-      ))
-
-      addTerminalOutput(`✅ Saved ${result.file_name} successfully`)
-
-      // 保存済みスクリプト一覧を更新
-      if (showSavedScripts) {
-        loadSavedScripts()
-      }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error)
-
-      // 認証エラーの場合は特別な処理
-      if (errorMessage.includes('Not authenticated') || errorMessage.includes('Unauthorized')) {
-        addTerminalOutput(`❌ Authentication failed. Please log in again.`)
-        localStorage.removeItem('token')
-        router.push('/login?redirect=/editor')
-      } else {
-        addTerminalOutput(`❌ Failed to save ${activeFile.name}: ${errorMessage}`)
-      }
-
-      console.error('Save error:', error)
-    }
-  }
-
   const loadSavedScripts = async () => {
     try {
       const { apiClient } = await import('@/lib/api')
@@ -1167,7 +1130,6 @@ class NewSpider(scrapy.Spider):
                 onChange={handleFileChange}
                 language={activeFile.language}
                 fileName={activeFile.name}
-                onSave={handleSave}
                 onTest={isRunning ? undefined : handleTest}
                 onRun={isRunning ? handleStop : handleRun}
               />

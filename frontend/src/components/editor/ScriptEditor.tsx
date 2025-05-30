@@ -2,7 +2,7 @@
 
 import React, { useRef, useEffect, useState } from 'react'
 import Editor from '@monaco-editor/react'
-import { Play, Save, FileText, Settings, Bug, Download, FileCode, Copy, X, RotateCcw } from 'lucide-react'
+import { Play, FileText, Settings, Bug, Download, FileCode, Copy, X, RotateCcw } from 'lucide-react'
 
 interface ScriptEditorProps {
   value: string
@@ -1277,10 +1277,6 @@ class ${capitalizedProjectName}Spider(scrapy.Spider):
     }
 
     // キーボードショートカット
-    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
-      onSave?.()
-    })
-
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
       onRun?.()
     })
@@ -1320,17 +1316,6 @@ class ${capitalizedProjectName}Spider(scrapy.Spider):
         </div>
 
         <div className="flex items-center space-x-2">
-          {onSave && (
-            <button
-              onClick={onSave}
-              className="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors flex items-center space-x-1"
-              title="Save (Ctrl+S)"
-            >
-              <Save className="w-4 h-4" />
-              <span className="text-sm">Save</span>
-            </button>
-          )}
-
           {onTest && (
             <button
               onClick={onTest}

@@ -336,22 +336,30 @@ async def create_task(
             print(f"Project path: {getattr(project, 'path', 'unknown')}")
             print(f"Spider name: {getattr(spider, 'name', 'unknown')}")
 
-            # 本番環境でのスパイダー実行
+            # 手動実行もCeleryタスクを使用（Reactor競合回避）
             if not os.getenv("TESTING", False):
                 try:
-                    print(f"🔄 Starting subprocess spider execution")
+                    print(f"🔄 Starting Celery spider execution (manual execution)")
                     print(f"   Project ID: {task.project_id}")
                     print(f"   Spider ID: {task.spider_id}")
                     print(f"   Spider Name: {spider.name}")
                     print(f"   Project Path: {project.path}")
 
-                    # タスクを実行中状態に更新
-                    db_task.status = TaskStatus.RUNNING
-                    db_task.started_at = datetime.now()
-                    db_task.celery_task_id = None  # 直接実行なのでCelery IDはNone
-                    db.commit()
+                    # Celeryタスクを開始
+                    from ..tasks.scrapy_tasks import run_spider_task
 
-                    print(f"✅ Task {task_id} started, status: {db_task.status}")
+                    celery_task = run_spider_task.delay(
+                        project_id=task.project_id,
+                        spider_id=task.spider_id,
+                        settings=task.settings or {}
+                    )
+
+                    # タスクIDをCeleryタスクIDで更新
+                    db_task.celery_task_id = celery_task.id
+                    db_task.status = TaskStatus.PENDING
+                    db.commit()
+                    print(f"✅ Celery task started: {celery_task.id}")
+                    print(f"✅ Task {task_id} created with Celery - returning 201 Created")
 
                     # WebSocket通知を送信
                     await manager.send_task_update(task_id, {
@@ -362,123 +370,19 @@ async def create_task(
                         "itemsCount": db_task.items_count or 0,
                         "requestsCount": db_task.requests_count or 0,
                         "errorCount": db_task.error_count or 0,
-                        "progress": 10
+                        "progress": 0
                     })
 
-                    # バックグラウンドでsubprocessを使用してスパイダーを実行
-                    import threading
-                    import subprocess
-                    from pathlib import Path
-
-                    def run_spider_subprocess():
-                        try:
-                            # 新しいデータベースセッションを作成してプロジェクトとスパイダー情報を取得
-                            subprocess_db = SessionLocal()
-                            try:
-                                subprocess_project = subprocess_db.query(DBProject).filter(DBProject.id == task.project_id).first()
-                                subprocess_spider = subprocess_db.query(DBSpider).filter(DBSpider.id == task.spider_id).first()
-
-                                if not subprocess_project or not subprocess_spider:
-                                    raise Exception(f"Project or Spider not found in subprocess")
-
-                                # プロジェクトディレクトリ
-                                project_dir = Path("/home/igtmtakan/workplace/python/scrapyUI/scrapy_projects") / subprocess_project.path
-
-                                # 結果ファイル
-                                result_file = project_dir / f"results_{task_id}.json"
-
-                                # Scrapyコマンドを実行
-                                cmd = [
-                                    "python3", "-m", "scrapy", "crawl", subprocess_spider.name,
-                                    "-o", str(result_file),
-                                    "-s", "CLOSESPIDER_ITEMCOUNT=100",
-                                    "-s", "LOG_LEVEL=INFO"
-                                ]
-                            finally:
-                                subprocess_db.close()
-
-                            print(f"🚀 Executing: {' '.join(cmd)}")
-                            print(f"🚀 Working directory: {project_dir}")
-
-                            # subprocessでScrapyを実行
-                            process = subprocess.Popen(
-                                cmd,
-                                cwd=project_dir,
-                                stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE,
-                                text=True
-                            )
-
-                            # プロセス完了を待機
-                            stdout, stderr = process.communicate()
-
-                            print(f"✅ Scrapy process completed with return code: {process.returncode}")
-
-                            # 結果をデータベースに保存
-                            db_session = SessionLocal()
-                            try:
-                                task_update = db_session.query(DBTask).filter(DBTask.id == task_id).first()
-                                if task_update:
-                                    if process.returncode == 0:
-                                        task_update.status = TaskStatus.FINISHED
-                                        task_update.items_count = 10  # 仮の値
-                                        task_update.requests_count = 20  # 仮の値
-                                        print(f"✅ Task completed successfully")
-                                    else:
-                                        task_update.status = TaskStatus.FAILED
-                                        task_update.error_count = 1
-                                        print(f"❌ Task failed with return code: {process.returncode}")
-                                        print(f"❌ stderr: {stderr}")
-
-                                    task_update.finished_at = datetime.now()
-                                    db_session.commit()
-                            finally:
-                                db_session.close()
-
-                        except Exception as e:
-                            print(f"❌ Subprocess execution error: {e}")
-                            import traceback
-                            traceback.print_exc()
-
-                            # エラー状態に更新
-                            db_session = SessionLocal()
-                            try:
-                                failed_task = db_session.query(DBTask).filter(DBTask.id == task_id).first()
-                                if failed_task:
-                                    failed_task.status = TaskStatus.FAILED
-                                    failed_task.finished_at = datetime.now()
-                                    failed_task.error_count = 1
-                                    db_session.commit()
-                            finally:
-                                db_session.close()
-
-                    # バックグラウンドスレッドで実行
-                    spider_thread = threading.Thread(target=run_spider_subprocess, daemon=True)
-                    spider_thread.start()
-
-                    print(f"🚀 Subprocess thread started for task {task_id}")
-
-                except Exception as scrapy_error:
-                    print(f"❌ Direct execution error: {str(scrapy_error)}")
-                    print(f"❌ Error type: {type(scrapy_error).__name__}")
+                except Exception as celery_error:
+                    print(f"❌ Celery task dispatch error: {str(celery_error)}")
+                    print(f"❌ Error type: {type(celery_error).__name__}")
                     import traceback
                     traceback.print_exc()
 
-                    # 詳細なデバッグ情報を出力
-                    print(f"🔍 Debug info:")
-                    print(f"   - Project: {project}")
-                    print(f"   - Project path: {getattr(project, 'path', 'None')}")
-                    print(f"   - Spider: {spider}")
-                    print(f"   - Spider name: {getattr(spider, 'name', 'None')}")
-                    print(f"   - Task ID: {task_id}")
-                    print(f"   - Project ID: {task.project_id}")
-                    print(f"   - Spider ID: {task.spider_id}")
-                    print(f"   - Settings: {task.settings}")
-
-                    # 直接実行に失敗した場合、タスクを失敗状態で保存
+                    # Celeryタスク開始に失敗した場合、タスクを失敗状態で保存
                     db_task.status = TaskStatus.FAILED
-                    db_task.started_at = datetime.now()
-                    db_task.finished_at = datetime.now()
+                    db_task.started_at = datetime.now(timezone.utc)
+                    db_task.finished_at = datetime.now(timezone.utc)
                     db_task.error_count = 1
 
                     # WebSocket通知を送信
@@ -515,7 +419,7 @@ async def create_task(
 
             # 予期しないエラーの場合も失敗状態で保存
             db_task.status = TaskStatus.FAILED
-            db_task.finished_at = datetime.now()
+            db_task.finished_at = datetime.now(timezone.utc)
             db_task.error_count = (db_task.error_count or 0) + 1
             db.commit()
 
@@ -622,7 +526,7 @@ async def update_task(
     # ステータスが完了または失敗の場合は終了時刻を設定
     if db_task.status in [TaskStatus.FINISHED, TaskStatus.FAILED, TaskStatus.CANCELLED]:
         if not db_task.finished_at:
-            db_task.finished_at = datetime.now()
+            db_task.finished_at = datetime.now(timezone.utc)
 
     db.commit()
     db.refresh(db_task)

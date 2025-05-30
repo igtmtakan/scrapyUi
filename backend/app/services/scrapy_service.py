@@ -14,6 +14,8 @@ import sys
 from datetime import datetime, timedelta
 import glob
 
+from .scrapy_task_manager import ScrapyTaskManager
+
 # ロギングとエラーハンドリングのインポート
 from ..utils.logging_config import get_logger, log_with_context, log_exception
 from ..utils.error_handler import (
@@ -472,6 +474,65 @@ project = {project_path}
         except Exception as e:
             print(f"Error saving project file: {str(e)}")
             raise Exception(f"Error saving project file: {str(e)}")
+
+    async def run_spider_with_manager(self, project_path: str, spider_name: str, task_id: str,
+                                     settings: Optional[Dict[str, Any]] = None,
+                                     progress_callback: Optional[callable] = None,
+                                     websocket_callback: Optional[callable] = None) -> Dict[str, Any]:
+        """ScrapyTaskManagerを使用してスパイダーを実行（統一管理版）"""
+        try:
+            log_with_context(
+                self.logger, "INFO",
+                f"Starting spider execution with TaskManager: {spider_name}",
+                task_id=task_id,
+                project_id=project_path,
+                spider_id=spider_name,
+                extra_data={"settings": settings}
+            )
+
+            # プロジェクトパスを構築
+            full_project_path = self.base_projects_dir / project_path
+
+            # スパイダー設定を構築
+            spider_config = {
+                'project_path': str(full_project_path),
+                'spider_name': spider_name,
+                'settings': settings or {}
+            }
+
+            # ScrapyTaskManagerを作成
+            task_manager = ScrapyTaskManager(
+                task_id=task_id,
+                spider_config=spider_config,
+                progress_callback=progress_callback,
+                websocket_callback=websocket_callback
+            )
+
+            # タスクを実行
+            result = await task_manager.execute()
+
+            log_with_context(
+                self.logger, "INFO",
+                f"Spider execution completed: {spider_name}",
+                task_id=task_id,
+                extra_data={"result": result}
+            )
+
+            return result
+
+        except Exception as e:
+            log_exception(
+                self.logger,
+                f"Error in spider execution with TaskManager: {str(e)}",
+                task_id=task_id,
+                project_id=project_path,
+                spider_id=spider_name
+            )
+            return {
+                'success': False,
+                'task_id': task_id,
+                'error': str(e)
+            }
 
     def run_spider(self, project_path: str, spider_name: str, task_id: str, settings: Optional[Dict[str, Any]] = None) -> str:
         """スパイダーを実行（非同期）"""
