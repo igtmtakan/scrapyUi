@@ -97,6 +97,9 @@ backend/projects/
 backend/scrapy_projects/
 projects/
 
+# Scrapy projects directory (user-generated projects)
+scrapy_projects/
+
 # Performance and analytics
 performance_metrics.db
 usage_analytics.db
