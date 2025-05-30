@@ -19,8 +19,8 @@ const pdfSchema = Joi.object({
     printBackground: Joi.boolean().default(true),
     scale: Joi.number().min(0.1).max(2).default(1),
     displayHeaderFooter: Joi.boolean().default(false),
-    headerTemplate: Joi.string().optional(),
-    footerTemplate: Joi.string().optional()
+    headerTemplate: Joi.string().allow('').optional(),
+    footerTemplate: Joi.string().allow('').optional()
   }).optional(),
   waitFor: Joi.alternatives().try(
     Joi.string(), // CSS selector
@@ -110,8 +110,12 @@ router.post('/generate', async (req, res, next) => {
 // Generate PDF and return as base64
 router.post('/generate-base64', async (req, res, next) => {
   try {
+    // デバッグ用ログ
+    logger.info('PDF generation request body:', JSON.stringify(req.body, null, 2));
+
     const { error, value } = pdfSchema.validate(req.body);
     if (error) {
+      logger.error('PDF validation error:', error.details.map(d => d.message));
       return res.status(400).json({
         error: 'Validation Error',
         details: error.details.map(d => d.message)

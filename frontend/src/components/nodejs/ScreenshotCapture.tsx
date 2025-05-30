@@ -8,11 +8,11 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { 
-  Camera, 
-  Play, 
-  Loader2, 
-  Download, 
+import {
+  Camera,
+  Play,
+  Loader2,
+  Download,
   Settings,
   AlertCircle,
   Eye,
@@ -74,7 +74,7 @@ export default function ScreenshotCapture({ className }: ScreenshotCaptureProps)
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!formData.url) {
       setError('URL is required');
       return;
@@ -86,7 +86,30 @@ export default function ScreenshotCapture({ className }: ScreenshotCaptureProps)
       setResult(null);
       setPreviewUrl(null);
 
-      const response = await nodejsService.captureScreenshot(formData);
+      // リクエストデータを作成（typeがpngの場合はqualityを除外）
+      const requestData: ScreenshotRequest = {
+        url: formData.url,
+        options: {
+          fullPage: formData.options?.fullPage,
+          type: formData.options?.type,
+          omitBackground: formData.options?.omitBackground
+        },
+        viewport: formData.viewport
+      };
+
+      // typeがjpegの場合のみqualityを追加
+      if (formData.options?.type === 'jpeg' && formData.options?.quality !== undefined) {
+        requestData.options!.quality = formData.options.quality;
+      }
+
+      // clipが設定されている場合は追加
+      if (formData.options?.clip) {
+        requestData.options!.clip = formData.options.clip;
+      }
+
+      console.log('Screenshot Request:', JSON.stringify(requestData, null, 2));
+
+      const response = await nodejsService.captureScreenshot(requestData);
       setResult(response);
 
       // Create preview URL
@@ -103,26 +126,52 @@ export default function ScreenshotCapture({ className }: ScreenshotCaptureProps)
   };
 
   const downloadScreenshot = () => {
-    if (!result?.data?.screenshot) return;
-    
+    if (!result?.data?.screenshot) {
+      setError('No screenshot data available');
+      return;
+    }
+
     try {
+      const mimeType = formData.options?.type === 'jpeg' ? 'image/jpeg' : 'image/png';
+      const fileName = `screenshot-${new Date().toISOString().split('T')[0]}.${formData.options?.type || 'png'}`;
+
+      // 方法1: Data URLを使用
+      try {
+        const dataUrl = `data:${mimeType};base64,${result.data.screenshot}`;
+        const link = document.createElement('a');
+        link.href = dataUrl;
+        link.download = fileName;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        console.log('Screenshot download initiated (Data URL method)');
+        return;
+      } catch (dataUrlError) {
+        console.warn('Data URL method failed, trying Blob method:', dataUrlError);
+      }
+
+      // 方法2: Blobを使用（フォールバック）
       const byteCharacters = atob(result.data.screenshot);
       const byteNumbers = new Array(byteCharacters.length);
       for (let i = 0; i < byteCharacters.length; i++) {
         byteNumbers[i] = byteCharacters.charCodeAt(i);
       }
       const byteArray = new Uint8Array(byteNumbers);
-      const mimeType = formData.options?.type === 'jpeg' ? 'image/jpeg' : 'image/png';
       const blob = new Blob([byteArray], { type: mimeType });
-      
+
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `screenshot-${new Date().toISOString().split('T')[0]}.${formData.options?.type || 'png'}`;
+      link.download = fileName;
+      document.body.appendChild(link);
       link.click();
+      document.body.removeChild(link);
       URL.revokeObjectURL(url);
+
+      console.log('Screenshot download initiated (Blob method)');
     } catch (err) {
-      setError('Failed to download screenshot');
+      console.error('Download error:', err);
+      setError(`Failed to download screenshot: ${err.message}`);
     }
   };
 
@@ -156,7 +205,7 @@ export default function ScreenshotCapture({ className }: ScreenshotCaptureProps)
                 <Settings className="w-4 h-4" />
                 Screenshot Options
               </Label>
-              
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <Label htmlFor="type">Image Format</Label>
@@ -311,7 +360,7 @@ export default function ScreenshotCapture({ className }: ScreenshotCaptureProps)
                 </Badge>
                 <span className="text-sm text-gray-600">{result.message}</span>
               </div>
-              
+
               {result.data && (
                 <div className="grid grid-cols-2 gap-4 text-sm">
                   <div>
@@ -331,11 +380,23 @@ export default function ScreenshotCapture({ className }: ScreenshotCaptureProps)
               {previewUrl && (
                 <div className="mt-4">
                   <Label className="text-sm font-medium">Preview:</Label>
+                  <p className="text-xs text-gray-500 mt-1">
+                    右クリックして「名前を付けて画像を保存」でも保存できます
+                  </p>
                   <div className="mt-2 border rounded-lg overflow-hidden">
                     <img
                       src={previewUrl}
                       alt="Screenshot preview"
-                      className="w-full max-h-96 object-contain bg-gray-50"
+                      className="w-full max-h-96 object-contain bg-gray-50 cursor-pointer"
+                      onContextMenu={(e) => {
+                        // 右クリックメニューを許可
+                        e.stopPropagation();
+                      }}
+                      onClick={() => {
+                        // クリックでダウンロード
+                        downloadScreenshot();
+                      }}
+                      title="クリックでダウンロード、右クリックで保存メニュー"
                     />
                   </div>
                 </div>

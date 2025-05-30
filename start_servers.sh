@@ -62,20 +62,20 @@ cd ..
 
 sleep 3
 
-# フロントエンドサーバーを起動
-echo "🎨 フロントエンドサーバーを起動中 (ポート: ${FRONTEND_PORT})..."
-cd frontend
-npm run dev -- --port ${FRONTEND_PORT} &
-FRONTEND_PID=$!
-cd ..
-
-sleep 3
-
 # Node.js Puppeteerサービスを起動
 echo "🤖 Node.js Puppeteerサービスを起動中 (ポート: ${NODEJS_PORT})..."
 cd nodejs-service
 npm start &
 NODEJS_PID=$!
+cd ..
+
+sleep 5
+
+# フロントエンドサーバーを起動（最後）
+echo "🎨 フロントエンドサーバーを起動中 (ポート: ${FRONTEND_PORT})..."
+cd frontend
+npm run dev -- --port ${FRONTEND_PORT} &
+FRONTEND_PID=$!
 cd ..
 
 sleep 5
@@ -91,11 +91,11 @@ ps aux | grep -E "(celery.*worker|start_celery_worker)" | grep -v grep | head -1
 echo "📅 Celery Beatスケジューラ:"
 ps aux | grep -E "celery.*beat" | grep -v grep | head -1 && echo "✅ Celery Beatが動作中" || echo "❌ Celery Beatが動作していません"
 
-echo "🌐 フロントエンド (http://localhost:${FRONTEND_PORT}):"
-curl -s -I "http://localhost:${FRONTEND_PORT}" | head -1 || echo "❌ フロントエンドが応答しません"
-
 echo "🤖 Node.js Puppeteer (http://localhost:${NODEJS_PORT}):"
 curl -s "http://localhost:${NODEJS_PORT}/api/health" | jq . || echo "❌ Node.jsサービスが応答しません"
+
+echo "🌐 フロントエンド (http://localhost:${FRONTEND_PORT}):"
+curl -s -I "http://localhost:${FRONTEND_PORT}" | head -1 || echo "❌ フロントエンドが応答しません"
 
 echo "🔄 プロキシ経由 (http://localhost:${FRONTEND_PORT}/api/health):"
 curl -s "http://localhost:${FRONTEND_PORT}/api/health" | jq . || echo "❌ プロキシが動作していません"

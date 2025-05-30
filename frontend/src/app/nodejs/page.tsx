@@ -12,7 +12,8 @@ import {
   Activity,
   Zap,
   Code,
-  Monitor
+  Monitor,
+  Terminal
 } from 'lucide-react';
 
 import NodeJSMonitor from '@/components/nodejs/NodeJSMonitor';
@@ -20,6 +21,7 @@ import SPAScrapingForm from '@/components/nodejs/SPAScrapingForm';
 import PDFGenerator from '@/components/nodejs/PDFGenerator';
 import ScreenshotCapture from '@/components/nodejs/ScreenshotCapture';
 import WorkflowManager from '@/components/nodejs/WorkflowManager';
+import TerminalComponent from '@/components/nodejs/Terminal';
 
 export default function NodeJSPage() {
   const [activeTab, setActiveTab] = useState('monitor');
@@ -98,10 +100,14 @@ export default function NodeJSPage() {
 
       {/* Main Content Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-        <TabsList className="grid w-full grid-cols-5">
+        <TabsList className="grid w-full grid-cols-6">
           <TabsTrigger value="monitor" className="flex items-center gap-2">
             <Monitor className="w-4 h-4" />
             Monitor
+          </TabsTrigger>
+          <TabsTrigger value="terminal" className="flex items-center gap-2">
+            <Terminal className="w-4 h-4" />
+            Terminal
           </TabsTrigger>
           <TabsTrigger value="workflows" className="flex items-center gap-2">
             <Zap className="w-4 h-4" />
@@ -123,6 +129,20 @@ export default function NodeJSPage() {
 
         <TabsContent value="monitor" className="space-y-6">
           <NodeJSMonitor />
+        </TabsContent>
+
+        <TabsContent value="terminal" className="space-y-6">
+          <div className="space-y-4">
+            <div className="text-center">
+              <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">
+                Terminal
+              </h2>
+              <p className="text-gray-600 dark:text-gray-300">
+                Scrapy プロジェクト用のインタラクティブターミナル
+              </p>
+            </div>
+            <TerminalComponent className="max-w-full" />
+          </div>
         </TabsContent>
 
         <TabsContent value="workflows" className="space-y-6">

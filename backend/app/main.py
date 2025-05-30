@@ -8,6 +8,10 @@ from starlette.middleware.base import BaseHTTPMiddleware
 import uvicorn
 import os
 from pathlib import Path
+from dotenv import load_dotenv
+
+# 環境変数を読み込み
+load_dotenv()
 
 # ロギングとエラーハンドリングのインポート
 from .utils.logging_config import setup_logging, get_logger
@@ -439,7 +443,15 @@ app.include_router(performance.router, prefix="/api", tags=["performance"])
 app.include_router(system.router, prefix="/api", tags=["system"])
 # app.include_router(settings.router, prefix="/api/settings", tags=["settings"])
 
-# WebSocketエンドポイント
+# Terminal WebSocketエンドポイント（先に登録して優先度を上げる）
+from .api.websocket.terminal import websocket_endpoint as terminal_websocket_endpoint
+
+@app.websocket("/ws/terminal")
+async def websocket_terminal(websocket: WebSocket):
+    """Terminal WebSocketエンドポイント"""
+    await terminal_websocket_endpoint(websocket)
+
+# WebSocketエンドポイント（一般的なパターンは後に登録）
 app.include_router(websocket_endpoints.router, prefix="/ws")
 
 # リアルタイム進捗監視WebSocketエンドポイント

@@ -6,15 +6,15 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Switch } from '@/components/ui/switch';
+
 import { Badge } from '@/components/ui/badge';
-import { 
-  Globe, 
-  Play, 
-  Loader2, 
-  Download, 
-  Eye, 
-  Code, 
+import {
+  Globe,
+  Play,
+  Loader2,
+  Download,
+  Eye,
+  Code,
   Settings,
   Plus,
   Trash2,
@@ -76,7 +76,7 @@ export default function SPAScrapingForm({ className }: SPAScrapingFormProps) {
     const newSelectors = [...selectors];
     newSelectors[index][field] = value;
     setSelectors(newSelectors);
-    
+
     // Update form data
     const selectorsObj = newSelectors.reduce((acc, { key, selector }) => {
       if (key && selector) {
@@ -84,7 +84,7 @@ export default function SPAScrapingForm({ className }: SPAScrapingFormProps) {
       }
       return acc;
     }, {} as Record<string, string>);
-    
+
     setFormData(prev => ({
       ...prev,
       extractData: {
@@ -101,7 +101,7 @@ export default function SPAScrapingForm({ className }: SPAScrapingFormProps) {
   const removeSelector = (index: number) => {
     const newSelectors = selectors.filter((_, i) => i !== index);
     setSelectors(newSelectors);
-    
+
     // Update form data
     const selectorsObj = newSelectors.reduce((acc, { key, selector }) => {
       if (key && selector) {
@@ -109,7 +109,7 @@ export default function SPAScrapingForm({ className }: SPAScrapingFormProps) {
       }
       return acc;
     }, {} as Record<string, string>);
-    
+
     setFormData(prev => ({
       ...prev,
       extractData: {
@@ -131,7 +131,7 @@ export default function SPAScrapingForm({ className }: SPAScrapingFormProps) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!formData.url) {
       setError('URL is required');
       return;
@@ -142,7 +142,37 @@ export default function SPAScrapingForm({ className }: SPAScrapingFormProps) {
       setError(null);
       setResult(null);
 
-      const response = await nodejsService.scrapeSPA(formData);
+      // セレクターオブジェクトを現在のselectors配列から構築
+      const selectorsObj = selectors.reduce((acc, { key, selector }) => {
+        if (key && key.trim() && selector && selector.trim()) {
+          acc[key.trim()] = selector.trim();
+        }
+        return acc;
+      }, {} as Record<string, string>);
+
+      // リクエストデータを準備（空文字列をundefinedに変換）
+      const requestData: SPAScrapingRequest = {
+        url: formData.url,
+        waitFor: formData.waitFor && formData.waitFor.trim() ? formData.waitFor.trim() : undefined,
+        timeout: formData.timeout,
+        screenshot: formData.screenshot,
+        viewport: formData.viewport,
+        extractData: {
+          selectors: Object.keys(selectorsObj).length > 0 ? selectorsObj : undefined,
+          javascript: formData.extractData?.javascript && formData.extractData.javascript.trim()
+            ? formData.extractData.javascript.trim()
+            : undefined
+        }
+      };
+
+      // extractDataが空の場合は除外
+      if (!requestData.extractData?.selectors && !requestData.extractData?.javascript) {
+        delete requestData.extractData;
+      }
+
+      console.log('SPA Scraping Request:', JSON.stringify(requestData, null, 2));
+
+      const response = await nodejsService.scrapeSPA(requestData);
       setResult(response);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to scrape SPA');
@@ -153,7 +183,7 @@ export default function SPAScrapingForm({ className }: SPAScrapingFormProps) {
 
   const downloadResult = () => {
     if (!result) return;
-    
+
     const dataStr = JSON.stringify(result, null, 2);
     const dataBlob = new Blob([dataStr], { type: 'application/json' });
     const url = URL.createObjectURL(dataBlob);
@@ -257,7 +287,7 @@ export default function SPAScrapingForm({ className }: SPAScrapingFormProps) {
                   Add Selector
                 </Button>
               </div>
-              
+
               <div className="space-y-2">
                 {selectors.map((selector, index) => (
                   <div key={index} className="flex gap-2 items-center">
@@ -302,12 +332,14 @@ export default function SPAScrapingForm({ className }: SPAScrapingFormProps) {
 
             {/* Screenshot Option */}
             <div className="flex items-center space-x-2">
-              <Switch
+              <input
+                type="checkbox"
                 id="screenshot"
                 checked={formData.screenshot}
-                onCheckedChange={(checked) => handleInputChange('screenshot', checked)}
+                onChange={(e) => handleInputChange('screenshot', e.target.checked)}
+                className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 focus:ring-2"
               />
-              <Label htmlFor="screenshot" className="flex items-center gap-2">
+              <Label htmlFor="screenshot" className="flex items-center gap-2 cursor-pointer">
                 <Eye className="w-4 h-4" />
                 Capture Screenshot
               </Label>
@@ -367,12 +399,66 @@ export default function SPAScrapingForm({ className }: SPAScrapingFormProps) {
                 </Badge>
                 <span className="text-sm text-gray-600">{result.message}</span>
               </div>
-              
-              <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4">
-                <pre className="text-sm overflow-auto max-h-96">
-                  {JSON.stringify(result.data, null, 2)}
-                </pre>
-              </div>
+
+              {/* Screenshot Preview */}
+              {result.data?.screenshot && (
+                <div className="space-y-2">
+                  <h4 className="font-medium text-sm">Screenshot Preview:</h4>
+                  <div className="border rounded-lg p-2 bg-white">
+                    <img
+                      src={`data:image/png;base64,${result.data.screenshot}`}
+                      alt="Screenshot"
+                      className="max-w-full h-auto max-h-96 mx-auto rounded border"
+                      style={{ maxWidth: '100%', height: 'auto' }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Extracted Data Summary */}
+              {result.data?.extractedData && (
+                <div className="space-y-2">
+                  <h4 className="font-medium text-sm">Extracted Data:</h4>
+                  <div className="bg-white p-3 rounded border">
+                    {Object.entries(result.data.extractedData).map(([key, value]) => (
+                      <div key={key} className="flex gap-2 mb-2">
+                        <span className="font-medium text-blue-600 min-w-20">{key}:</span>
+                        <span className="text-gray-700">
+                          {value === null ? (
+                            <span className="text-red-500 italic">not found</span>
+                          ) : Array.isArray(value) ? (
+                            <span>[{value.length} items]</span>
+                          ) : (
+                            String(value)
+                          )}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Custom Data */}
+              {result.data?.customData && (
+                <div className="space-y-2">
+                  <h4 className="font-medium text-sm">Custom JavaScript Result:</h4>
+                  <div className="bg-white p-3 rounded border">
+                    <pre className="text-sm">{JSON.stringify(result.data.customData, null, 2)}</pre>
+                  </div>
+                </div>
+              )}
+
+              {/* Full JSON Data */}
+              <details className="space-y-2">
+                <summary className="font-medium text-sm cursor-pointer hover:text-blue-600">
+                  View Full JSON Data
+                </summary>
+                <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4 mt-2">
+                  <pre className="text-sm overflow-auto max-h-96">
+                    {JSON.stringify(result.data, null, 2)}
+                  </pre>
+                </div>
+              </details>
             </div>
           </CardContent>
         </Card>

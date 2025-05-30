@@ -56,8 +56,11 @@ const dynamicContentSchema = Joi.object({
 // SPA Scraping endpoint
 router.post('/spa', async (req, res, next) => {
   try {
+    logger.info('SPA scraping request body:', JSON.stringify(req.body, null, 2));
+
     const { error, value } = spaScrapingSchema.validate(req.body);
     if (error) {
+      logger.error('SPA scraping validation error:', error.details.map(d => d.message));
       return res.status(400).json({
         error: 'Validation Error',
         details: error.details.map(d => d.message)
@@ -100,46 +103,70 @@ router.post('/spa', async (req, res, next) => {
         } else {
           await page.waitForTimeout(waitFor);
         }
+      } else {
+        // Default wait for page to be fully loaded and rendered
+        await page.waitForTimeout(3000);
       }
 
-      const result = {
+      const scrapingData = {
         url,
         timestamp: new Date().toISOString(),
-        success: true
+        pageInfo: {
+          title: await page.title(),
+          url: page.url(),
+          viewport: page.viewport()
+        }
       };
 
       // Extract data
       if (extractData) {
+        logger.info(`Data extraction requested:`, JSON.stringify(extractData, null, 2));
+
         if (extractData.selectors) {
+          logger.info(`Processing ${Object.keys(extractData.selectors).length} selectors`);
           const extractedData = {};
           for (const [key, selector] of Object.entries(extractData.selectors)) {
             try {
+              logger.info(`Extracting data for key "${key}" with selector "${selector}"`);
               const elements = await page.$$(selector);
+              logger.info(`Found ${elements.length} elements for selector "${selector}"`);
+
               if (elements.length === 1) {
                 extractedData[key] = await page.$eval(selector, el => el.textContent?.trim());
               } else if (elements.length > 1) {
-                extractedData[key] = await page.$$eval(selector, els => 
+                extractedData[key] = await page.$$eval(selector, els =>
                   els.map(el => el.textContent?.trim())
                 );
               } else {
                 extractedData[key] = null;
               }
+              logger.info(`Extracted data for "${key}":`, extractedData[key]);
             } catch (err) {
               logger.warn(`Failed to extract data for selector ${selector}:`, err.message);
               extractedData[key] = null;
             }
           }
-          result.data = extractedData;
+          scrapingData.extractedData = extractedData;
+          logger.info(`Final extracted data:`, extractedData);
         }
 
         if (extractData.javascript) {
+          logger.info(`Executing custom JavaScript:`, extractData.javascript);
           try {
-            result.customData = await page.evaluate(extractData.javascript);
+            // Wrap the JavaScript code in a function if it contains return statement
+            let jsCode = extractData.javascript.trim();
+            if (jsCode.includes('return ') && !jsCode.startsWith('(') && !jsCode.startsWith('function')) {
+              jsCode = `(() => { ${jsCode} })()`;
+            }
+            scrapingData.customData = await page.evaluate(jsCode);
+            logger.info(`Custom JavaScript result:`, scrapingData.customData);
           } catch (err) {
             logger.warn('Failed to execute custom JavaScript:', err.message);
-            result.customData = null;
+            scrapingData.customData = null;
           }
         }
+      } else {
+        logger.info('No data extraction requested');
       }
 
       // Take screenshot if requested
@@ -148,18 +175,18 @@ router.post('/spa', async (req, res, next) => {
           fullPage,
           type: 'png'
         });
-        result.screenshot = screenshotBuffer.toString('base64');
+        scrapingData.screenshot = screenshotBuffer.toString('base64');
       }
-
-      // Get page info
-      result.pageInfo = {
-        title: await page.title(),
-        url: page.url(),
-        viewport: page.viewport()
-      };
 
       await page.close();
       release();
+
+      const result = {
+        success: true,
+        message: 'SPA scraping completed successfully',
+        timestamp: new Date().toISOString(),
+        data: scrapingData
+      };
 
       logger.info(`SPA scraping completed successfully for: ${url}`);
       res.json(result);
@@ -223,7 +250,7 @@ router.post('/dynamic', async (req, res, next) => {
               await page.hover(action.selector);
               break;
           }
-          
+
           // Small delay between actions
           await page.waitForTimeout(500);
         }
@@ -246,7 +273,7 @@ router.post('/dynamic', async (req, res, next) => {
               if (elements.length === 1) {
                 extractedData[key] = await page.$eval(selector, el => el.textContent?.trim());
               } else if (elements.length > 1) {
-                extractedData[key] = await page.$$eval(selector, els => 
+                extractedData[key] = await page.$$eval(selector, els =>
                   els.map(el => el.textContent?.trim())
                 );
               } else {

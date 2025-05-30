@@ -469,8 +469,7 @@ class ScrapyRealtimeEngine:
                             'indent': 2
                         }
                     },
-                    # アイテム制限設定
-                    'CLOSESPIDER_ITEMCOUNT': 100,
+                    # アイテム制限設定を削除（自然な終了を待つ）
                     'DOWNLOAD_DELAY': 2,
                     'CONCURRENT_REQUESTS': 1
                 }

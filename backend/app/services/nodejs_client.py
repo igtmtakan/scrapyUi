@@ -1,5 +1,6 @@
 import httpx
 import asyncio
+import os
 from typing import Dict, Any, Optional, Union
 from pydantic import BaseModel
 import logging
@@ -223,7 +224,22 @@ async def get_nodejs_client() -> NodeJSClient:
     """Get singleton NodeJS client instance"""
     global _nodejs_client
     if _nodejs_client is None:
-        _nodejs_client = NodeJSClient()
+        # 環境変数からAPIキーを読み込み
+        api_key = os.getenv("NODEJS_SERVICE_API_KEY")
+        base_url = os.getenv("NODEJS_SERVICE_URL", "http://localhost:3001")
+
+        config = NodeJSServiceConfig(
+            base_url=base_url,
+            api_key=api_key,
+            timeout=30,
+            max_retries=3
+        )
+        _nodejs_client = NodeJSClient(config)
+
+        if api_key:
+            logger.info(f"NodeJS client initialized with API key for {base_url}")
+        else:
+            logger.warning("NodeJS client initialized without API key")
     return _nodejs_client
 
 async def close_nodejs_client():

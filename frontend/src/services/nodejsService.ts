@@ -31,17 +31,19 @@ export interface NodeJSHealthResponse {
 
 export interface SPAScrapingRequest {
   url: string;
-  waitFor?: string;
+  waitFor?: string | number;
   timeout?: number;
   extractData?: {
     selectors?: Record<string, string>;
     javascript?: string;
   };
   screenshot?: boolean;
+  fullPage?: boolean;
   viewport?: {
     width: number;
     height: number;
   };
+  userAgent?: string;
 }
 
 export interface DynamicScrapingRequest {
@@ -141,13 +143,24 @@ export interface WorkflowExecuteRequest {
 
 class NodeJSService {
   private baseUrl = process.env.NEXT_PUBLIC_NODEJS_SERVICE_URL || 'http://localhost:3001/api';
+  private apiKey = process.env.NEXT_PUBLIC_NODEJS_SERVICE_API_KEY;
+
+  private getHeaders(): Record<string, string> {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+
+    if (this.apiKey) {
+      headers['x-api-key'] = this.apiKey;
+    }
+
+    return headers;
+  }
 
   async checkHealth(): Promise<NodeJSHealthResponse> {
     const response = await fetch(`${this.baseUrl}/health`, {
       method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: this.getHeaders(),
     });
 
     if (!response.ok) {
@@ -160,9 +173,7 @@ class NodeJSService {
   async testConnection(data?: any): Promise<NodeJSResponse> {
     const response = await fetch(`${this.baseUrl}/test`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: this.getHeaders(),
       body: JSON.stringify({
         message: 'Test from frontend',
         timestamp: new Date().toISOString(),
@@ -180,9 +191,7 @@ class NodeJSService {
   async scrapeSPA(request: SPAScrapingRequest): Promise<NodeJSResponse> {
     const response = await fetch(`${this.baseUrl}/scraping/spa`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: this.getHeaders(),
       body: JSON.stringify(request),
     });
 
@@ -196,9 +205,7 @@ class NodeJSService {
   async scrapeDynamicContent(request: DynamicScrapingRequest): Promise<NodeJSResponse> {
     const response = await fetch(`${this.baseUrl}/scraping/dynamic`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: this.getHeaders(),
       body: JSON.stringify(request),
     });
 
@@ -210,11 +217,9 @@ class NodeJSService {
   }
 
   async generatePDF(request: PDFGenerationRequest): Promise<NodeJSResponse> {
-    const response = await fetch(`${this.baseUrl}/pdf/generate`, {
+    const response = await fetch(`${this.baseUrl}/pdf/generate-base64`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: this.getHeaders(),
       body: JSON.stringify(request),
     });
 
@@ -226,11 +231,9 @@ class NodeJSService {
   }
 
   async captureScreenshot(request: ScreenshotRequest): Promise<NodeJSResponse> {
-    const response = await fetch(`${this.baseUrl}/screenshot/capture`, {
+    const response = await fetch(`${this.baseUrl}/screenshot/capture-base64`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: this.getHeaders(),
       body: JSON.stringify(request),
     });
 
@@ -245,9 +248,7 @@ class NodeJSService {
   async getWorkflows(): Promise<NodeJSResponse> {
     const response = await fetch(`${this.baseUrl}/workflows`, {
       method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: this.getHeaders(),
     });
 
     if (!response.ok) {
@@ -260,9 +261,7 @@ class NodeJSService {
   async createWorkflow(request: WorkflowCreateRequest): Promise<NodeJSResponse> {
     const response = await fetch(`${this.baseUrl}/workflows`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: this.getHeaders(),
       body: JSON.stringify(request),
     });
 
@@ -276,9 +275,7 @@ class NodeJSService {
   async getWorkflow(workflowId: string): Promise<NodeJSResponse> {
     const response = await fetch(`${this.baseUrl}/workflows/${workflowId}`, {
       method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: this.getHeaders(),
     });
 
     if (!response.ok) {
@@ -291,9 +288,7 @@ class NodeJSService {
   async executeWorkflow(workflowId: string, request: WorkflowExecuteRequest): Promise<NodeJSResponse> {
     const response = await fetch(`${this.baseUrl}/workflows/${workflowId}/execute`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: this.getHeaders(),
       body: JSON.stringify(request),
     });
 
@@ -307,9 +302,7 @@ class NodeJSService {
   async deleteWorkflow(workflowId: string): Promise<NodeJSResponse> {
     const response = await fetch(`${this.baseUrl}/workflows/${workflowId}`, {
       method: 'DELETE',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: this.getHeaders(),
     });
 
     if (!response.ok) {
@@ -333,9 +326,7 @@ class NodeJSService {
     try {
       const response = await fetch(`${this.baseUrl}/command/exec`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: this.getHeaders(),
         body: JSON.stringify(request),
         signal: controller.signal,
       });
@@ -377,9 +368,7 @@ class NodeJSService {
   }): Promise<NodeJSResponse> {
     const response = await fetch(`${this.baseUrl}/command/sync`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: this.getHeaders(),
       body: JSON.stringify(request),
     });
 
@@ -398,9 +387,7 @@ class NodeJSService {
   }): Promise<Response> {
     const response = await fetch(`${this.baseUrl}/command/spawn`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: this.getHeaders(),
       body: JSON.stringify(request),
     });
 
@@ -412,7 +399,9 @@ class NodeJSService {
   }
 
   async getAllowedCommands(): Promise<NodeJSResponse> {
-    const response = await fetch(`${this.baseUrl}/command/allowed`);
+    const response = await fetch(`${this.baseUrl}/command/allowed`, {
+      headers: this.getHeaders(),
+    });
 
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);
@@ -424,9 +413,7 @@ class NodeJSService {
   async getWorkflowExecutions(workflowId: string): Promise<NodeJSResponse> {
     const response = await fetch(`${this.baseUrl}/workflows/${workflowId}/executions`, {
       method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: this.getHeaders(),
     });
 
     if (!response.ok) {
@@ -439,9 +426,7 @@ class NodeJSService {
   async getWorkflowTemplates(): Promise<NodeJSResponse> {
     const response = await fetch(`${this.baseUrl}/workflows/templates/list`, {
       method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: this.getHeaders(),
     });
 
     if (!response.ok) {

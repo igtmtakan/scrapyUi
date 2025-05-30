@@ -2090,7 +2090,7 @@ class EcommerceCrawlSpider(CrawlSpider):
         'DEPTH_LIMIT': 4,
         'USER_AGENT': 'ScrapyUI E-commerce Crawler 1.0',
         'CLOSESPIDER_PAGECOUNT': 100,
-        'CLOSESPIDER_ITEMCOUNT': 500,  # 最大500商品まで
+        # アイテム数制限を削除（自然な終了を待つ）
     }
 
     rules = (

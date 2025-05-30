@@ -45,7 +45,7 @@ def sync_project_files_to_database(db, project_id: str, project_path: str, user_
         logger.warning(f"Project directory not found: {project_dir}")
         return
 
-    # 同期対象のファイルパターン
+    # 同期対象のファイルパターン（Scrapyプロジェクトの標準構造）
     file_patterns = [
         # ルートレベルのファイル
         ("scrapy.cfg", "config"),
@@ -60,6 +60,29 @@ def sync_project_files_to_database(db, project_id: str, project_path: str, user_
         # spidersディレクトリ内のファイル
         (f"{project_path}/spiders/__init__.py", "python"),
     ]
+
+    # 実際に存在するファイルも動的に検索して追加
+    try:
+        import glob
+        # プロジェクトディレクトリ内のすべての.pyファイルを検索
+        py_files = glob.glob(str(project_dir / "**" / "*.py"), recursive=True)
+        for py_file in py_files:
+            relative_path = Path(py_file).relative_to(project_dir)
+            file_pattern = (str(relative_path), "python")
+            if file_pattern not in file_patterns:
+                file_patterns.append(file_pattern)
+                logger.info(f"Added dynamically found file: {relative_path}")
+
+        # 設定ファイルも検索
+        config_files = glob.glob(str(project_dir / "**" / "*.cfg"), recursive=True)
+        for config_file in config_files:
+            relative_path = Path(config_file).relative_to(project_dir)
+            file_pattern = (str(relative_path), "config")
+            if file_pattern not in file_patterns:
+                file_patterns.append(file_pattern)
+                logger.info(f"Added dynamically found config file: {relative_path}")
+    except Exception as e:
+        logger.warning(f"Failed to dynamically search for files: {str(e)}")
 
     synced_files = []
 
@@ -112,6 +135,50 @@ def sync_project_files_to_database(db, project_id: str, project_path: str, user_
 
     # 最終結果をログ出力
     logger.info(f"Successfully synced {len(synced_files)} files to database: {synced_files}")
+
+
+def sync_spider_file_to_database(db, project_id: str, project_path: str, spider_name: str, spider_code: str, user_id: str):
+    """スパイダーファイルをデータベースに同期"""
+    from ..database import ProjectFile
+    from datetime import datetime
+
+    try:
+        # スパイダーファイルのパス
+        spider_file_path = f"{project_path}/spiders/{spider_name}.py"
+
+        # データベースに既存のファイルがあるかチェック
+        existing_file = db.query(ProjectFile).filter(
+            ProjectFile.project_id == project_id,
+            ProjectFile.path == spider_file_path
+        ).first()
+
+        if existing_file:
+            # 既存ファイルを更新
+            existing_file.content = spider_code
+            existing_file.updated_at = datetime.now()
+            logger.info(f"Updated spider file in database: {spider_file_path}")
+        else:
+            # 新しいファイルを作成
+            db_file = ProjectFile(
+                id=str(uuid.uuid4()),
+                name=f"{spider_name}.py",
+                path=spider_file_path,
+                content=spider_code,
+                file_type="python",
+                project_id=project_id,
+                user_id=user_id
+            )
+            db.add(db_file)
+            logger.info(f"Added spider file to database: {spider_file_path}")
+
+        # データベースにコミット
+        db.commit()
+        logger.info(f"Successfully synced spider file to database: {spider_name}")
+
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Failed to sync spider file to database: {str(e)}")
+        raise
 
 @router.get(
     "/",
@@ -295,10 +362,20 @@ async def create_project(
         # プロジェクトファイルをデータベースに同期（全ファイル）
         try:
             if not os.getenv("TESTING", False):
+                # 少し待ってからファイル同期（ファイル作成完了を確実にする）
+                import time
+                time.sleep(0.5)
+
                 sync_project_files_to_database(db, db_project.id, project_path, current_user.id)
                 logger.info(f"All project files synced to database for project: {project_path}")
+
+                # 同期後の確認
+                from ..database import ProjectFile
+                synced_count = db.query(ProjectFile).filter(ProjectFile.project_id == db_project.id).count()
+                logger.info(f"Total files synced to database: {synced_count}")
         except Exception as e:
             logger.warning(f"Failed to save project files to database: {str(e)}")
+            # ファイル同期失敗は警告のみ（プロジェクト作成は成功とする）
 
         log_with_context(
             logger, "INFO",
@@ -430,6 +507,26 @@ async def create_project_spider(
             scrapy_service = ScrapyPlaywrightService()
             spider_code = spider_data.get("script", spider_data.get("code", ""))
             scrapy_service.save_spider_code(project.path, spider_name, spider_code)
+
+            # スパイダーファイルをデータベースに同期
+            try:
+                sync_spider_file_to_database(db, project.id, project.path, spider_name, spider_code, current_user.id)
+                logger.info(f"Spider file synced to database: {spider_name}")
+
+                # 同期確認
+                from ..database import ProjectFile
+                spider_file_path = f"{project.path}/spiders/{spider_name}.py"
+                synced_file = db.query(ProjectFile).filter(
+                    ProjectFile.project_id == project.id,
+                    ProjectFile.path == spider_file_path
+                ).first()
+                if synced_file:
+                    logger.info(f"Spider file sync confirmed: {spider_file_path}")
+                else:
+                    logger.warning(f"Spider file sync verification failed: {spider_file_path}")
+            except Exception as sync_error:
+                logger.error(f"Failed to sync spider file to database: {sync_error}")
+                # 同期失敗は警告のみ（スパイダー作成は成功とする）
     except Exception as e:
         # データベースからロールバック
         db.delete(db_spider)

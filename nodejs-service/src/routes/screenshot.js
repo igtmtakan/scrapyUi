@@ -12,7 +12,7 @@ const screenshotSchema = Joi.object({
     quality: Joi.number().min(0).max(100).when('type', {
       is: 'jpeg',
       then: Joi.number().default(80),
-      otherwise: Joi.forbidden()
+      otherwise: Joi.optional()
     }),
     clip: Joi.object({
       x: Joi.number().min(0).required(),
@@ -37,8 +37,12 @@ const screenshotSchema = Joi.object({
 // Capture screenshot
 router.post('/capture', async (req, res, next) => {
   try {
+    // デバッグ用ログ
+    logger.info('Screenshot capture request body:', JSON.stringify(req.body, null, 2));
+
     const { error, value } = screenshotSchema.validate(req.body);
     if (error) {
+      logger.error('Screenshot validation error:', error.details.map(d => d.message));
       return res.status(400).json({
         error: 'Validation Error',
         details: error.details.map(d => d.message)
@@ -76,13 +80,19 @@ router.post('/capture', async (req, res, next) => {
       }
 
       // Capture screenshot
-      const screenshotBuffer = await page.screenshot({
+      const screenshotOptions = {
         fullPage: options.fullPage,
         type: options.type,
-        quality: options.quality,
         clip: options.clip,
         omitBackground: options.omitBackground
-      });
+      };
+
+      // JPEGの場合のみqualityを追加（PNGはqualityをサポートしていない）
+      if (options.type === 'jpeg' && options.quality !== undefined) {
+        screenshotOptions.quality = options.quality;
+      }
+
+      const screenshotBuffer = await page.screenshot(screenshotOptions);
 
       await page.close();
       release();
@@ -150,25 +160,34 @@ router.post('/capture-base64', async (req, res, next) => {
       }
 
       // Capture screenshot
-      const screenshotBuffer = await page.screenshot({
+      const screenshotOptions = {
         fullPage: options.fullPage,
         type: options.type,
-        quality: options.quality,
         clip: options.clip,
         omitBackground: options.omitBackground
-      });
+      };
+
+      // JPEGの場合のみqualityを追加（PNGはqualityをサポートしていない）
+      if (options.type === 'jpeg' && options.quality !== undefined) {
+        screenshotOptions.quality = options.quality;
+      }
+
+      const screenshotBuffer = await page.screenshot(screenshotOptions);
 
       await page.close();
       release();
 
       const result = {
         success: true,
+        message: 'Screenshot captured successfully',
         timestamp: new Date().toISOString(),
-        url,
-        screenshot: screenshotBuffer.toString('base64'),
-        size: screenshotBuffer.length,
-        options: options,
-        viewport: viewport || { width: 1920, height: 1080 }
+        data: {
+          url,
+          screenshot: screenshotBuffer.toString('base64'),
+          size: screenshotBuffer.length,
+          options: options,
+          viewport: viewport || { width: 1920, height: 1080 }
+        }
       };
 
       logger.info(`Screenshot capture (base64) completed successfully for: ${url}`);

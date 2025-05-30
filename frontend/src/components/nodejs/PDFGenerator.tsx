@@ -9,11 +9,11 @@ import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { 
-  FileText, 
-  Play, 
-  Loader2, 
-  Download, 
+import {
+  FileText,
+  Play,
+  Loader2,
+  Download,
   Settings,
   AlertCircle,
   Globe,
@@ -83,12 +83,12 @@ export default function PDFGenerator({ className }: PDFGeneratorProps) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (mode === 'url' && !formData.url) {
       setError('URL is required');
       return;
     }
-    
+
     if (mode === 'html' && !formData.html) {
       setError('HTML content is required');
       return;
@@ -103,11 +103,14 @@ export default function PDFGenerator({ className }: PDFGeneratorProps) {
         options: formData.options
       };
 
-      if (mode === 'url') {
+      if (mode === 'url' && formData.url) {
         requestData.url = formData.url;
-      } else {
+      } else if (mode === 'html' && formData.html) {
         requestData.html = formData.html;
       }
+
+      // デバッグ用ログ
+      console.log('PDF Generation Request:', JSON.stringify(requestData, null, 2));
 
       const response = await nodejsService.generatePDF(requestData);
       setResult(response);
@@ -119,17 +122,19 @@ export default function PDFGenerator({ className }: PDFGeneratorProps) {
   };
 
   const downloadPDF = () => {
-    if (!result?.data?.pdf) return;
-    
+    // generate-base64エンドポイントのレスポンス構造に対応
+    const pdfData = result?.data?.pdf || result?.pdf;
+    if (!pdfData) return;
+
     try {
-      const byteCharacters = atob(result.data.pdf);
+      const byteCharacters = atob(pdfData);
       const byteNumbers = new Array(byteCharacters.length);
       for (let i = 0; i < byteCharacters.length; i++) {
         byteNumbers[i] = byteCharacters.charCodeAt(i);
       }
       const byteArray = new Uint8Array(byteNumbers);
       const blob = new Blob([byteArray], { type: 'application/pdf' });
-      
+
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
@@ -213,7 +218,7 @@ export default function PDFGenerator({ className }: PDFGeneratorProps) {
                 <Settings className="w-4 h-4" />
                 PDF Options
               </Label>
-              
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <Label htmlFor="format">Page Format</Label>
@@ -292,7 +297,7 @@ export default function PDFGenerator({ className }: PDFGeneratorProps) {
                 <FileText className="w-5 h-5" />
                 PDF Generation Results
               </CardTitle>
-              {result.data?.pdf && (
+              {(result.data?.pdf || result.pdf) && (
                 <Button onClick={downloadPDF} variant="outline" size="sm">
                   <Download className="w-4 h-4 mr-2" />
                   Download PDF
@@ -308,17 +313,21 @@ export default function PDFGenerator({ className }: PDFGeneratorProps) {
                 </Badge>
                 <span className="text-sm text-gray-600">{result.message}</span>
               </div>
-              
-              {result.data && (
+
+              {(result.data || result.source || result.size) && (
                 <div className="grid grid-cols-2 gap-4 text-sm">
                   <div>
                     <span className="font-medium">Source:</span>
-                    <span className="ml-2 text-gray-600">{result.data.source || 'HTML content'}</span>
+                    <span className="ml-2 text-gray-600">
+                      {result.data?.source || result.source || 'HTML content'}
+                    </span>
                   </div>
                   <div>
                     <span className="font-medium">Size:</span>
                     <span className="ml-2 text-gray-600">
-                      {result.data.size ? `${(result.data.size / 1024).toFixed(2)} KB` : 'Unknown'}
+                      {(result.data?.size || result.size) ?
+                        `${((result.data?.size || result.size) / 1024).toFixed(2)} KB` :
+                        'Unknown'}
                     </span>
                   </div>
                 </div>

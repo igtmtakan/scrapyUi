@@ -1035,8 +1035,26 @@ async def copy_spider(
                 db, original_spider.project_id, project.path, new_name, updated_code, original_spider.user_id
             )
             print(f"✅ Copied spider file synced to database: {new_name}")
+
+            # 同期確認
+            spider_file_path_db = f"{project.path}/spiders/{new_name}.py"
+            synced_file = db.query(ProjectFile).filter(
+                ProjectFile.project_id == original_spider.project_id,
+                ProjectFile.path == spider_file_path_db
+            ).first()
+            if synced_file:
+                print(f"✅ Copied spider file sync confirmed: {spider_file_path_db}")
+            else:
+                print(f"⚠️ Copied spider file sync verification failed: {spider_file_path_db}")
+                # 同期確認失敗時は再試行
+                sync_spider_file_to_database(
+                    db, original_spider.project_id, project.path, new_name, updated_code, original_spider.user_id
+                )
+                print(f"🔄 Retried spider file sync for: {new_name}")
         except Exception as sync_error:
-            print(f"⚠️ Failed to sync copied spider file to database: {sync_error}")
+            print(f"❌ Failed to sync copied spider file to database: {sync_error}")
+            # コピー時の同期失敗は重要なので、エラーとして扱う
+            raise Exception(f"Database sync failed for copied spider: {sync_error}")
 
         # 5. 全て成功した場合のみcommit
         db.commit()

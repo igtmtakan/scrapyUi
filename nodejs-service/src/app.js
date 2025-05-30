@@ -84,6 +84,12 @@ app.use('/api', apiKeyAuth);
 app.use((req, res, next) => {
   logger.info(`Incoming request: ${req.method} ${req.url} from ${req.ip}`);
   logger.info(`Headers: ${JSON.stringify(req.headers, null, 2)}`);
+
+  // PDF生成・スクリーンショットリクエストの場合、ボディもログ出力
+  if (req.url.includes('/pdf/generate') || req.url.includes('/screenshot/capture')) {
+    logger.info('Request body:', JSON.stringify(req.body, null, 2));
+  }
+
   next();
 });
 
