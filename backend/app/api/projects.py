@@ -31,6 +31,88 @@ router = APIRouter(
     }
 )
 
+
+def sync_project_files_to_database(db, project_id: str, project_path: str, user_id: str):
+    """プロジェクト作成時に全ファイルをデータベースに同期"""
+    from ..database import ProjectFile
+    from pathlib import Path
+    from datetime import datetime
+
+    # プロジェクトディレクトリのパス
+    project_dir = Path(f"./scrapy_projects/{project_path}")
+
+    if not project_dir.exists():
+        logger.warning(f"Project directory not found: {project_dir}")
+        return
+
+    # 同期対象のファイルパターン
+    file_patterns = [
+        # ルートレベルのファイル
+        ("scrapy.cfg", "config"),
+
+        # プロジェクトパッケージ内のファイル
+        (f"{project_path}/__init__.py", "python"),
+        (f"{project_path}/settings.py", "python"),
+        (f"{project_path}/items.py", "python"),
+        (f"{project_path}/pipelines.py", "python"),
+        (f"{project_path}/middlewares.py", "python"),
+
+        # spidersディレクトリ内のファイル
+        (f"{project_path}/spiders/__init__.py", "python"),
+    ]
+
+    synced_files = []
+
+    for file_path, file_type in file_patterns:
+        full_path = project_dir / file_path
+
+        if full_path.exists():
+            try:
+                with open(full_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+
+                # ファイル名を取得
+                file_name = full_path.name
+
+                # データベースに既存のファイルがあるかチェック（pathで判定）
+                existing_file = db.query(ProjectFile).filter(
+                    ProjectFile.project_id == project_id,
+                    ProjectFile.path == file_path
+                ).first()
+
+                if existing_file:
+                    # 既存ファイルを更新
+                    existing_file.content = content
+                    existing_file.updated_at = datetime.now()
+                    logger.info(f"Updated existing file in database: {file_path}")
+                else:
+                    # 新しいファイルを作成
+                    db_file = ProjectFile(
+                        id=str(uuid.uuid4()),
+                        name=file_name,
+                        path=file_path,
+                        content=content,
+                        file_type=file_type,
+                        project_id=project_id,
+                        user_id=user_id
+                    )
+                    db.add(db_file)
+                    logger.info(f"Added new file to database: {file_path}")
+
+                # 各ファイルを個別にコミット
+                try:
+                    db.commit()
+                    synced_files.append(file_path)
+                except Exception as commit_error:
+                    db.rollback()
+                    logger.error(f"Failed to commit file {file_path}: {str(commit_error)}")
+
+            except Exception as e:
+                logger.error(f"Failed to sync file {file_path}: {str(e)}")
+
+    # 最終結果をログ出力
+    logger.info(f"Successfully synced {len(synced_files)} files to database: {synced_files}")
+
 @router.get(
     "/",
     response_model=List[ProjectWithUser],
@@ -180,7 +262,7 @@ async def create_project(
             # テスト環境では実際のScrapyプロジェクト作成をスキップ
             if not os.getenv("TESTING", False):
                 scrapy_service = ScrapyPlaywrightService()
-                # プロジェクト名をそのまま使用してscrapy startprojectを実行
+                # プロジェクト名（ディレクトリ名）とプロジェクトパス（設定名）を正しく指定
                 scrapy_service.create_project(project_path, project_path)
                 logger.info(f"Scrapy project created successfully: {project_path}")
             else:
@@ -209,6 +291,14 @@ async def create_project(
         db.add(db_project)
         db.commit()
         db.refresh(db_project)
+
+        # プロジェクトファイルをデータベースに同期（全ファイル）
+        try:
+            if not os.getenv("TESTING", False):
+                sync_project_files_to_database(db, db_project.id, project_path, current_user.id)
+                logger.info(f"All project files synced to database for project: {project_path}")
+        except Exception as e:
+            logger.warning(f"Failed to save project files to database: {str(e)}")
 
         log_with_context(
             logger, "INFO",

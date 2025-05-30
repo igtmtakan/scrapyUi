@@ -33,7 +33,49 @@ class SchedulerService:
         self.running = True
         self.thread = threading.Thread(target=self._run_scheduler, daemon=True)
         self.thread.start()
-        print("✅ Scheduler service started")
+
+        # 統計検証スケジュールを追加（根本対応）
+        self._setup_statistics_validation()
+
+        print("✅ Scheduler service started with statistics validation")
+
+    def _setup_statistics_validation(self):
+        """統計検証スケジュールのセットアップ（根本対応）"""
+        try:
+            # 統計検証を30分毎に実行するスケジュールを追加
+            self.statistics_validation_interval = 30 * 60  # 30分（秒）
+            self.last_validation_time = None
+            print("🔧 Statistics validation schedule setup completed (every 30 minutes)")
+        except Exception as e:
+            print(f"❌ Error setting up statistics validation: {str(e)}")
+
+    def _check_and_execute_statistics_validation(self):
+        """統計検証の実行チェック（根本対応）"""
+        try:
+            if not hasattr(self, 'statistics_validation_interval'):
+                return
+
+            import pytz
+            jst = pytz.timezone('Asia/Tokyo')
+            current_time = datetime.now(jst).replace(tzinfo=None)
+
+            # 初回実行または30分経過した場合
+            should_validate = False
+            if self.last_validation_time is None:
+                should_validate = True
+                print("🔍 First-time statistics validation")
+            else:
+                time_since_last = (current_time - self.last_validation_time).total_seconds()
+                if time_since_last >= self.statistics_validation_interval:
+                    should_validate = True
+                    print(f"🔍 Statistics validation due: {time_since_last:.0f}s since last validation")
+
+            if should_validate:
+                self._validate_task_statistics()
+                self.last_validation_time = current_time
+
+        except Exception as e:
+            print(f"❌ Error in statistics validation check: {str(e)}")
 
     def stop(self):
         """スケジューラーを停止"""
@@ -58,6 +100,9 @@ class SchedulerService:
                 print(f"🔄 Scheduler loop iteration at {loop_start.strftime('%H:%M:%S.%f')[:-3]}")
 
                 self._check_and_execute_schedules()
+
+                # 統計検証の実行チェック（根本対応）
+                self._check_and_execute_statistics_validation()
 
                 # デバッグ用：スリープ前の時刻を記録
                 sleep_start = datetime.now(jst).replace(tzinfo=None)
@@ -228,6 +273,34 @@ class SchedulerService:
 
         except Exception as e:
             print(f"❌ Error updating next run time for {schedule.name}: {str(e)}")
+
+    def _validate_task_statistics(self):
+        """定期的なタスク統計検証（根本対応）"""
+        try:
+            from .task_statistics_validator import validate_recent_tasks
+
+            print("🔍 Starting periodic task statistics validation...")
+            result = validate_recent_tasks(hours_back=2)  # 過去2時間のタスクを検証
+
+            if "error" in result:
+                print(f"❌ Task validation error: {result['error']}")
+                return
+
+            summary = result.get("summary", {})
+            fixed_count = len(result.get("fixed_tasks", []))
+
+            if fixed_count > 0:
+                print(f"✅ Task validation completed: {fixed_count} tasks fixed")
+                print(f"   Items fixed: {summary.get('items_fixed', 0)}")
+                print(f"   Requests fixed: {summary.get('requests_fixed', 0)}")
+                print(f"   Status fixed: {summary.get('status_fixed', 0)}")
+            else:
+                print(f"✅ Task validation completed: All {result.get('total_checked', 0)} tasks are accurate")
+
+        except Exception as e:
+            print(f"❌ Error in periodic task validation: {str(e)}")
+            import traceback
+            traceback.print_exc()
 
     def get_status(self) -> Dict:
         """スケジューラーの状態を取得"""

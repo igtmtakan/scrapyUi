@@ -25,6 +25,7 @@ interface SystemStatusData {
   services: {
     redis: ServiceStatus
     celery_worker: ServiceStatus
+    celery_scheduler: ServiceStatus
     fastapi_backend: ServiceStatus
     scheduler: ServiceStatus
     nodejs_puppeteer: ServiceStatus
@@ -150,6 +151,8 @@ export default function SystemStatus() {
         return <Database className="w-5 h-5 text-red-400" />
       case 'celery_worker':
         return <Activity className="w-5 h-5 text-green-400" />
+      case 'celery_scheduler':
+        return <Clock className="w-5 h-5 text-orange-400" />
       case 'fastapi_backend':
         return <Server className="w-5 h-5 text-blue-400" />
       case 'scheduler':
@@ -169,6 +172,8 @@ export default function SystemStatus() {
         return 'Redis Cache'
       case 'celery_worker':
         return 'Celery Worker'
+      case 'celery_scheduler':
+        return 'Celery Scheduler'
       case 'fastapi_backend':
         return 'FastAPI Backend'
       case 'scheduler':
@@ -284,7 +289,19 @@ export default function SystemStatus() {
 
       {/* サービス状態一覧 */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {Object.entries(systemStatus.services).map(([serviceName, service]) => (
+        {/* サービスを論理的な順序で表示 */}
+        {[
+          'fastapi_backend',
+          'redis',
+          'celery_worker',
+          'celery_scheduler',
+          'scheduler',
+          'nodejs_puppeteer',
+          'nextjs_frontend'
+        ].filter(serviceName => systemStatus.services[serviceName as keyof typeof systemStatus.services])
+         .map(serviceName => {
+           const service = systemStatus.services[serviceName as keyof typeof systemStatus.services]
+           return (
           <div
             key={serviceName}
             className="bg-gray-800 rounded-lg p-4 border border-gray-700 hover:border-gray-600 transition-colors"
@@ -312,7 +329,8 @@ export default function SystemStatus() {
               </div>
             </div>
           </div>
-        ))}
+           )
+         })}
       </div>
 
       {/* システム概要 */}

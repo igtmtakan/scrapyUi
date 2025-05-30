@@ -24,6 +24,7 @@ pkill -f "npm.*dev" 2>/dev/null || true
 pkill -f "node.*app.js" 2>/dev/null || true
 pkill -f "nodemon.*app.js" 2>/dev/null || true
 pkill -f "celery.*worker" 2>/dev/null || true
+pkill -f "celery.*beat" 2>/dev/null || true
 pkill -f "start_celery_worker.py" 2>/dev/null || true
 
 # ポートが使用中の場合は強制停止
@@ -48,6 +49,15 @@ echo "⚙️ Celeryワーカーを起動中..."
 cd backend
 python3 start_celery_worker.py &
 CELERY_PID=$!
+cd ..
+
+sleep 3
+
+# Celery Beatスケジューラを起動
+echo "📅 Celery Beatスケジューラを起動中..."
+cd backend
+python3 -m celery -A app.celery_app beat --scheduler app.scheduler:DatabaseScheduler --loglevel=info &
+CELERY_BEAT_PID=$!
 cd ..
 
 sleep 3
@@ -78,6 +88,9 @@ curl -s "http://localhost:${BACKEND_PORT}/health" | jq . || echo "❌ バック�
 echo "⚙️ Celeryワーカー:"
 ps aux | grep -E "(celery.*worker|start_celery_worker)" | grep -v grep | head -1 && echo "✅ Celeryワーカーが動作中" || echo "❌ Celeryワーカーが動作していません"
 
+echo "📅 Celery Beatスケジューラ:"
+ps aux | grep -E "celery.*beat" | grep -v grep | head -1 && echo "✅ Celery Beatが動作中" || echo "❌ Celery Beatが動作していません"
+
 echo "🌐 フロントエンド (http://localhost:${FRONTEND_PORT}):"
 curl -s -I "http://localhost:${FRONTEND_PORT}" | head -1 || echo "❌ フロントエンドが応答しません"
 
@@ -101,9 +114,10 @@ echo $BACKEND_PID > .backend.pid
 echo $FRONTEND_PID > .frontend.pid
 echo $NODEJS_PID > .nodejs.pid
 echo $CELERY_PID > .celery.pid
+echo $CELERY_BEAT_PID > .celery_beat.pid
 
 # 終了シグナルをキャッチしてプロセスを停止
-trap 'echo "🛑 サーバーを停止中..."; kill $BACKEND_PID $FRONTEND_PID $NODEJS_PID $CELERY_PID 2>/dev/null; rm -f .backend.pid .frontend.pid .nodejs.pid .celery.pid; exit' INT TERM
+trap 'echo "🛑 サーバーを停止中..."; kill $BACKEND_PID $FRONTEND_PID $NODEJS_PID $CELERY_PID $CELERY_BEAT_PID 2>/dev/null; rm -f .backend.pid .frontend.pid .nodejs.pid .celery.pid .celery_beat.pid; exit' INT TERM
 
 # プロセスが終了するまで待機
 wait

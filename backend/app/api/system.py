@@ -81,6 +81,38 @@ async def get_system_status():
                 "message": f"Error checking Scheduler service: {str(e)}"
             }
 
+        # Celery Scheduler (Beat) 状態チェック
+        try:
+            # Celery Beatプロセスの確認
+            celery_beat_running = False
+            celery_beat_pid = None
+
+            for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+                try:
+                    cmdline = ' '.join(proc.info['cmdline']) if proc.info['cmdline'] else ''
+                    if 'celery' in cmdline.lower() and 'beat' in cmdline.lower():
+                        celery_beat_running = True
+                        celery_beat_pid = proc.info['pid']
+                        break
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+
+            if celery_beat_running:
+                status_info["services"]["celery_scheduler"] = {
+                    "status": "running",
+                    "message": f"Celery Beat scheduler is running (PID: {celery_beat_pid})"
+                }
+            else:
+                status_info["services"]["celery_scheduler"] = {
+                    "status": "stopped",
+                    "message": "Celery Beat scheduler is not running"
+                }
+        except Exception as e:
+            status_info["services"]["celery_scheduler"] = {
+                "status": "error",
+                "message": f"Error checking Celery Beat scheduler: {str(e)}"
+            }
+
         # Node.js Puppeteerサービス状態チェック
         try:
             response = requests.get("http://localhost:3001/api/health", timeout=5)

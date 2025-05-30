@@ -50,7 +50,23 @@ export function ScriptEditor({
   // スニペット生成（ファイルタイプに応じて）
   const generateSnippet = () => {
     const fileType = getFileType()
-    const projectName = fileName.replace('.py', '').toLowerCase()
+
+    // プロジェクト名を正しく取得
+    let projectName = fileName.replace('.py', '').toLowerCase()
+
+    // scrapy.cfgの場合は、URLからプロジェクト名を取得
+    if (fileType === 'scrapy_cfg') {
+      // URLパラメータからprojectPathを取得
+      const urlParams = new URLSearchParams(window.location.search)
+      const projectPath = urlParams.get('projectPath')
+      if (projectPath) {
+        projectName = projectPath.toLowerCase()
+      } else {
+        // フォールバック: demo_demoomochaproject
+        projectName = 'demo_demoomochaproject'
+      }
+    }
+
     const capitalizedProjectName = projectName.charAt(0).toUpperCase() + projectName.slice(1)
 
     switch (fileType) {
@@ -1296,7 +1312,7 @@ class ${capitalizedProjectName}Spider(scrapy.Spider):
 
   return (
     <div className={`flex flex-col h-full bg-gray-900 ${className}`}>
-      {/* ツールバー */}
+      {/* ファイル名とメインアクションボタン */}
       <div className="flex items-center justify-between p-3 bg-gray-800 border-b border-gray-700">
         <div className="flex items-center space-x-2">
           <FileText className="w-4 h-4 text-gray-400" />
@@ -1304,38 +1320,6 @@ class ${capitalizedProjectName}Spider(scrapy.Spider):
         </div>
 
         <div className="flex items-center space-x-2">
-          <button
-            onClick={formatCode}
-            className="p-2 text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors"
-            title="Format Code (Shift+Alt+F)"
-          >
-            <Settings className="w-4 h-4" />
-          </button>
-
-          <button
-            onClick={downloadCode}
-            className="p-2 text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors"
-            title="Download"
-          >
-            <Download className="w-4 h-4" />
-          </button>
-
-          <button
-            onClick={() => setShowSettingsSnippet(true)}
-            className="p-2 text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors"
-            title={getSnippetTitle()}
-          >
-            <FileCode className="w-4 h-4" />
-          </button>
-
-          <button
-            onClick={restoreDefaultCode}
-            className="p-2 text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors"
-            title="Restore Default Code"
-          >
-            <RotateCcw className="w-4 h-4" />
-          </button>
-
           {onSave && (
             <button
               onClick={onSave}
@@ -1368,6 +1352,43 @@ class ${capitalizedProjectName}Spider(scrapy.Spider):
               <span className="text-sm">Run</span>
             </button>
           )}
+        </div>
+      </div>
+
+      {/* ツールバー */}
+      <div className="flex items-center justify-end p-2 bg-gray-750 border-b border-gray-700">
+        <div className="flex items-center space-x-1">
+          <button
+            onClick={formatCode}
+            className="p-2 text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors"
+            title="Format Code (Shift+Alt+F)"
+          >
+            <Settings className="w-4 h-4" />
+          </button>
+
+          <button
+            onClick={downloadCode}
+            className="p-2 text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors"
+            title="Download"
+          >
+            <Download className="w-4 h-4" />
+          </button>
+
+          <button
+            onClick={() => setShowSettingsSnippet(true)}
+            className="p-2 text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors"
+            title={getSnippetTitle()}
+          >
+            <FileCode className="w-4 h-4" />
+          </button>
+
+          <button
+            onClick={restoreDefaultCode}
+            className="p-2 text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors"
+            title="Restore Default Code"
+          >
+            <RotateCcw className="w-4 h-4" />
+          </button>
         </div>
       </div>
 

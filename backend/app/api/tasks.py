@@ -19,6 +19,7 @@ import requests
 from ..database import get_db, SessionLocal, Task as DBTask, Project as DBProject, Spider as DBSpider, TaskStatus, User, Result as DBResult, UserRole
 from ..models.schemas import Task, TaskCreate, TaskUpdate, TaskWithDetails
 from ..services.scrapy_service import ScrapyPlaywrightService
+from ..services.result_sync_service import result_sync_service
 from .auth import get_current_active_user
 from ..websocket.manager import manager
 
@@ -390,7 +391,7 @@ async def create_task(
                                 cmd = [
                                     "python3", "-m", "scrapy", "crawl", subprocess_spider.name,
                                     "-o", str(result_file),
-                                    "-s", "CLOSESPIDER_ITEMCOUNT=10",
+                                    "-s", "CLOSESPIDER_ITEMCOUNT=100",
                                     "-s", "LOG_LEVEL=INFO"
                                 ]
                             finally:
@@ -731,6 +732,67 @@ async def stop_task(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error stopping task: {str(e)}"
+        )
+
+
+@router.post(
+    "/sync-results",
+    summary="結果ファイル同期",
+    description="直接実行されたScrapyの結果ファイルをWebUIに同期します。",
+    response_description="同期結果"
+)
+async def sync_results(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    ## 結果ファイル同期
+
+    直接実行されたScrapyの結果ファイルをWebUIのタスク管理システムに同期します。
+
+    ### 機能
+    - scrapy_projectsディレクトリ内の結果ファイル(.json)を検索
+    - 結果ファイルからタスクデータを自動生成
+    - WebUIで正しい統計情報を表示
+
+    ### レスポンス
+    - **200**: 同期が正常に完了した場合
+    - **500**: サーバーエラー
+    """
+    try:
+        print("🔄 Starting result file synchronization...")
+
+        # 管理者権限チェック
+        is_admin = (current_user.role == UserRole.ADMIN or
+                    current_user.role == "ADMIN" or
+                    current_user.role == "admin")
+
+        if not is_admin:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Admin privileges required for result synchronization"
+            )
+
+        # 結果同期サービスを実行
+        sync_results = result_sync_service.scan_and_sync_results(db)
+
+        print(f"✅ Synchronization completed: {sync_results}")
+
+        return {
+            "message": "Result synchronization completed successfully",
+            "results": sync_results
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error in result synchronization: {str(e)}")
+        import traceback
+        traceback.print_exc()
+
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to synchronize results: {str(e)}"
         )
 
 @router.get(

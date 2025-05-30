@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from typing import List
 import uuid
 
-from ..database import get_db, Spider as DBSpider, Project as DBProject, User as DBUser, UserRole
+from ..database import get_db, Spider as DBSpider, Project as DBProject, User as DBUser, UserRole, ProjectFile
 from ..models.schemas import Spider, SpiderCreate, SpiderUpdate
 from ..services.scrapy_service import ScrapyPlaywrightService
 from ..services.integrity_service import integrity_service
@@ -16,6 +16,50 @@ router = APIRouter(
         500: {"description": "Internal server error"}
     }
 )
+
+
+def sync_spider_file_to_database(db, project_id: str, project_path: str, spider_name: str, spider_code: str, user_id: str):
+    """スパイダーファイルをデータベースに同期"""
+    from datetime import datetime
+
+    try:
+        # スパイダーファイルのパス
+        spider_file_path = f"{project_path}/spiders/{spider_name}.py"
+
+        # データベースに既存のファイルがあるかチェック
+        existing_file = db.query(ProjectFile).filter(
+            ProjectFile.project_id == project_id,
+            ProjectFile.path == spider_file_path
+        ).first()
+
+        if existing_file:
+            # 既存ファイルを更新
+            existing_file.content = spider_code
+            existing_file.updated_at = datetime.now()
+            print(f"✅ Updated spider file in database: {spider_file_path}")
+        else:
+            # 新しいファイルを作成
+            db_file = ProjectFile(
+                id=str(uuid.uuid4()),
+                name=f"{spider_name}.py",
+                path=spider_file_path,
+                content=spider_code,
+                file_type="python",
+                project_id=project_id,
+                user_id=user_id
+            )
+            db.add(db_file)
+            print(f"✅ Added spider file to database: {spider_file_path}")
+
+        # 変更をコミット
+        db.commit()
+        print(f"✅ Spider file synced to database: {spider_file_path}")
+        return True
+
+    except Exception as e:
+        db.rollback()
+        print(f"❌ Failed to sync spider file to database: {str(e)}")
+        return False
 
 @router.get(
     "/",
@@ -515,7 +559,17 @@ async def create_spider(
         if not spider_file_path.exists():
             raise Exception("File was not created successfully")
 
-        # 4. 全て成功した場合のみcommit
+        # 4. スパイダーファイルをデータベースに同期
+        try:
+            sync_spider_file_to_database(
+                db, spider.project_id, project.path, spider.name, updated_code, user_id
+            )
+            print(f"✅ Spider file synced to database: {spider.name}")
+        except Exception as sync_error:
+            print(f"⚠️ Failed to sync spider file to database: {sync_error}")
+            # ファイル同期失敗は警告のみ（メイン処理は継続）
+
+        # 5. 全て成功した場合のみcommit
         db.commit()
         db.refresh(db_spider)
 
@@ -574,6 +628,12 @@ async def update_spider(
         try:
             scrapy_service = ScrapyPlaywrightService()
             scrapy_service.save_spider_code(project.path, db_spider.name, db_spider.code)
+
+            # データベースのProjectFileテーブルも同期
+            sync_spider_file_to_database(
+                db, db_spider.project_id, project.path, db_spider.name, db_spider.code, db_spider.user_id
+            )
+            print(f"✅ Spider file updated and synced: {db_spider.name}")
         except Exception as e:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -608,6 +668,19 @@ async def delete_spider(
     except Exception as e:
         # ファイル削除に失敗してもデータベースからは削除する
         pass
+
+    # ProjectFileテーブルからもスパイダーファイルを削除
+    try:
+        spider_file_path_db = f"{project.path}/spiders/{db_spider.name}.py"
+        project_file = db.query(ProjectFile).filter(
+            ProjectFile.project_id == db_spider.project_id,
+            ProjectFile.path == spider_file_path_db
+        ).first()
+        if project_file:
+            db.delete(project_file)
+            print(f"✅ Removed spider file from database: {spider_file_path_db}")
+    except Exception as e:
+        print(f"⚠️ Failed to remove spider file from database: {str(e)}")
 
     db.delete(db_spider)
     db.commit()
@@ -667,6 +740,13 @@ async def save_spider_code(
     try:
         scrapy_service = ScrapyPlaywrightService()
         scrapy_service.save_spider_code(project.path, db_spider.name, code)
+
+        # データベースのProjectFileテーブルも同期
+        sync_spider_file_to_database(
+            db, db_spider.project_id, project.path, db_spider.name, code, db_spider.user_id
+        )
+        print(f"✅ Spider code saved and synced: {db_spider.name}")
+
         return {"message": "Code saved successfully"}
     except Exception as e:
         raise HTTPException(
@@ -949,7 +1029,16 @@ async def copy_spider(
         if not new_spider_file_path.exists():
             raise Exception("File was not created successfully")
 
-        # 4. 全て成功した場合のみcommit
+        # 4. スパイダーファイルをデータベースに同期
+        try:
+            sync_spider_file_to_database(
+                db, original_spider.project_id, project.path, new_name, updated_code, original_spider.user_id
+            )
+            print(f"✅ Copied spider file synced to database: {new_name}")
+        except Exception as sync_error:
+            print(f"⚠️ Failed to sync copied spider file to database: {sync_error}")
+
+        # 5. 全て成功した場合のみcommit
         db.commit()
         db.refresh(new_spider)
 

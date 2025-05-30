@@ -132,9 +132,9 @@ class ProjectFile(Base):
     project = relationship("Project", back_populates="project_files")
     user = relationship("User")
 
-    # プロジェクト内でのファイル名一意制約
+    # プロジェクト内でのファイルパス一意制約
     __table_args__ = (
-        UniqueConstraint('name', 'project_id', name='unique_file_name_per_project'),
+        UniqueConstraint('path', 'project_id', name='unique_file_path_per_project'),
     )
 
 class Task(Base):
