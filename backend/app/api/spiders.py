@@ -99,6 +99,29 @@ async def get_spiders(
         query = query.filter(DBSpider.project_id == project_id)
 
     spiders = query.all()
+
+    # 空のcodeフィールドを持つスパイダーにデフォルト値を設定
+    for spider in spiders:
+        if not spider.code or spider.code.strip() == "":
+            spider.code = '''import scrapy
+
+class DefaultSpider(scrapy.Spider):
+    name = "default"
+
+    def start_requests(self):
+        urls = [
+            "https://example.com",
+        ]
+        for url in urls:
+            yield scrapy.Request(url=url, callback=self.parse)
+
+    def parse(self, response):
+        yield {
+            "title": response.css("title::text").get(),
+            "url": response.url,
+        }
+'''
+
     return spiders
 
 @router.get("/{spider_id}", response_model=Spider)
@@ -124,6 +147,27 @@ async def get_spider(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access denied"
         )
+
+    # 空のcodeフィールドを持つスパイダーにデフォルト値を設定
+    if not spider.code or spider.code.strip() == "":
+        spider.code = '''import scrapy
+
+class DefaultSpider(scrapy.Spider):
+    name = "default"
+
+    def start_requests(self):
+        urls = [
+            "https://example.com",
+        ]
+        for url in urls:
+            yield scrapy.Request(url=url, callback=self.parse)
+
+    def parse(self, response):
+        yield {
+            "title": response.css("title::text").get(),
+            "url": response.url,
+        }
+'''
 
     return spider
 

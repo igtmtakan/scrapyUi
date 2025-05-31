@@ -107,10 +107,30 @@ class DefaultSettingsService:
             'FEED_EXPORT_ENCODING': 'utf-8',
             'FEEDS': {
                 'results.jsonl': {
-                    'format': self.default_settings["spider_defaults"]["feed_settings"]["format"],
-                    'encoding': self.default_settings["spider_defaults"]["feed_settings"]["encoding"],
-                    'store_empty': self.default_settings["spider_defaults"]["feed_settings"]["store_empty"],
-                    'item_export_kwargs': self.default_settings["spider_defaults"]["feed_settings"]["item_export_kwargs"]
+                    'format': 'jsonl',
+                    'encoding': 'utf8',
+                    'store_empty': False,
+                    'item_export_kwargs': {
+                        'ensure_ascii': False
+                    }
+                },
+                'results.json': {
+                    'format': 'json',
+                    'encoding': 'utf8',
+                    'store_empty': False,
+                    'item_export_kwargs': {
+                        'ensure_ascii': False
+                    }
+                },
+                'results.csv': {
+                    'format': 'csv',
+                    'encoding': 'utf8',
+                    'store_empty': False
+                },
+                'results.xml': {
+                    'format': 'xml',
+                    'encoding': 'utf8',
+                    'store_empty': False
                 }
             },
             'PLAYWRIGHT_BROWSER_TYPE': self.default_settings["spider_defaults"]["playwright_settings"]["browser_type"],
@@ -159,6 +179,24 @@ class DefaultSettingsService:
                     'item_export_kwargs': {
                         'ensure_ascii': False
                     }
+                },
+                'results.json': {
+                    'format': 'json',
+                    'encoding': 'utf8',
+                    'store_empty': False,
+                    'item_export_kwargs': {
+                        'ensure_ascii': False
+                    }
+                },
+                'results.csv': {
+                    'format': 'csv',
+                    'encoding': 'utf8',
+                    'store_empty': False
+                },
+                'results.xml': {
+                    'format': 'xml',
+                    'encoding': 'utf8',
+                    'store_empty': False
                 }
             }
         }

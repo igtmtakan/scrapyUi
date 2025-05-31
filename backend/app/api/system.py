@@ -4,6 +4,7 @@ import subprocess
 import psutil
 import redis
 import requests
+import os
 
 router = APIRouter(
     prefix="/system",
@@ -115,7 +116,12 @@ async def get_system_status():
 
         # Node.js Puppeteerサービス状態チェック
         try:
-            response = requests.get("http://localhost:3001/api/health", timeout=5)
+            # APIキーヘッダーを追加（環境変数から取得、デフォルト値あり）
+            api_key = os.getenv("NODEJS_SERVICE_API_KEY", "scrapyui-nodejs-service-key-2024")
+            headers = {
+                "x-api-key": api_key
+            }
+            response = requests.get("http://localhost:3001/api/health", headers=headers, timeout=5)
             if response.status_code == 200:
                 status_info["services"]["nodejs_puppeteer"] = {
                     "status": "running",

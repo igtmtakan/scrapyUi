@@ -59,7 +59,7 @@ class ProjectWithUser(ProjectBase):
 class SpiderBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     description: Optional[str] = None
-    code: str = Field(..., min_length=1)
+    code: str = Field(..., min_length=0)  # 空文字列を許可
     template: Optional[str] = None
     framework: Optional[str] = None
     start_urls: Optional[List[str]] = None
@@ -90,7 +90,7 @@ class SpiderCreate(SpiderBase):
 class SpiderUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=100)
     description: Optional[str] = None
-    code: Optional[str] = Field(None, min_length=1)
+    code: Optional[str] = Field(None, min_length=0)  # 空文字列を許可
     template: Optional[str] = None
     framework: Optional[str] = None
     start_urls: Optional[List[str]] = None

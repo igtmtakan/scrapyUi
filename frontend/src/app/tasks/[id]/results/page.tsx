@@ -66,7 +66,7 @@ export default function TaskResultsPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedResult, setSelectedResult] = useState<Result | null>(null);
   const [isDownloading, setIsDownloading] = useState<string | null>(null);
-  const [availableFormats, setAvailableFormats] = useState<ExportFormat[]>([]);
+  // availableFormats は不要（固定で全形式対応）
 
   useEffect(() => {
     loadData();
@@ -80,17 +80,7 @@ export default function TaskResultsPage() {
       const taskData = await apiClient.getTask(taskId);
       setTask(taskData);
 
-      // 利用可能なエクスポート形式を取得
-      try {
-        const formatsData = await apiClient.request(`/api/tasks/${taskId}/results/export-formats`);
-        setAvailableFormats(formatsData.available_formats || []);
-      } catch (formatsError) {
-        console.error('Failed to load export formats:', formatsError);
-        // フォールバック: デフォルトの形式を設定
-        setAvailableFormats([
-          { format: 'jsonl', name: 'JSONL', description: 'JSON Lines形式でエクスポート' }
-        ]);
-      }
+      // エクスポート形式は固定で設定（全形式対応）
 
       // 結果データを取得
       let resultsData = await apiClient.getResults({ task_id: taskId });
@@ -116,6 +106,20 @@ export default function TaskResultsPage() {
 
     } catch (error) {
       console.error('Failed to load data:', error);
+
+      // エラーの詳細を表示
+      if (error instanceof Error) {
+        if (error.message.includes('404') || error.message.includes('Not found')) {
+          console.error('Task not found:', taskId);
+          alert(`タスクが見つかりません: ${taskId}`);
+        } else if (error.message.includes('401') || error.message.includes('Not authenticated')) {
+          console.error('Authentication error');
+          // 認証エラーの場合は自動的にログインページにリダイレクトされる
+        } else {
+          console.error('Unexpected error:', error.message);
+          alert(`データの読み込みに失敗しました: ${error.message}`);
+        }
+      }
     } finally {
       setIsLoading(false);
     }
@@ -142,6 +146,32 @@ export default function TaskResultsPage() {
     } catch (error) {
       console.error('Download failed:', error);
       alert('ダウンロードに失敗しました。');
+    } finally {
+      setIsDownloading(null);
+    }
+  };
+
+  const handleFileDownload = async (format: 'jsonl' | 'json' | 'csv' | 'xml') => {
+    try {
+      setIsDownloading(format);
+
+      const blob = await apiClient.downloadTaskResultsFile(taskId, format);
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+
+      const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, '-');
+      const filename = `${task?.spider?.name || 'results'}_${timestamp}_file.${format}`;
+      link.download = filename;
+
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+
+    } catch (error) {
+      console.error('File download failed:', error);
+      alert('ファイルダウンロードに失敗しました。');
     } finally {
       setIsDownloading(null);
     }
@@ -198,35 +228,67 @@ export default function TaskResultsPage() {
           </div>
 
           {/* Download Buttons */}
-          <div className="flex items-center space-x-2">
-            {availableFormats.map((format) => {
-              const getButtonColor = (formatType: string) => {
-                switch (formatType) {
-                  case 'json': return 'bg-blue-600 hover:bg-blue-700';
-                  case 'jsonl': return 'bg-green-600 hover:bg-green-700';
-                  case 'csv': return 'bg-yellow-600 hover:bg-yellow-700';
-                  case 'excel': return 'bg-purple-600 hover:bg-purple-700';
-                  case 'xml': return 'bg-red-600 hover:bg-red-700';
-                  default: return 'bg-gray-600 hover:bg-gray-700';
-                }
-              };
+          <div className="space-y-4">
+            {/* DBエクスポート */}
+            <div>
+              <h4 className="text-sm font-medium text-gray-300 mb-2 flex items-center">
+                <Database className="w-4 h-4 mr-2" />
+                DBエクスポート（データベースから）
+              </h4>
+              <div className="flex flex-wrap gap-2">
+                {[
+                  { format: 'jsonl', name: 'JSONL', description: 'JSON Lines形式でエクスポート', color: 'bg-green-600 hover:bg-green-700' },
+                  { format: 'json', name: 'JSON', description: '標準JSON形式でエクスポート', color: 'bg-blue-600 hover:bg-blue-700' },
+                  { format: 'csv', name: 'CSV', description: 'CSV形式でエクスポート', color: 'bg-yellow-600 hover:bg-yellow-700' },
+                  { format: 'excel', name: 'Excel', description: 'Excel形式でエクスポート', color: 'bg-purple-600 hover:bg-purple-700' },
+                  { format: 'xml', name: 'XML', description: 'XML形式でエクスポート', color: 'bg-red-600 hover:bg-red-700' }
+                ].map((format) => {
+                  const isDisabled = !task?.project?.db_save_enabled && format.format !== 'jsonl';
 
-              return (
-                <button
-                  key={format.format}
-                  onClick={() => handleDownload(format.format as any)}
-                  disabled={isDownloading === format.format}
-                  className={`px-3 py-2 text-white text-sm rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors ${getButtonColor(format.format)}`}
-                  title={format.description}
-                >
-                  {isDownloading === format.format ? '...' : format.name}
-                </button>
-              );
-            })}
+                  return (
+                    <button
+                      key={`db-${format.format}`}
+                      onClick={() => handleDownload(format.format as any)}
+                      disabled={isDownloading === format.format || isDisabled}
+                      className={`px-3 py-2 text-white text-sm rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors ${format.color}`}
+                      title={isDisabled ? 'DB保存が無効のため利用できません' : format.description}
+                    >
+                      {isDownloading === format.format ? '...' : format.name}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* ファイルエクスポート */}
+            <div>
+              <h4 className="text-sm font-medium text-gray-300 mb-2 flex items-center">
+                <Download className="w-4 h-4 mr-2" />
+                ファイルエクスポート（Scrapyファイルから）
+              </h4>
+              <div className="flex flex-wrap gap-2">
+                {[
+                  { format: 'jsonl', name: 'JSONL', color: 'bg-green-600 hover:bg-green-700' },
+                  { format: 'json', name: 'JSON', color: 'bg-blue-600 hover:bg-blue-700' },
+                  { format: 'csv', name: 'CSV', color: 'bg-yellow-600 hover:bg-yellow-700' },
+                  { format: 'xml', name: 'XML', color: 'bg-purple-600 hover:bg-purple-700' }
+                ].map((format) => (
+                  <button
+                    key={`file-${format.format}`}
+                    onClick={() => handleFileDownload(format.format as any)}
+                    disabled={isDownloading === format.format}
+                    className={`px-3 py-2 text-white text-sm rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors ${format.color}`}
+                    title={`Scrapyが生成した${format.name}ファイルを直接ダウンロード`}
+                  >
+                    {isDownloading === format.format ? '...' : format.name}
+                  </button>
+                ))}
+              </div>
+            </div>
 
             {/* DB保存設定の表示 */}
             {task?.project && (
-              <div className="ml-4 px-3 py-2 bg-gray-700 rounded-lg text-sm">
+              <div className="px-3 py-2 bg-gray-700 rounded-lg text-sm inline-block">
                 <span className="text-gray-400">DB保存: </span>
                 <span className={task.project.db_save_enabled ? 'text-green-400' : 'text-yellow-400'}>
                   {task.project.db_save_enabled ? '有効' : '無効'}

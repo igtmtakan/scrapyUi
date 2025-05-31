@@ -45,6 +45,24 @@ class {spider_name.capitalize()}Spider(scrapy.Spider):
                 'item_export_kwargs': {{
                     'ensure_ascii': False
                 }}
+            }},
+            'results.json': {{
+                'format': 'json',
+                'encoding': 'utf8',
+                'store_empty': False,
+                'item_export_kwargs': {{
+                    'ensure_ascii': False
+                }}
+            }},
+            'results.csv': {{
+                'format': 'csv',
+                'encoding': 'utf8',
+                'store_empty': False
+            }},
+            'results.xml': {{
+                'format': 'xml',
+                'encoding': 'utf8',
+                'store_empty': False
             }}
         }},
         # ScrapyUI データベースパイプライン設定
@@ -166,6 +184,24 @@ class {spider_name.capitalize()}Spider(scrapy.Spider):
                 'item_export_kwargs': {{
                     'ensure_ascii': False
                 }}
+            }},
+            'results.json': {{
+                'format': 'json',
+                'encoding': 'utf8',
+                'store_empty': False,
+                'item_export_kwargs': {{
+                    'ensure_ascii': False
+                }}
+            }},
+            'results.csv': {{
+                'format': 'csv',
+                'encoding': 'utf8',
+                'store_empty': False
+            }},
+            'results.xml': {{
+                'format': 'xml',
+                'encoding': 'utf8',
+                'store_empty': False
             }}
         }},
         # ScrapyUI データベースパイプライン設定
@@ -322,6 +358,24 @@ class {spider_name.capitalize()}Spider(scrapy.Spider):
                 'item_export_kwargs': {{
                     'ensure_ascii': False
                 }}
+            }},
+            'results.json': {{
+                'format': 'json',
+                'encoding': 'utf8',
+                'store_empty': False,
+                'item_export_kwargs': {{
+                    'ensure_ascii': False
+                }}
+            }},
+            'results.csv': {{
+                'format': 'csv',
+                'encoding': 'utf8',
+                'store_empty': False
+            }},
+            'results.xml': {{
+                'format': 'xml',
+                'encoding': 'utf8',
+                'store_empty': False
             }}
         }},
         # ScrapyUI データベースパイプライン設定

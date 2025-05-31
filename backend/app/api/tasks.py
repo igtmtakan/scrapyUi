@@ -1508,21 +1508,23 @@ async def download_task_results(
 @router.get(
     "/{task_id}/results/download-file",
     summary="タスク結果ファイルダウンロード",
-    description="タスクの結果ファイル（JSONL）を直接ダウンロードします。"
+    description="タスクの結果ファイルを指定された形式で直接ダウンロードします。"
 )
 async def download_task_results_file(
     task_id: str,
+    format: str = Query("jsonl", description="ダウンロード形式 (jsonl, json, csv, xml)"),
     db: Session = Depends(get_db)
     # current_user: User = Depends(get_current_active_user)  # 一時的に無効化
 ):
     """
     ## タスク結果ファイルダウンロード
 
-    指定されたタスクの結果ファイル（JSONL）を直接ダウンロードします。
+    指定されたタスクの結果ファイルを指定された形式で直接ダウンロードします。
     Scrapyが生成した元のファイルをそのまま提供します。
 
     ### パラメータ
     - **task_id**: 結果をダウンロードするタスクのID
+    - **format**: ダウンロード形式 (jsonl, json, csv, xml)
 
     ### レスポンス
     - **200**: ファイルダウンロード成功
@@ -1548,31 +1550,45 @@ async def download_task_results_file(
                 detail="Project not found"
             )
 
-        # 結果ファイルパス（JSONLファイルを検索）
-        result_file_path = None
+        # サポートされている形式をチェック
+        supported_formats = ["jsonl", "json", "csv", "xml"]
+        if format.lower() not in supported_formats:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unsupported format: {format}. Supported formats: {', '.join(supported_formats)}"
+            )
 
-        # JSONLファイルを検索
-        jsonl_file_path = scrapy_service.base_projects_dir / project.path / f"results_{task_id}.jsonl"
-        if jsonl_file_path.exists():
-            result_file_path = jsonl_file_path
+        # 結果ファイルパス（指定された形式のファイルを検索）
+        result_file_path = None
+        file_extension = format.lower()
+
+        # 指定された形式のファイルを検索
+        target_file_path = scrapy_service.base_projects_dir / project.path / f"results_{task_id}.{file_extension}"
+        if target_file_path.exists():
+            result_file_path = target_file_path
         else:
             # 代替パスも試行
-            jsonl_file_path = scrapy_service.base_projects_dir / project.path / project.path / f"results_{task_id}.jsonl"
-            if jsonl_file_path.exists():
-                result_file_path = jsonl_file_path
+            target_file_path = scrapy_service.base_projects_dir / project.path / project.path / f"results_{task_id}.{file_extension}"
+            if target_file_path.exists():
+                result_file_path = target_file_path
             else:
                 # プロジェクトディレクトリ内を検索
                 import glob
-                pattern = str(scrapy_service.base_projects_dir / project.path / "**" / f"results_{task_id}.jsonl")
+                pattern = str(scrapy_service.base_projects_dir / project.path / "**" / f"results_{task_id}.{file_extension}")
                 matches = glob.glob(pattern, recursive=True)
                 if matches:
                     result_file_path = Path(matches[0])
                 else:
                     # 最後の手段：全体検索
-                    pattern = str(scrapy_service.base_projects_dir / "**" / f"results_{task_id}.jsonl")
+                    pattern = str(scrapy_service.base_projects_dir / "**" / f"results_{task_id}.{file_extension}")
                     matches = glob.glob(pattern, recursive=True)
                     if matches:
                         result_file_path = Path(matches[0])
+                    else:
+                        # 汎用ファイル名でも検索
+                        pattern = str(scrapy_service.base_projects_dir / project.path / f"results.{file_extension}")
+                        if Path(pattern).exists():
+                            result_file_path = Path(pattern)
 
         if not result_file_path:
             # タスクの状態も確認
@@ -1582,13 +1598,25 @@ async def download_task_results_file(
                 "task_status": task_status,
                 "items_count": task.items_count or 0,
                 "error_count": task.error_count or 0,
-                "project_path": project.path
+                "project_path": project.path,
+                "requested_format": format
             }
 
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Results file not found. Task info: {json.dumps(task_info, indent=2)}"
+                detail=f"Results file ({format}) not found. Task info: {json.dumps(task_info, indent=2)}"
             )
+
+        # 形式に応じたメディアタイプとファイル名を設定
+        media_type_map = {
+            "jsonl": "application/x-ndjson",
+            "json": "application/json",
+            "csv": "text/csv",
+            "xml": "application/xml"
+        }
+
+        media_type = media_type_map.get(format.lower(), "application/octet-stream")
+        filename = f"task_{task_id}_results.{format.lower()}"
 
         # ファイルを直接返す
         def file_generator():
@@ -1601,9 +1629,9 @@ async def download_task_results_file(
 
         return StreamingResponse(
             file_generator(),
-            media_type="application/x-ndjson",
+            media_type=media_type,
             headers={
-                "Content-Disposition": f"attachment; filename=task_{task_id}_results.jsonl",
+                "Content-Disposition": f"attachment; filename={filename}",
                 "Content-Length": str(result_file_path.stat().st_size)
             }
         )
