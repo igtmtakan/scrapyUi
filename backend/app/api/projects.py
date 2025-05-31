@@ -300,33 +300,7 @@ async def get_project(
         }
         formatted_spiders.append(spider_dict)
 
-    # 同期状態を判定
-    from ..database import ProjectFile
-
-    # commands関連ファイルの確認（より具体的な条件）
-    commands_count = db.query(ProjectFile).filter(
-        ProjectFile.project_id == project_id,
-        ProjectFile.name == "crawlwithwatchdog.py"
-    ).count()
-
-    settings_file = db.query(ProjectFile).filter(
-        ProjectFile.project_id == project_id,
-        ProjectFile.name == "settings.py"
-    ).first()
-
-    has_commands_module = False
-    if settings_file and settings_file.content:
-        try:
-            # content が bytes の場合は文字列に変換
-            content = settings_file.content
-            if isinstance(content, bytes):
-                content = content.decode('utf-8')
-            has_commands_module = 'COMMANDS_MODULE' in content
-        except Exception as e:
-            logger.error(f"Error checking COMMANDS_MODULE: {e}, content type: {type(settings_file.content)}")
-            has_commands_module = False
-
-    logger.info(f"🔍 Sync state check for project {project_id}: commands_count={commands_count}, has_commands_module={has_commands_module}")
+    # 同期状態チェックは削除されました（自動同期により不要）
 
     project_dict = {
         "id": project.id,
@@ -338,8 +312,7 @@ async def get_project(
         "db_save_enabled": project.db_save_enabled,
         "created_at": project.created_at,
         "updated_at": project.updated_at,
-        "spiders": formatted_spiders,
-        "is_fully_synced": commands_count > 0 and has_commands_module
+        "spiders": formatted_spiders
     }
 
     return project_dict
@@ -564,98 +537,8 @@ async def delete_project(project_id: str, db: Session = Depends(get_db)):
     return None
 
 
-@router.post("/{project_id}/sync-files", status_code=status.HTTP_200_OK)
-async def sync_project_files(
-    project_id: str,
-    db: Session = Depends(get_db),
-    current_user: DBUser = Depends(get_current_active_user)
-):
-    """プロジェクトファイルを手動でデータベースに同期"""
-
-    # プロジェクトの存在確認
-    project = db.query(DBProject).filter(DBProject.id == project_id).first()
-    if not project:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Project not found"
-        )
-
-    # 管理者以外は自分のプロジェクトのみアクセス可能
-    is_admin = (current_user.role == UserRole.ADMIN or
-                current_user.role == "admin" or
-                current_user.role == "ADMIN")
-    if not is_admin and project.user_id != current_user.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access denied"
-        )
-
-    try:
-        logger.info(f"🔄 Manual file sync requested for project: {project.name} (ID: {project_id})")
-
-        # 既存のプロジェクトファイルをすべて削除（完全再同期）
-        from ..database import ProjectFile
-        existing_files = db.query(ProjectFile).filter(ProjectFile.project_id == project_id).all()
-        for file in existing_files:
-            db.delete(file)
-        db.commit()
-        logger.info(f"🗑️ Deleted {len(existing_files)} existing files from database")
-
-        # ファイル同期を実行
-        sync_project_files_to_database(db, project_id, project.path, current_user.id)
-
-        # 同期後の確認
-        synced_files = db.query(ProjectFile).filter(ProjectFile.project_id == project_id).all()
-        synced_count = len(synced_files)
-
-        # commands関連ファイルの確認（より具体的な条件）
-        commands_count = db.query(ProjectFile).filter(
-            ProjectFile.project_id == project_id,
-            ProjectFile.name == "crawlwithwatchdog.py"
-        ).count()
-
-        # settings.pyの確認
-        settings_file = db.query(ProjectFile).filter(
-            ProjectFile.project_id == project_id,
-            ProjectFile.name == "settings.py"
-        ).first()
-
-        has_commands_module = False
-        if settings_file and settings_file.content:
-            try:
-                # content が bytes の場合は文字列に変換
-                content = settings_file.content
-                if isinstance(content, bytes):
-                    content = content.decode('utf-8')
-                has_commands_module = 'COMMANDS_MODULE' in content
-            except Exception as e:
-                logger.error(f"Error checking COMMANDS_MODULE in sync: {e}, content type: {type(settings_file.content)}")
-                has_commands_module = False
-
-        # ファイル一覧をログ出力
-        logger.info(f"📄 Synced files:")
-        for file in synced_files:
-            logger.info(f"   - {file.path} ({file.name}) - {len(file.content)} chars")
-
-        logger.info(f"✅ Manual file sync completed: {synced_count} files, {commands_count} commands files")
-
-        return {
-            "message": "ファイル同期が完了しました（完全再同期）",
-            "total_files": synced_count,
-            "commands_files": commands_count,
-            "has_commands_module": has_commands_module,
-            "project_name": project.name,
-            "sync_timestamp": datetime.now().isoformat(),
-            "is_fully_synced": commands_count > 0 and has_commands_module,
-            "files": [{"name": f.name, "path": f.path, "size": len(f.content)} for f in synced_files]
-        }
-
-    except Exception as e:
-        logger.error(f"❌ Manual file sync failed for project {project_id}: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"ファイル同期に失敗しました: {str(e)}"
-        )
+# 手動同期エンドポイントは削除されました
+# プロジェクト作成時に自動同期されるため、手動同期は不要です
 
 
 @router.post("/{project_id}/spiders/", response_model=dict, status_code=status.HTTP_201_CREATED)

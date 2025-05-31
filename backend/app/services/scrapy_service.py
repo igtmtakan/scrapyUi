@@ -123,6 +123,11 @@ class ScrapyPlaywrightService:
             # 作成されたプロジェクトディレクトリのパス
             project_dir = self.base_projects_dir / project_name
 
+            # logsディレクトリを作成（watchdog用）
+            logs_dir = project_dir / "logs"
+            logs_dir.mkdir(exist_ok=True)
+            self.logger.info(f"Created logs directory: {logs_dir}")
+
             # scrapy-playwright設定を追加
             self._setup_playwright_config(project_dir / project_name)
 

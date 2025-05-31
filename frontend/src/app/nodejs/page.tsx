@@ -140,6 +140,9 @@ export default function NodeJSPage() {
               <p className="text-gray-600 dark:text-gray-300">
                 Scrapy プロジェクト用のインタラクティブターミナル
               </p>
+              <p className="text-sm text-blue-600 dark:text-blue-400 mt-2">
+                🚀 scrapy crawlwithwatchdog コマンドでリアルタイム監視付きスクレイピング
+              </p>
             </div>
             <TerminalComponent className="max-w-full" />
           </div>
@@ -232,6 +235,8 @@ export default function NodeJSPage() {
                 <li>• Dynamic Content Loading</li>
                 <li>• Custom User Agents</li>
                 <li>• Viewport Configuration</li>
+                <li>• Interactive Terminal</li>
+                <li>• Real-time Monitoring</li>
               </ul>
             </div>
             <div>
@@ -258,7 +263,7 @@ export default function NodeJSPage() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-blue-700 dark:text-blue-300">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm text-blue-700 dark:text-blue-300">
             <div>
               <h5 className="font-medium mb-2">Optimization</h5>
               <ul className="space-y-1">
@@ -273,6 +278,14 @@ export default function NodeJSPage() {
                 <li>• 具体的なCSSセレクターを使用</li>
                 <li>• レート制限を考慮した実行</li>
                 <li>• エラーハンドリングの実装</li>
+              </ul>
+            </div>
+            <div>
+              <h5 className="font-medium mb-2">Terminal Usage</h5>
+              <ul className="space-y-1">
+                <li>• crawlwithwatchdogでリアルタイム監視</li>
+                <li>• 適切なタスクIDの指定</li>
+                <li>• JSONLファイル出力の活用</li>
               </ul>
             </div>
           </div>

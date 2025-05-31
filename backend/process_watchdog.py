@@ -19,12 +19,16 @@ from typing import Dict, List, Optional
 import threading
 import queue
 
+# ログディレクトリを作成
+log_dir = Path('logs')
+log_dir.mkdir(exist_ok=True)
+
 # ログ設定
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('logs/watchdog.log'),
+        logging.FileHandler(log_dir / 'watchdog.log'),
         logging.StreamHandler()
     ]
 )

@@ -31,6 +31,9 @@ const Terminal: React.FC<TerminalProps> = ({ className = '' }) => {
   const wsRef = useRef<WebSocket | null>(null);
   const heartbeatRef = useRef<NodeJS.Timeout | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const isConnectingRef = useRef<boolean>(false);
+  const connectionAttemptsRef = useRef<number>(0);
+  const maxConnectionAttempts = 5;
 
   // 許可されたコマンド
   const allowedCommands = ['scrapy', 'crontab', 'pwd', 'less', 'cd', 'ls', 'clear'];
@@ -68,17 +71,46 @@ const Terminal: React.FC<TerminalProps> = ({ className = '' }) => {
     }
   }, []);
 
-  // WebSocket接続
-  const connectWebSocket = useCallback(() => {
+  // WebSocket接続（遅延付き）
+  const connectWebSocket = useCallback(async (delay: number = 0) => {
+    // 既に接続中の場合は処理をスキップ
+    if (isConnectingRef.current) {
+      console.log('WebSocket connection already in progress, skipping...');
+      return;
+    }
+
+    // 最大試行回数をチェック
+    if (connectionAttemptsRef.current >= maxConnectionAttempts) {
+      console.log('Maximum connection attempts reached, stopping...');
+      addLine('error', `❌ Maximum connection attempts (${maxConnectionAttempts}) reached`);
+      addLine('error', '💡 Please check the backend server and refresh the page');
+      return;
+    }
+
     // 既存の接続があれば閉じる
     if (wsRef.current && wsRef.current.readyState !== WebSocket.CLOSED) {
+      console.log('Closing existing WebSocket connection...');
       wsRef.current.close();
+      wsRef.current = null;
+    }
+
+    // 遅延がある場合は待機
+    if (delay > 0) {
+      console.log(`Waiting ${delay}ms before connection attempt...`);
+      await new Promise(resolve => setTimeout(resolve, delay));
     }
 
     try {
       const wsUrl = 'ws://localhost:8000/ws/terminal';
-      console.log('Attempting to connect to terminal WebSocket:', wsUrl);
+      connectionAttemptsRef.current += 1;
+
+      console.log(`Attempting to connect to terminal WebSocket (attempt ${connectionAttemptsRef.current}/${maxConnectionAttempts}):`, wsUrl);
       console.log('Browser WebSocket support:', typeof WebSocket !== 'undefined');
+
+      // 接続中フラグを設定
+      isConnectingRef.current = true;
+      setIsConnected(false);
+      addLine('output', `🔄 Connecting to terminal server... (attempt ${connectionAttemptsRef.current}/${maxConnectionAttempts})`);
 
       const ws = new WebSocket(wsUrl);
       console.log('WebSocket object created:', {
@@ -88,14 +120,34 @@ const Terminal: React.FC<TerminalProps> = ({ className = '' }) => {
       });
 
       ws.onopen = (event) => {
+        // 接続中フラグをクリアし、試行回数をリセット
+        isConnectingRef.current = false;
+        connectionAttemptsRef.current = 0;
         setIsConnected(true);
+
         console.log('Terminal WebSocket connected successfully:', {
           readyState: ws.readyState,
           protocol: ws.protocol,
           extensions: ws.extensions,
           event: event
         });
-        addLine('output', 'Connected to terminal server');
+
+        // 接続成功メッセージ
+        addLine('output', '✅ Connected to terminal server');
+        addLine('output', `🔗 WebSocket URL: ${wsUrl}`);
+        addLine('output', `📡 Connection state: OPEN (${ws.readyState})`);
+        addLine('output', '');
+        addLine('output', '🚀 ScrapyUI Terminal Ready!');
+        addLine('output', '📋 Available Scrapy commands:');
+        addLine('output', '   scrapy list                    - List available spiders');
+        addLine('output', '   scrapy crawl <spider>          - Run spider (standard)');
+        addLine('output', '   scrapy crawlwithwatchdog <spider> -o results.jsonl --task-id=<id>');
+        addLine('output', '                                  - Run spider with real-time monitoring');
+        addLine('output', '   scrapy shell                   - Interactive shell');
+        addLine('output', '');
+        addLine('output', '💡 Other commands: pwd, ls, cd, clear, test, debug, reconnect');
+        addLine('output', '');
+        addLine('output', '═══════════════════════════════════════════════════════════════');
 
         // ハートビートを開始
         startHeartbeat(ws);
@@ -145,6 +197,8 @@ const Terminal: React.FC<TerminalProps> = ({ className = '' }) => {
       };
 
       ws.onclose = (event) => {
+        // 接続中フラグをクリア
+        isConnectingRef.current = false;
         setIsConnected(false);
         stopHeartbeat(); // ハートビートを停止
 
@@ -165,9 +219,11 @@ const Terminal: React.FC<TerminalProps> = ({ className = '' }) => {
           addLine('error', `Close code explanation: ${closeCodeExplanation}`);
         }
 
-        // 正常な切断でない場合のみ再接続
-        if (!event.wasClean && event.code !== 1000) {
-          addLine('output', 'Attempting to reconnect in 3 seconds...');
+        // 正常な切断でない場合のみ再接続（接続中でない場合のみ）
+        if (!event.wasClean && event.code !== 1000 && !isConnectingRef.current && connectionAttemptsRef.current < maxConnectionAttempts) {
+          // 指数バックオフで再接続間隔を計算（1秒、2秒、4秒、8秒、16秒）
+          const backoffDelay = Math.min(1000 * Math.pow(2, connectionAttemptsRef.current), 16000);
+          addLine('output', `Attempting to reconnect in ${backoffDelay / 1000} seconds...`);
 
           // 既存の再接続タイマーをクリア
           if (reconnectTimeoutRef.current) {
@@ -176,37 +232,82 @@ const Terminal: React.FC<TerminalProps> = ({ className = '' }) => {
 
           reconnectTimeoutRef.current = setTimeout(() => {
             console.log('Attempting to reconnect terminal WebSocket...');
-            connectWebSocket();
-          }, 3000);
+            connectWebSocket(0); // 遅延なしで再接続
+          }, backoffDelay);
         }
       };
 
       ws.onerror = (error) => {
-        console.error('Terminal WebSocket error details:', {
-          type: error.type,
-          target: {
-            readyState: error.target?.readyState,
-            url: error.target?.url,
-            protocol: error.target?.protocol,
-            extensions: error.target?.extensions
-          },
+        // 接続中フラグをクリア
+        isConnectingRef.current = false;
+
+        // エラーログを詳細に記録（Next.jsの警告を避けるため）
+        const errorDetails = {
+          errorObject: error,
+          errorType: typeof error,
+          errorConstructor: error?.constructor?.name,
+          errorMessage: error?.message,
+          errorCode: error?.code,
+          errorReason: error?.reason,
           timestamp: new Date().toISOString(),
-          error: error,
-          errorString: error.toString(),
-          errorMessage: error.message || 'No message',
-          errorCode: error.code || 'No code'
+          readyState: ws?.readyState,
+          url: ws?.url
+        };
+
+        // コンソールに詳細情報を出力（開発用）
+        console.log('=== Terminal WebSocket Error Debug Info ===');
+        console.log('Error object:', error);
+        console.log('Error details:', errorDetails);
+        console.log('WebSocket state:', {
+          readyState: ws.readyState,
+          url: ws.url,
+          protocol: ws.protocol
         });
+        console.log('==========================================');
+
         setIsConnected(false);
 
         // エラー詳細をターミナルに表示
-        addLine('error', `WebSocket Error: ${error.type || 'Connection failed'}`);
-        addLine('error', `ReadyState: ${error.target?.readyState} (0=CONNECTING, 1=OPEN, 2=CLOSING, 3=CLOSED)`);
-        addLine('error', `Error details: ${error.message || error.toString()}`);
+        addLine('error', `❌ WebSocket Connection Error`);
+        addLine('error', `   ReadyState: ${ws.readyState} (0=CONNECTING, 1=OPEN, 2=CLOSING, 3=CLOSED)`);
+        addLine('error', `   URL: ${ws.url}`);
+        addLine('error', `   Time: ${errorDetails.timestamp}`);
+
+        // 接続状態の診断
+        if (ws.readyState === 3) {
+          addLine('error', '💡 Connection is closed. Check if the backend server is running.');
+          addLine('error', '💡 Try: curl http://localhost:8000/health');
+        } else if (ws.readyState === 0) {
+          addLine('error', '💡 Connection is still connecting. Please wait...');
+        } else if (ws.readyState === 2) {
+          addLine('error', '💡 Connection is closing. Will attempt to reconnect...');
+        }
+
+        // 再接続の提案（接続中でない場合のみ）
+        if (!isConnectingRef.current) {
+          addLine('error', '🔄 Automatic reconnection will be attempted in 3 seconds...');
+        }
       };
 
       wsRef.current = ws;
     } catch (error) {
-      console.error('Failed to create terminal WebSocket:', error);
+      // 接続中フラグをクリア
+      isConnectingRef.current = false;
+
+      // WebSocket作成時のエラーを詳細に記録
+      console.log('=== WebSocket Creation Error ===');
+      console.log('Error:', error);
+      console.log('Error type:', typeof error);
+      console.log('Error constructor:', error?.constructor?.name);
+      console.log('Error message:', error?.message);
+      console.log('================================');
+
+      setIsConnected(false);
+      addLine('error', `❌ Failed to create WebSocket connection`);
+      addLine('error', `   Error: ${error instanceof Error ? error.message : String(error)}`);
+      addLine('error', `   Error Type: ${typeof error}`);
+      addLine('error', `💡 Please check if the backend server is running on port 8000`);
+      addLine('error', `💡 Try: curl http://localhost:8000/health`);
     }
   }, []);
 
@@ -268,6 +369,47 @@ const Terminal: React.FC<TerminalProps> = ({ className = '' }) => {
       addLine('output', `Connection state: ${wsRef.current?.readyState} (1=OPEN)`);
       addLine('output', `Current directory: ${currentDir}`);
       addLine('output', `WebSocket URL: ws://localhost:8000/ws/terminal`);
+      addLine('output', `Browser: ${navigator.userAgent}`);
+      addLine('output', `WebSocket support: ${typeof WebSocket !== 'undefined'}`);
+      setCurrentCommand('');
+      return;
+    }
+
+    // debugコマンドの処理（詳細デバッグ用）
+    if (command.trim() === 'debug') {
+      addLine('output', '=== Debug Information ===');
+      addLine('output', `WebSocket state: ${wsRef.current?.readyState}`);
+      addLine('output', `WebSocket URL: ${wsRef.current?.url}`);
+      addLine('output', `WebSocket protocol: ${wsRef.current?.protocol}`);
+      addLine('output', `Connection status: ${isConnected ? 'Connected' : 'Disconnected'}`);
+      addLine('output', `Connection attempts: ${connectionAttemptsRef.current}/${maxConnectionAttempts}`);
+      addLine('output', `Is connecting: ${isConnectingRef.current}`);
+      addLine('output', `Current directory: ${currentDir}`);
+      addLine('output', `Command history length: ${commandHistory.length}`);
+      addLine('output', `Browser WebSocket support: ${typeof WebSocket !== 'undefined'}`);
+      addLine('output', `Location: ${window.location.href}`);
+      addLine('output', '========================');
+      setCurrentCommand('');
+      return;
+    }
+
+    // reconnectコマンドの処理（手動再接続）
+    if (command.trim() === 'reconnect') {
+      addLine('output', '🔄 Manual reconnection requested...');
+
+      // 試行回数をリセット
+      connectionAttemptsRef.current = 0;
+
+      // 既存の接続を閉じる
+      if (wsRef.current && wsRef.current.readyState !== WebSocket.CLOSED) {
+        wsRef.current.close();
+      }
+
+      // 少し待ってから再接続
+      setTimeout(() => {
+        connectWebSocket(0);
+      }, 1000);
+
       setCurrentCommand('');
       return;
     }
@@ -351,11 +493,24 @@ const Terminal: React.FC<TerminalProps> = ({ className = '' }) => {
     }
   }, [lines]);
 
-  // WebSocket接続
+  // WebSocket接続（初期遅延付き）
   useEffect(() => {
-    connectWebSocket();
+    // 初期接続に少し遅延を追加（ページ読み込み完了を待つ）
+    const initialDelay = 500;
+    const timeoutId = setTimeout(() => {
+      connectWebSocket(0);
+    }, initialDelay);
 
     return () => {
+      // 初期接続タイマーをクリア
+      clearTimeout(timeoutId);
+
+      // 接続中フラグをクリア
+      isConnectingRef.current = false;
+
+      // 試行回数をリセット
+      connectionAttemptsRef.current = 0;
+
       // ハートビートを停止
       stopHeartbeat();
 
@@ -420,6 +575,9 @@ const Terminal: React.FC<TerminalProps> = ({ className = '' }) => {
               </h4>
               <p className="text-blue-700 dark:text-blue-300">
                 Type "clear" to clear screen, use ↑↓ for command history
+              </p>
+              <p className="text-blue-700 dark:text-blue-300 text-xs mt-1">
+                Example: scrapy crawlwithwatchdog spider_name -o results.jsonl
               </p>
             </div>
           </div>

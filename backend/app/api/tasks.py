@@ -1505,6 +1505,118 @@ async def download_task_results(
             detail=f"Error generating export file: {str(e)}"
         )
 
+@router.get(
+    "/{task_id}/results/download-file",
+    summary="タスク結果ファイルダウンロード",
+    description="タスクの結果ファイル（JSONL）を直接ダウンロードします。"
+)
+async def download_task_results_file(
+    task_id: str,
+    db: Session = Depends(get_db)
+    # current_user: User = Depends(get_current_active_user)  # 一時的に無効化
+):
+    """
+    ## タスク結果ファイルダウンロード
+
+    指定されたタスクの結果ファイル（JSONL）を直接ダウンロードします。
+    Scrapyが生成した元のファイルをそのまま提供します。
+
+    ### パラメータ
+    - **task_id**: 結果をダウンロードするタスクのID
+
+    ### レスポンス
+    - **200**: ファイルダウンロード成功
+    - **404**: タスクまたは結果ファイルが見つからない場合
+    - **500**: サーバーエラー
+    """
+    # タスクの存在確認
+    task = db.query(DBTask).filter(DBTask.id == task_id).first()
+    if not task:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found"
+        )
+
+    try:
+        # プロジェクト情報を取得
+        scrapy_service = ScrapyPlaywrightService()
+        project = db.query(DBProject).filter(DBProject.id == task.project_id).first()
+
+        if not project:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Project not found"
+            )
+
+        # 結果ファイルパス（JSONLファイルを検索）
+        result_file_path = None
+
+        # JSONLファイルを検索
+        jsonl_file_path = scrapy_service.base_projects_dir / project.path / f"results_{task_id}.jsonl"
+        if jsonl_file_path.exists():
+            result_file_path = jsonl_file_path
+        else:
+            # 代替パスも試行
+            jsonl_file_path = scrapy_service.base_projects_dir / project.path / project.path / f"results_{task_id}.jsonl"
+            if jsonl_file_path.exists():
+                result_file_path = jsonl_file_path
+            else:
+                # プロジェクトディレクトリ内を検索
+                import glob
+                pattern = str(scrapy_service.base_projects_dir / project.path / "**" / f"results_{task_id}.jsonl")
+                matches = glob.glob(pattern, recursive=True)
+                if matches:
+                    result_file_path = Path(matches[0])
+                else:
+                    # 最後の手段：全体検索
+                    pattern = str(scrapy_service.base_projects_dir / "**" / f"results_{task_id}.jsonl")
+                    matches = glob.glob(pattern, recursive=True)
+                    if matches:
+                        result_file_path = Path(matches[0])
+
+        if not result_file_path:
+            # タスクの状態も確認
+            task_status = task.status.value if hasattr(task.status, 'value') else str(task.status)
+            task_info = {
+                "task_id": task_id,
+                "task_status": task_status,
+                "items_count": task.items_count or 0,
+                "error_count": task.error_count or 0,
+                "project_path": project.path
+            }
+
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Results file not found. Task info: {json.dumps(task_info, indent=2)}"
+            )
+
+        # ファイルを直接返す
+        def file_generator():
+            with open(result_file_path, 'rb') as f:
+                while True:
+                    chunk = f.read(8192)
+                    if not chunk:
+                        break
+                    yield chunk
+
+        return StreamingResponse(
+            file_generator(),
+            media_type="application/x-ndjson",
+            headers={
+                "Content-Disposition": f"attachment; filename=task_{task_id}_results.jsonl",
+                "Content-Length": str(result_file_path.stat().st_size)
+            }
+        )
+
+    except HTTPException as he:
+        # HTTPExceptionはそのまま再発生
+        raise he
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error downloading result file: {str(e)}"
+        )
+
 @router.post(
     "/{task_id}/results/load-from-file",
     summary="結果ファイルからデータベースに読み込み",
