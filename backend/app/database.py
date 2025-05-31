@@ -73,6 +73,7 @@ class Project(Base):
     scrapy_version = Column(String, default="2.11.0")
     settings = Column(JSON)
     is_active = Column(Boolean, default=True)  # is_activeフィールドを追加
+    db_save_enabled = Column(Boolean, default=True, nullable=False)  # 結果をDBに保存するかどうか
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
@@ -157,11 +158,13 @@ class Task(Base):
     project_id = Column(String, ForeignKey("projects.id"), nullable=False)
     spider_id = Column(String, ForeignKey("spiders.id"), nullable=False)
     user_id = Column(String, ForeignKey("users.id"), nullable=False)
+    schedule_id = Column(String, ForeignKey("schedules.id"), nullable=True)  # スケジュール実行の場合のみ
 
     # Relationships
     project = relationship("Project", back_populates="tasks")
     spider = relationship("Spider", back_populates="tasks")
     user = relationship("User")
+    schedule = relationship("Schedule")
     results = relationship("Result", back_populates="task", cascade="all, delete-orphan")
     logs = relationship("Log", back_populates="task", cascade="all, delete-orphan")
 
@@ -172,6 +175,8 @@ class Result(Base):
     data = Column(JSON, nullable=False)
     url = Column(String)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    crawl_start_datetime = Column(DateTime(timezone=True), nullable=True)  # クロールスタート日時
+    item_acquired_datetime = Column(DateTime(timezone=True), nullable=True)  # アイテム取得日時
 
     # Foreign Keys
     task_id = Column(String, ForeignKey("tasks.id"), nullable=False)

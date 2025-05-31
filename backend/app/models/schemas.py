@@ -35,6 +35,7 @@ class ProjectUpdate(BaseModel):
 class Project(ProjectBase):
     id: str
     path: str
+    db_save_enabled: bool = True  # レスポンス用に追加
     created_at: datetime
     updated_at: Optional[datetime] = None
 
@@ -44,6 +45,7 @@ class Project(ProjectBase):
 class ProjectWithUser(ProjectBase):
     id: str
     path: str
+    db_save_enabled: bool = True  # レスポンス用に追加
     created_at: datetime
     updated_at: Optional[datetime] = None
     user_id: str
@@ -146,6 +148,8 @@ class Result(ResultBase):
     id: str
     task_id: str
     created_at: datetime
+    crawl_start_datetime: Optional[datetime] = None
+    item_acquired_datetime: Optional[datetime] = None
 
     class Config:
         from_attributes = True

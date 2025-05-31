@@ -72,10 +72,12 @@ async def get_schedules(
     # レスポンス形式を調整
     schedules = []
     for schedule, project_name, spider_name in results:
-        # 最新のタスクを取得
+        # スケジュール実行による最新のタスクを取得
+        # schedule_idが設定されているタスクのみを対象とする
         latest_task = db.query(DBTask).filter(
             DBTask.project_id == schedule.project_id,
-            DBTask.spider_id == schedule.spider_id
+            DBTask.spider_id == schedule.spider_id,
+            DBTask.schedule_id == schedule.id  # スケジュール実行のタスクのみ
         ).order_by(DBTask.created_at.desc()).first()
 
         # Cron式から間隔（分）を推定

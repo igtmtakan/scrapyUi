@@ -5,6 +5,7 @@ import asyncio
 import json
 import psutil
 import os
+import tempfile
 
 from ..celery_app import celery_app
 from ..database import SessionLocal, Task as DBTask, Project as DBProject, Spider as DBSpider, TaskStatus, Result as DBResult, Log as DBLog
@@ -63,14 +64,29 @@ def run_spider_task(self, project_id: str, spider_id: str, settings: dict = None
             print(f"   Spider ID: {spider_id} -> Found: {spider is not None}")
             raise Exception("Project or Spider not found")
 
-        # 既存のタスクレコードを検索（celery_task_idで関連付けられたもの）
-        db_task = db.query(DBTask).filter(DBTask.celery_task_id == celery_task_id).first()
+        # 既存のタスクレコードを検索（task_idまたはcelery_task_idで関連付けられたもの）
+        db_task = None
+
+        # まず、task_idで検索（スケジュール実行の場合）
+        if task_id:
+            db_task = db.query(DBTask).filter(DBTask.id == task_id).first()
+            if db_task:
+                print(f"✅ Found existing task by task_id: {task_id}")
+                # Celery task IDを更新
+                db_task.celery_task_id = celery_task_id
+
+        # task_idで見つからない場合、celery_task_idで検索
+        if not db_task:
+            db_task = db.query(DBTask).filter(DBTask.celery_task_id == celery_task_id).first()
+            if db_task:
+                print(f"✅ Found existing task by celery_task_id: {celery_task_id}")
 
         if not db_task:
             # 新しいタスクレコードを作成（通常はAPIで作成済みのはず）
             print(f"⚠️ No existing task found for Celery task {celery_task_id}, creating new one")
+            new_task_id = task_id or str(uuid.uuid4())
             db_task = DBTask(
-                id=str(uuid.uuid4()),
+                id=new_task_id,
                 project_id=project_id,
                 spider_id=spider_id,
                 status=TaskStatus.RUNNING,
@@ -83,9 +99,9 @@ def run_spider_task(self, project_id: str, spider_id: str, settings: dict = None
             db.add(db_task)
         else:
             # 既存のタスクを実行中状態に更新
-            print(f"✅ Found existing task {db_task.id} for Celery task {celery_task_id}")
             db_task.status = TaskStatus.RUNNING
             db_task.started_at = datetime.now()
+            db_task.celery_task_id = celery_task_id  # Celery task IDを確実に設定
 
         db.commit()
         task_id = db_task.id  # 実際のタスクIDを使用
@@ -441,18 +457,73 @@ def scheduled_spider_run(schedule_id: str):
         print(f"   Project ID: {schedule.project_id}")
         print(f"   Spider ID: {schedule.spider_id}")
 
-        # スパイダータスクを実行
-        task = run_spider_task.delay(
-            schedule.project_id,
-            schedule.spider_id,
-            schedule.settings or {}
+        # タスクレコードを作成（schedule_idを設定）
+        task_id = str(uuid.uuid4())
+        db_task = DBTask(
+            id=task_id,
+            project_id=schedule.project_id,
+            spider_id=schedule.spider_id,
+            schedule_id=schedule_id,  # スケジュールIDを設定
+            status=TaskStatus.PENDING,
+            log_level="INFO",
+            settings=schedule.settings or {},
+            user_id="system"  # スケジュール実行はシステムユーザー
         )
+        db.add(db_task)
+        db.commit()
 
-        print(f"✅ Scheduled spider task started: {task.id}")
-        return task.id
+        print(f"✅ Task record created: {task_id} (schedule: {schedule_id})")
+
+        # Celery task IDを設定
+        db_task.celery_task_id = scheduled_spider_run.request.id
+        db.commit()
+
+        print(f"✅ Task record updated with Celery ID: {scheduled_spider_run.request.id}")
+
+        # 直接スパイダーを実行（run_spider_taskを呼び出さない）
+        try:
+            # スパイダー実行の準備
+            from ..services.scrapy_service import ScrapyPlaywrightService
+
+            scrapy_service = ScrapyPlaywrightService()
+
+            # タスクを実行中状態に更新
+            db_task.status = TaskStatus.RUNNING
+            db_task.started_at = datetime.now()
+            db.commit()
+
+            print(f"🚀 Starting spider execution for task: {task_id}")
+
+            # プロジェクト情報を取得
+            project = db.query(DBProject).filter(DBProject.id == schedule.project_id).first()
+            spider = db.query(DBSpider).filter(DBSpider.id == schedule.spider_id).first()
+
+            if not project or not spider:
+                raise Exception(f"Project or Spider not found: {schedule.project_id}, {schedule.spider_id}")
+
+            # スパイダーを実行（正しい引数順序）
+            result = scrapy_service.run_spider(
+                project.path,  # project_path
+                spider.name,   # spider_name
+                task_id,       # task_id
+                schedule.settings or {}  # settings
+            )
+
+            print(f"✅ Spider execution completed: {result}")
+            return {"task_id": task_id, "result": result}
+
+        except Exception as e:
+            print(f"❌ Error in spider execution: {str(e)}")
+            # タスクを失敗状態に更新
+            db_task.status = TaskStatus.FAILED
+            db_task.finished_at = datetime.now()
+            db_task.error_message = str(e)
+            db.commit()
+            raise
 
     except Exception as e:
         print(f"❌ Error in scheduled_spider_run: {str(e)}")
+        db.rollback()
         raise e
     finally:
         db.close()
@@ -546,5 +617,183 @@ def export_results_task(export_request: dict):
             "status": "error",
             "error": str(e)
         }
+    finally:
+        db.close()
+
+@celery_app.task(bind=True, soft_time_limit=1800, time_limit=2100)
+def run_spider_with_watchdog_task(self, project_id: str, spider_id: str, settings: dict = None):
+    """
+    watchdog監視付きでスパイダーを実行するCeleryタスク
+    """
+    db = SessionLocal()
+    task_id = str(uuid.uuid4())
+
+    try:
+        print(f"🔍 Starting spider task with watchdog monitoring: {spider_id} in project {project_id}")
+
+        # プロジェクトとスパイダーの存在確認
+        project = db.query(DBProject).filter(DBProject.id == project_id).first()
+        spider = db.query(DBSpider).filter(DBSpider.id == spider_id).first()
+
+        if not project:
+            raise Exception(f"Project not found: {project_id}")
+        if not spider:
+            raise Exception(f"Spider not found: {spider_id}")
+
+        # タスクレコードを作成
+        db_task = DBTask(
+            id=task_id,
+            project_id=project_id,
+            spider_id=spider_id,
+            status=TaskStatus.PENDING,
+            log_level="INFO",
+            settings=settings or {},
+            user_id=spider.user_id,
+            celery_task_id=self.request.id
+        )
+        db.add(db_task)
+        db.commit()
+
+        print(f"✅ Task record created: {task_id}")
+
+        # プログレスコールバック関数
+        def progress_callback(items_count: int, requests_count: int, error_count: int):
+            try:
+                # データベースのタスク情報を更新
+                db_task.items_count = items_count
+                db_task.requests_count = requests_count
+                db_task.error_count = error_count
+                db_task.updated_at = datetime.now()
+                db.commit()
+
+                # WebSocket通知
+                _safe_websocket_notify(task_id, {
+                    "status": "RUNNING",
+                    "items_count": items_count,
+                    "requests_count": requests_count,
+                    "error_count": error_count,
+                    "updated_at": datetime.now().isoformat()
+                })
+
+                print(f"📊 Progress update: Task {task_id} - Items: {items_count}, Requests: {requests_count}, Errors: {error_count}")
+
+            except Exception as e:
+                print(f"⚠️ Progress callback error: {e}")
+
+        # WebSocketコールバック関数
+        def websocket_callback(data: dict):
+            try:
+                _safe_websocket_notify(task_id, data)
+            except Exception as e:
+                print(f"⚠️ WebSocket callback error: {e}")
+
+        # ScrapyServiceを使用してwatchdog監視付きでスパイダーを実行
+        scrapy_service = ScrapyPlaywrightService()
+
+        # タスクを実行中状態に更新
+        db_task.status = TaskStatus.RUNNING
+        db_task.started_at = datetime.now()
+        db.commit()
+
+        print(f"🚀 Starting watchdog spider execution for task: {task_id}")
+
+        # 非同期実行をCeleryタスク内で処理
+        import asyncio
+
+        async def run_async_with_watchdog():
+            return await scrapy_service.run_spider_with_watchdog(
+                project_path=project.path,
+                spider_name=spider.name,
+                task_id=task_id,
+                settings=settings,
+                websocket_callback=websocket_callback
+            )
+
+        # 新しいイベントループで実行
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            result = loop.run_until_complete(run_async_with_watchdog())
+            loop.close()
+        except Exception as e:
+            print(f"❌ Error in async spider execution with watchdog: {str(e)}")
+            raise
+
+        # 実行結果を処理
+        if result.get('success', False):
+            db_task.status = TaskStatus.FINISHED
+            db_task.finished_at = datetime.now()
+            db_task.items_count = result.get('items_processed', 0)
+
+            # 成功通知
+            _safe_websocket_notify(task_id, {
+                "status": "FINISHED",
+                "finished_at": datetime.now().isoformat(),
+                "items_processed": result.get('items_processed', 0),
+                "message": f"Spider {spider.name} completed successfully with watchdog monitoring"
+            })
+
+            print(f"✅ Watchdog spider task completed: {spider.name} - {result.get('items_processed', 0)} items processed")
+        else:
+            db_task.status = TaskStatus.FAILED
+            db_task.finished_at = datetime.now()
+            db_task.error_message = result.get('error', 'Unknown error')
+
+            # エラー通知
+            _safe_websocket_notify(task_id, {
+                "status": "FAILED",
+                "finished_at": datetime.now().isoformat(),
+                "error": result.get('error', 'Unknown error'),
+                "message": f"Spider {spider.name} failed with watchdog monitoring"
+            })
+
+            print(f"❌ Watchdog spider task failed: {spider.name} - {result.get('error', 'Unknown error')}")
+
+        db.commit()
+
+        return {
+            "status": "completed" if result.get('success', False) else "failed",
+            "task_id": task_id,
+            "spider_name": spider.name,
+            "project_path": project.path,
+            "items_processed": result.get('items_processed', 0),
+            "monitoring_type": "watchdog_jsonl",
+            "result": result
+        }
+
+    except Exception as e:
+        # エラー処理
+        import traceback
+        error_details = {
+            'error_type': type(e).__name__,
+            'error_message': str(e),
+            'traceback': traceback.format_exc(),
+            'task_id': task_id,
+            'timestamp': datetime.now().isoformat()
+        }
+
+        if 'db_task' in locals():
+            db_task.status = TaskStatus.FAILED
+            db_task.finished_at = datetime.now()
+            db_task.error_message = str(e)
+
+            if not db_task.settings:
+                db_task.settings = {}
+            db_task.settings['error_details'] = error_details
+
+            db.commit()
+
+        # エラー通知
+        _safe_websocket_notify(task_id, {
+            "status": "FAILED",
+            "finished_at": datetime.now().isoformat(),
+            "error": str(e),
+            "error_type": type(e).__name__,
+            "monitoring_type": "watchdog_jsonl"
+        })
+
+        print(f"❌ Watchdog spider task failed with error: {str(e)}")
+        raise
+
     finally:
         db.close()

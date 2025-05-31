@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from typing import List
 import uuid
 import os
+from datetime import datetime
 
 from ..database import get_db, Project as DBProject, Spider as DBSpider, User as DBUser, UserRole
 from ..models.schemas import Project, ProjectCreate, ProjectUpdate, ProjectWithSpiders, ProjectWithUser, Spider, SpiderCreate
@@ -33,108 +34,129 @@ router = APIRouter(
 
 
 def sync_project_files_to_database(db, project_id: str, project_path: str, user_id: str):
-    """プロジェクト作成時に全ファイルをデータベースに同期"""
+    """プロジェクト作成時に全ファイルをデータベースに同期（完全スキャン版）"""
     from ..database import ProjectFile
     from pathlib import Path
     from datetime import datetime
+    import os
 
-    # プロジェクトディレクトリのパス
-    project_dir = Path(f"./scrapy_projects/{project_path}")
+    # 絶対パスでプロジェクトディレクトリを指定
+    # backend/app/api/projects.py から backend/ まで2つ上がって、さらに1つ上がってプロジェクトルート
+    base_dir = Path(__file__).parent.parent.parent.parent  # backend/app/api/ から4つ上がってプロジェクトルート
+    scrapy_projects_dir = base_dir / "scrapy_projects"
+
+    # プロジェクトディレクトリのパス（Scrapyプロジェクトの構造に対応）
+    # scrapy_projects/project_name/project_name/ の形式
+    project_dir = scrapy_projects_dir / project_path / project_path
+
+    # フォールバック: 古い形式も試す
+    if not project_dir.exists():
+        project_dir = scrapy_projects_dir / project_path
 
     if not project_dir.exists():
         logger.warning(f"Project directory not found: {project_dir}")
+        logger.info(f"   Checked paths:")
+        logger.info(f"     - {scrapy_projects_dir / project_path / project_path}")
+        logger.info(f"     - {scrapy_projects_dir / project_path}")
+        logger.info(f"   Base directory: {base_dir}")
+        logger.info(f"   Scrapy projects directory: {scrapy_projects_dir}")
+        logger.info(f"   Current working directory: {os.getcwd()}")
         return
 
-    # 同期対象のファイルパターン（Scrapyプロジェクトの標準構造）
-    file_patterns = [
-        # ルートレベルのファイル
-        ("scrapy.cfg", "config"),
-
-        # プロジェクトパッケージ内のファイル
-        (f"{project_path}/__init__.py", "python"),
-        (f"{project_path}/settings.py", "python"),
-        (f"{project_path}/items.py", "python"),
-        (f"{project_path}/pipelines.py", "python"),
-        (f"{project_path}/middlewares.py", "python"),
-
-        # spidersディレクトリ内のファイル
-        (f"{project_path}/spiders/__init__.py", "python"),
-    ]
-
-    # 実際に存在するファイルも動的に検索して追加
-    try:
-        import glob
-        # プロジェクトディレクトリ内のすべての.pyファイルを検索
-        py_files = glob.glob(str(project_dir / "**" / "*.py"), recursive=True)
-        for py_file in py_files:
-            relative_path = Path(py_file).relative_to(project_dir)
-            file_pattern = (str(relative_path), "python")
-            if file_pattern not in file_patterns:
-                file_patterns.append(file_pattern)
-                logger.info(f"Added dynamically found file: {relative_path}")
-
-        # 設定ファイルも検索
-        config_files = glob.glob(str(project_dir / "**" / "*.cfg"), recursive=True)
-        for config_file in config_files:
-            relative_path = Path(config_file).relative_to(project_dir)
-            file_pattern = (str(relative_path), "config")
-            if file_pattern not in file_patterns:
-                file_patterns.append(file_pattern)
-                logger.info(f"Added dynamically found config file: {relative_path}")
-    except Exception as e:
-        logger.warning(f"Failed to dynamically search for files: {str(e)}")
+    logger.info(f"🔍 Starting complete file sync for project: {project_path}")
+    logger.info(f"   Project directory: {project_dir}")
 
     synced_files = []
 
-    for file_path, file_type in file_patterns:
-        full_path = project_dir / file_path
+    try:
+        # プロジェクトディレクトリ内のすべてのファイルを再帰的に検索
+        for file_path in project_dir.rglob("*"):
+            if file_path.is_file():
+                # 相対パスを計算
+                relative_path = file_path.relative_to(project_dir)
+                relative_path_str = str(relative_path).replace("\\", "/")  # Windows対応
 
-        if full_path.exists():
-            try:
-                with open(full_path, 'r', encoding='utf-8') as f:
-                    content = f.read()
-
-                # ファイル名を取得
-                file_name = full_path.name
-
-                # データベースに既存のファイルがあるかチェック（pathで判定）
-                existing_file = db.query(ProjectFile).filter(
-                    ProjectFile.project_id == project_id,
-                    ProjectFile.path == file_path
-                ).first()
-
-                if existing_file:
-                    # 既存ファイルを更新
-                    existing_file.content = content
-                    existing_file.updated_at = datetime.now()
-                    logger.info(f"Updated existing file in database: {file_path}")
+                # ファイルタイプを判定
+                if file_path.suffix == ".py":
+                    file_type = "python"
+                elif file_path.suffix == ".cfg":
+                    file_type = "config"
+                elif file_path.suffix in [".txt", ".md", ".rst"]:
+                    file_type = "text"
+                elif file_path.suffix in [".json", ".yaml", ".yml"]:
+                    file_type = "config"
                 else:
-                    # 新しいファイルを作成
-                    db_file = ProjectFile(
-                        id=str(uuid.uuid4()),
-                        name=file_name,
-                        path=file_path,
-                        content=content,
-                        file_type=file_type,
-                        project_id=project_id,
-                        user_id=user_id
-                    )
-                    db.add(db_file)
-                    logger.info(f"Added new file to database: {file_path}")
+                    file_type = "other"
 
-                # 各ファイルを個別にコミット
+                logger.info(f"   📄 Processing file: {relative_path_str} (type: {file_type})")
+
                 try:
-                    db.commit()
-                    synced_files.append(file_path)
-                except Exception as commit_error:
-                    db.rollback()
-                    logger.error(f"Failed to commit file {file_path}: {str(commit_error)}")
+                    # ファイル内容を読み取り
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        content = f.read()
 
-            except Exception as e:
-                logger.error(f"Failed to sync file {file_path}: {str(e)}")
+                    # データベースに既存のファイルがあるかチェック
+                    existing_file = db.query(ProjectFile).filter(
+                        ProjectFile.project_id == project_id,
+                        ProjectFile.path == relative_path_str
+                    ).first()
+
+                    if existing_file:
+                        # 既存ファイルを更新
+                        existing_file.content = content
+                        existing_file.updated_at = datetime.now()
+                        logger.info(f"      ✅ Updated existing file in database")
+                    else:
+                        # 新しいファイルを作成
+                        db_file = ProjectFile(
+                            id=str(uuid.uuid4()),
+                            name=file_path.name,
+                            path=relative_path_str,
+                            content=content,
+                            file_type=file_type,
+                            project_id=project_id,
+                            user_id=user_id,
+                            created_at=datetime.now(),
+                            updated_at=datetime.now()
+                        )
+                        db.add(db_file)
+                        logger.info(f"      ✅ Added new file to database")
+
+                    # 各ファイルを個別にコミット
+                    try:
+                        db.commit()
+                        synced_files.append(relative_path_str)
+                        logger.info(f"      💾 Committed to database")
+                    except Exception as commit_error:
+                        db.rollback()
+                        logger.error(f"      ❌ Failed to commit file: {str(commit_error)}")
+
+                except UnicodeDecodeError:
+                    # バイナリファイルの場合はスキップ
+                    logger.info(f"      ⏭️ Skipped binary file: {relative_path_str}")
+                except Exception as e:
+                    logger.error(f"      ❌ Failed to process file: {str(e)}")
+
+    except Exception as e:
+        logger.error(f"❌ Failed to scan project directory: {str(e)}")
 
     # 最終結果をログ出力
-    logger.info(f"Successfully synced {len(synced_files)} files to database: {synced_files}")
+    logger.info(f"✅ Successfully synced {len(synced_files)} files to database")
+    logger.info(f"   Synced files: {synced_files}")
+
+    # 特別にcommands関連ファイルを確認
+    commands_files = [f for f in synced_files if 'commands' in f]
+    if commands_files:
+        logger.info(f"🔧 Commands files synced: {commands_files}")
+    else:
+        logger.warning(f"⚠️ No commands files found in synced files")
+
+    # settings.pyの確認
+    settings_files = [f for f in synced_files if f.endswith('settings.py')]
+    if settings_files:
+        logger.info(f"⚙️ Settings files synced: {settings_files}")
+    else:
+        logger.warning(f"⚠️ No settings.py found in synced files")
 
 
 def sync_spider_file_to_database(db, project_id: str, project_path: str, spider_name: str, spider_code: str, user_id: str):
@@ -180,6 +202,12 @@ def sync_spider_file_to_database(db, project_id: str, project_path: str, spider_
         logger.error(f"Failed to sync spider file to database: {str(e)}")
         raise
 
+
+
+
+
+
+
 @router.get(
     "/",
     response_model=List[ProjectWithUser],
@@ -216,6 +244,7 @@ async def get_projects(
             "path": project.path,
             "scrapy_version": project.scrapy_version,
             "settings": project.settings,
+            "db_save_enabled": project.db_save_enabled,
             "created_at": project.created_at,
             "updated_at": project.updated_at,
             "user_id": project.user_id,
@@ -271,6 +300,34 @@ async def get_project(
         }
         formatted_spiders.append(spider_dict)
 
+    # 同期状態を判定
+    from ..database import ProjectFile
+
+    # commands関連ファイルの確認（より具体的な条件）
+    commands_count = db.query(ProjectFile).filter(
+        ProjectFile.project_id == project_id,
+        ProjectFile.name == "crawlwithwatchdog.py"
+    ).count()
+
+    settings_file = db.query(ProjectFile).filter(
+        ProjectFile.project_id == project_id,
+        ProjectFile.name == "settings.py"
+    ).first()
+
+    has_commands_module = False
+    if settings_file and settings_file.content:
+        try:
+            # content が bytes の場合は文字列に変換
+            content = settings_file.content
+            if isinstance(content, bytes):
+                content = content.decode('utf-8')
+            has_commands_module = 'COMMANDS_MODULE' in content
+        except Exception as e:
+            logger.error(f"Error checking COMMANDS_MODULE: {e}, content type: {type(settings_file.content)}")
+            has_commands_module = False
+
+    logger.info(f"🔍 Sync state check for project {project_id}: commands_count={commands_count}, has_commands_module={has_commands_module}")
+
     project_dict = {
         "id": project.id,
         "name": project.name,
@@ -278,9 +335,11 @@ async def get_project(
         "path": project.path,
         "scrapy_version": project.scrapy_version,
         "settings": project.settings or {},
+        "db_save_enabled": project.db_save_enabled,
         "created_at": project.created_at,
         "updated_at": project.updated_at,
-        "spiders": formatted_spiders
+        "spiders": formatted_spiders,
+        "is_fully_synced": commands_count > 0 and has_commands_module
     }
 
     return project_dict
@@ -329,14 +388,17 @@ async def create_project(
             # テスト環境では実際のScrapyプロジェクト作成をスキップ
             if not os.getenv("TESTING", False):
                 scrapy_service = ScrapyPlaywrightService()
-                # プロジェクト名（ディレクトリ名）とプロジェクトパス（設定名）を正しく指定
-                scrapy_service.create_project(project_path, project_path)
+                # プロジェクト名（ディレクトリ名）とプロジェクトパス（設定名）、DB保存設定を正しく指定
+                # フロントエンドからdb_save_enabledが送信されない場合はデフォルトでTrueに設定
+                db_save_enabled = getattr(project, 'db_save_enabled', True)
+                scrapy_service.create_project(project_path, project_path, db_save_enabled)
                 logger.info(f"Scrapy project created successfully: {project_path}")
             else:
-                # テスト環境では単純にディレクトリを作成
-                project_dir = f"./scrapy_projects/{project_path}"
-                os.makedirs(project_dir, exist_ok=True)
-                logger.info(f"Test project directory created: {project_dir}")
+                # テスト環境でもScrapyプロジェクトを作成（WebUI表示のため）
+                scrapy_service = ScrapyPlaywrightService()
+                db_save_enabled = getattr(project, 'db_save_enabled', True)
+                scrapy_service.create_project(project_path, project_path, db_save_enabled)
+                logger.info(f"Test Scrapy project created successfully: {project_path}")
         except Exception as e:
             # プロジェクト作成に失敗してもデータベースには保存する（テスト用）
             log_exception(
@@ -352,6 +414,7 @@ async def create_project(
             path=project_path,
             scrapy_version=project.scrapy_version or "2.11.0",
             settings=project.settings or {},
+            db_save_enabled=getattr(project, 'db_save_enabled', True),
             user_id=current_user.id  # 現在のユーザーIDを設定
         )
 
@@ -361,20 +424,49 @@ async def create_project(
 
         # プロジェクトファイルをデータベースに同期（全ファイル）
         try:
-            if not os.getenv("TESTING", False):
-                # 少し待ってからファイル同期（ファイル作成完了を確実にする）
-                import time
-                time.sleep(0.5)
+            # TESTING環境でも同期を実行（WebUI表示のため）
+            # 少し待ってからファイル同期（ファイル作成完了を確実にする）
+            import time
+            time.sleep(1.0)  # 待機時間を延長
 
-                sync_project_files_to_database(db, db_project.id, project_path, current_user.id)
-                logger.info(f"All project files synced to database for project: {project_path}")
+            # まず通常のファイル同期を実行
+            sync_project_files_to_database(db, db_project.id, project_path, current_user.id)
+            logger.info(f"All project files synced to database for project: {project_path}")
 
-                # 同期後の確認
-                from ..database import ProjectFile
-                synced_count = db.query(ProjectFile).filter(ProjectFile.project_id == db_project.id).count()
-                logger.info(f"Total files synced to database: {synced_count}")
+            # pipelines.pyの特別な同期は不要になったため削除
+
+            # 同期後の確認
+            from ..database import ProjectFile
+            synced_count = db.query(ProjectFile).filter(ProjectFile.project_id == db_project.id).count()
+            pipelines_count = db.query(ProjectFile).filter(
+                ProjectFile.project_id == db_project.id,
+                ProjectFile.name == "pipelines.py"
+            ).count()
+            logger.info(f"Total files synced to database: {synced_count}")
+            logger.info(f"pipelines.py files in database: {pipelines_count}")
+
+            # pipelines.pyの内容を検証
+            if pipelines_count > 0:
+                pipelines_file = db.query(ProjectFile).filter(
+                    ProjectFile.project_id == db_project.id,
+                    ProjectFile.name == "pipelines.py"
+                ).first()
+                if pipelines_file:
+                    try:
+                        content = pipelines_file.content
+                        if isinstance(content, bytes):
+                            content = content.decode('utf-8')
+                        has_scrapy_ui = 'ScrapyUIDatabasePipeline' in content
+                        expected_has_scrapy_ui = db_project.db_save_enabled
+                        if has_scrapy_ui == expected_has_scrapy_ui:
+                            logger.info(f"✅ pipelines.py content verification passed: DB save={expected_has_scrapy_ui}, Has ScrapyUI={has_scrapy_ui}")
+                        else:
+                            logger.warning(f"⚠️ pipelines.py content verification failed: DB save={expected_has_scrapy_ui}, Has ScrapyUI={has_scrapy_ui}")
+                    except Exception as e:
+                        logger.error(f"Error verifying pipelines.py content in project creation: {e}")
+                        has_scrapy_ui = False
         except Exception as e:
-            logger.warning(f"Failed to save project files to database: {str(e)}")
+            logger.error(f"Failed to save project files to database: {str(e)}")
             # ファイル同期失敗は警告のみ（プロジェクト作成は成功とする）
 
         log_with_context(
@@ -470,6 +562,100 @@ async def delete_project(project_id: str, db: Session = Depends(get_db)):
     db.commit()
 
     return None
+
+
+@router.post("/{project_id}/sync-files", status_code=status.HTTP_200_OK)
+async def sync_project_files(
+    project_id: str,
+    db: Session = Depends(get_db),
+    current_user: DBUser = Depends(get_current_active_user)
+):
+    """プロジェクトファイルを手動でデータベースに同期"""
+
+    # プロジェクトの存在確認
+    project = db.query(DBProject).filter(DBProject.id == project_id).first()
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project not found"
+        )
+
+    # 管理者以外は自分のプロジェクトのみアクセス可能
+    is_admin = (current_user.role == UserRole.ADMIN or
+                current_user.role == "admin" or
+                current_user.role == "ADMIN")
+    if not is_admin and project.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied"
+        )
+
+    try:
+        logger.info(f"🔄 Manual file sync requested for project: {project.name} (ID: {project_id})")
+
+        # 既存のプロジェクトファイルをすべて削除（完全再同期）
+        from ..database import ProjectFile
+        existing_files = db.query(ProjectFile).filter(ProjectFile.project_id == project_id).all()
+        for file in existing_files:
+            db.delete(file)
+        db.commit()
+        logger.info(f"🗑️ Deleted {len(existing_files)} existing files from database")
+
+        # ファイル同期を実行
+        sync_project_files_to_database(db, project_id, project.path, current_user.id)
+
+        # 同期後の確認
+        synced_files = db.query(ProjectFile).filter(ProjectFile.project_id == project_id).all()
+        synced_count = len(synced_files)
+
+        # commands関連ファイルの確認（より具体的な条件）
+        commands_count = db.query(ProjectFile).filter(
+            ProjectFile.project_id == project_id,
+            ProjectFile.name == "crawlwithwatchdog.py"
+        ).count()
+
+        # settings.pyの確認
+        settings_file = db.query(ProjectFile).filter(
+            ProjectFile.project_id == project_id,
+            ProjectFile.name == "settings.py"
+        ).first()
+
+        has_commands_module = False
+        if settings_file and settings_file.content:
+            try:
+                # content が bytes の場合は文字列に変換
+                content = settings_file.content
+                if isinstance(content, bytes):
+                    content = content.decode('utf-8')
+                has_commands_module = 'COMMANDS_MODULE' in content
+            except Exception as e:
+                logger.error(f"Error checking COMMANDS_MODULE in sync: {e}, content type: {type(settings_file.content)}")
+                has_commands_module = False
+
+        # ファイル一覧をログ出力
+        logger.info(f"📄 Synced files:")
+        for file in synced_files:
+            logger.info(f"   - {file.path} ({file.name}) - {len(file.content)} chars")
+
+        logger.info(f"✅ Manual file sync completed: {synced_count} files, {commands_count} commands files")
+
+        return {
+            "message": "ファイル同期が完了しました（完全再同期）",
+            "total_files": synced_count,
+            "commands_files": commands_count,
+            "has_commands_module": has_commands_module,
+            "project_name": project.name,
+            "sync_timestamp": datetime.now().isoformat(),
+            "is_fully_synced": commands_count > 0 and has_commands_module,
+            "files": [{"name": f.name, "path": f.path, "size": len(f.content)} for f in synced_files]
+        }
+
+    except Exception as e:
+        logger.error(f"❌ Manual file sync failed for project {project_id}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"ファイル同期に失敗しました: {str(e)}"
+        )
 
 
 @router.post("/{project_id}/spiders/", response_model=dict, status_code=status.HTTP_201_CREATED)

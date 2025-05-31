@@ -88,7 +88,7 @@ class ScrapyPlaywrightService:
         self._initialized = True
         print(f"🔧 ScrapyPlaywrightService initialized with base_dir: {self.base_projects_dir.absolute()}")
 
-    def create_project(self, project_name: str, project_path: str) -> bool:
+    def create_project(self, project_name: str, project_path: str, db_save_enabled: bool = True) -> bool:
         """新しいScrapyプロジェクトを作成（scrapy startproject と同じ動作）"""
         try:
             log_with_context(
@@ -125,6 +125,18 @@ class ScrapyPlaywrightService:
 
             # scrapy-playwright設定を追加
             self._setup_playwright_config(project_dir / project_name)
+
+            # ScrapyUIデータベースパイプラインを追加（DB保存設定に基づく）
+            # 注意: プロジェクト作成時はproject_idとuser_idがまだ利用できないため、後でAPI層で同期する
+            self._setup_database_pipeline(project_dir / project_name, project_name, db_save_enabled)
+
+            # カスタムコマンド設定
+            self._setup_custom_commands(project_dir / project_name, project_name)
+
+            # settings.pyにCOMMANDS_MODULEを追加
+            self._add_commands_module_to_settings(project_dir / project_name, project_name)
+
+
 
             # scrapy.cfgファイルを検証・修正（プロジェクトパスを使用）
             self._validate_and_fix_scrapy_cfg(project_name, project_path)
@@ -209,6 +221,511 @@ HTTPCACHE_EXPIRATION_SECS = 86400  # 1 day
         if settings_file.exists():
             with open(settings_file, 'a', encoding='utf-8') as f:
                 f.write(playwright_settings)
+
+    def _setup_database_pipeline(self, project_package_dir: Path, project_name: str, db_save_enabled: bool = True, project_id: str = None, user_id: str = None):
+        """基本フォーマットのpipelines.pyを生成し、データベースに同期"""
+        try:
+            # pipelines.pyファイルを更新
+            pipelines_file = project_package_dir / "pipelines.py"
+
+            # 常に基本フォーマットのみ生成
+            # プロジェクト名からクラス名を生成（アンダースコアを削除して各単語を大文字に）
+            class_name = ''.join(word.capitalize() for word in project_name.split('_'))
+            if not class_name.endswith('Pipeline'):
+                class_name += 'Pipeline'
+
+            pipelines_content = f'''# Define your item pipelines here
+#
+# Don't forget to add your pipeline to the ITEM_PIPELINES setting
+# See: https://docs.scrapy.org/en/latest/topics/item-pipeline.html
+
+
+# useful for handling different item types with a single interface
+from itemadapter import ItemAdapter
+
+
+class {class_name}:
+    def process_item(self, item, spider):
+        return item
+'''
+            self.logger.info(f"Basic pipeline added to {pipelines_file}")
+
+            # ファイルシステムに保存
+            with open(pipelines_file, 'w', encoding='utf-8') as f:
+                f.write(pipelines_content)
+
+            # データベースに同期
+            if project_id and user_id:
+                self._sync_pipeline_to_database(project_id, project_name, pipelines_content, user_id)
+
+        except Exception as e:
+            self.logger.error(f"Error setting up pipeline: {str(e)}")
+            raise Exception(f"Error setting up pipeline: {str(e)}")
+
+    def _setup_custom_commands(self, project_package_dir: Path, project_name: str):
+        """カスタムコマンドディレクトリとファイルを設定"""
+        try:
+            # commandsディレクトリを作成
+            commands_dir = project_package_dir / "commands"
+            commands_dir.mkdir(exist_ok=True)
+
+            # __init__.pyファイルを作成
+            init_file = commands_dir / "__init__.py"
+            with open(init_file, 'w', encoding='utf-8') as f:
+                f.write("# Scrapy custom commands\n")
+
+            # crawlwithwatchdog.pyファイルをコピー
+            template_command_file = Path(__file__).parent.parent / "templates" / "scrapy_project" / "project_template" / "commands" / "crawlwithwatchdog.py"
+            target_command_file = commands_dir / "crawlwithwatchdog.py"
+
+            if template_command_file.exists():
+                import shutil
+                shutil.copy2(template_command_file, target_command_file)
+                self.logger.info(f"Custom command added: {target_command_file}")
+            else:
+                # テンプレートファイルが見つからない場合は直接作成
+                self._create_crawlwithwatchdog_command(target_command_file)
+                self.logger.info(f"Custom command created directly: {target_command_file}")
+
+        except Exception as e:
+            self.logger.warning(f"Failed to setup custom commands: {str(e)}")
+
+    def _create_crawlwithwatchdog_command(self, target_file: Path):
+        """crawlwithwatchdogコマンドファイルを直接作成"""
+        command_content = '''#!/usr/bin/env python3
+"""
+Scrapyカスタムコマンド: crawlwithwatchdog
+watchdog監視付きでスパイダーを実行
+
+使用例:
+scrapy crawlwithwatchdog spider_name -o results.jsonl --task-id=test_123
+"""
+import asyncio
+import threading
+import time
+import uuid
+import json
+import sqlite3
+import os
+import sys
+from pathlib import Path
+from datetime import datetime
+from scrapy.commands import ScrapyCommand
+from scrapy.utils.conf import arglist_to_dict
+from scrapy.exceptions import UsageError
+
+# watchdogライブラリ
+try:
+    from watchdog.observers import Observer
+    from watchdog.events import FileSystemEventHandler
+    WATCHDOG_AVAILABLE = True
+except ImportError:
+    WATCHDOG_AVAILABLE = False
+
+
+class JSONLWatchdogHandler(FileSystemEventHandler):
+    """JSONLファイル専用のwatchdogイベントハンドラー"""
+
+    def __init__(self, monitor):
+        self.monitor = monitor
+
+    def on_modified(self, event):
+        """ファイル変更時の処理"""
+        if event.is_directory:
+            return
+
+        # 監視対象のJSONLファイルかチェック
+        if event.src_path == str(self.monitor.jsonl_file_path):
+            # 非同期処理をスレッドセーフに実行
+            threading.Thread(
+                target=self.monitor.process_new_lines,
+                daemon=True
+            ).start()
+
+
+class JSONLMonitor:
+    """JSONLファイル監視クラス"""
+
+    def __init__(self, task_id, spider_name, jsonl_file_path, db_path):
+        self.task_id = task_id
+        self.spider_name = spider_name
+        self.jsonl_file_path = Path(jsonl_file_path)
+        self.db_path = db_path
+        self.processed_lines = 0
+        self.last_file_size = 0
+        self.is_monitoring = False
+        self.observer = None
+
+    def start_monitoring(self):
+        """watchdog監視を開始"""
+        if not WATCHDOG_AVAILABLE:
+            print("⚠️ watchdogライブラリが利用できません。ポーリング監視を使用します。")
+            self._start_polling_monitoring()
+            return
+
+        self.is_monitoring = True
+
+        # watchdog監視を開始
+        event_handler = JSONLWatchdogHandler(self)
+        self.observer = Observer()
+        self.observer.schedule(event_handler, str(self.jsonl_file_path.parent), recursive=False)
+        self.observer.start()
+
+        print(f"🔍 watchdog監視開始: {self.jsonl_file_path}")
+
+    def _start_polling_monitoring(self):
+        """ポーリング監視（フォールバック）"""
+        self.is_monitoring = True
+
+        def polling_loop():
+            while self.is_monitoring:
+                self.process_new_lines()
+                time.sleep(1)
+
+        polling_thread = threading.Thread(target=polling_loop, daemon=True)
+        polling_thread.start()
+
+        print(f"🔄 ポーリング監視開始: {self.jsonl_file_path}")
+
+    def stop_monitoring(self):
+        """監視を停止"""
+        self.is_monitoring = False
+
+        if self.observer:
+            self.observer.stop()
+            self.observer.join()
+            self.observer = None
+
+        print(f"🛑 監視停止: 処理済み行数 {self.processed_lines}")
+
+    def process_new_lines(self):
+        """新しい行を処理"""
+        try:
+            if not self.jsonl_file_path.exists():
+                return
+
+            # ファイルサイズをチェック
+            current_size = self.jsonl_file_path.stat().st_size
+            if current_size <= self.last_file_size:
+                return
+
+            # 新しい部分のみ読み取り
+            with open(self.jsonl_file_path, 'r', encoding='utf-8') as f:
+                f.seek(self.last_file_size)
+                new_content = f.read()
+
+            # 新しい行を処理
+            new_lines = [line.strip() for line in new_content.split('\\n') if line.strip()]
+
+            if new_lines:
+                print(f"📝 新しい行を検出: {len(new_lines)}件")
+
+                for line in new_lines:
+                    self._process_single_line(line)
+                    self.processed_lines += 1
+
+                print(f"📊 総処理済みアイテム数: {self.processed_lines}")
+
+            # ファイルサイズを更新
+            self.last_file_size = current_size
+
+        except Exception as e:
+            print(f"❌ 新しい行処理エラー: {e}")
+
+    def _process_single_line(self, json_line):
+        """単一の行を処理してDBにインサート"""
+        try:
+            # JSON解析
+            item_data = json.loads(json_line)
+
+            # DBにインサート
+            self._insert_item_to_db(item_data)
+
+        except json.JSONDecodeError as e:
+            print(f"❌ JSON解析エラー: {e} - Line: {json_line[:100]}...")
+        except Exception as e:
+            print(f"❌ 行処理エラー: {e}")
+
+    def _insert_item_to_db(self, item_data):
+        """アイテムをデータベースにインサート"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            # scraped_itemsテーブルにインサート
+            item_id = str(uuid.uuid4())
+            cursor.execute("""
+                INSERT INTO scraped_items
+                (id, task_id, project_id, spider_name, data, scraped_at, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (
+                item_id,
+                self.task_id,
+                "command_project",  # コマンド実行時はプロジェクトIDを固定
+                self.spider_name,
+                json.dumps(item_data, ensure_ascii=False),
+                datetime.now().isoformat(),
+                datetime.now().isoformat()
+            ))
+
+            conn.commit()
+            conn.close()
+
+            print(f"✅ DBインサート成功: {item_id}")
+
+        except Exception as e:
+            print(f"❌ DBインサートエラー: {e}")
+
+
+class Command(ScrapyCommand):
+    """watchdog監視付きcrawlコマンド"""
+
+    requires_project = True
+    default_settings = {'LOG_LEVEL': 'INFO'}
+
+    def syntax(self):
+        return "<spider> [options]"
+
+    def short_desc(self):
+        return "Run a spider with watchdog monitoring for real-time DB insertion"
+
+    def add_options(self, parser):
+        ScrapyCommand.add_options(self, parser)
+        parser.add_argument("-o", "--output", dest="output",
+                         help="dump scraped items to JSONL file (required for watchdog monitoring)")
+        parser.add_argument("--task-id", dest="task_id",
+                         help="task ID for monitoring (auto-generated if not provided)")
+        parser.add_argument("--db-path", dest="db_path",
+                         default="backend/database/scrapy_ui.db",
+                         help="database path for storing results")
+
+    def process_options(self, args, opts):
+        ScrapyCommand.process_options(self, args, opts)
+        try:
+            opts.spargs, opts.spkwargs = arglist_to_dict(args[1:])
+        except ValueError:
+            raise UsageError("Invalid -a value, use -a NAME=VALUE", print_help=False)
+
+    def run(self, args, opts):
+        if len(args) < 1:
+            raise UsageError("Spider name is required")
+
+        spider_name = args[0]
+
+        # 出力ファイルが指定されているかチェック
+        if not opts.output:
+            raise UsageError("Output file (-o) is required for watchdog monitoring")
+
+        # タスクIDを生成または取得
+        task_id = opts.task_id or f"cmd_{spider_name}_{int(time.time())}"
+
+        print(f"🚀 Starting spider with watchdog monitoring")
+        print(f"   Spider: {spider_name}")
+        print(f"   Task ID: {task_id}")
+        print(f"   Output: {opts.output}")
+        print(f"   DB Path: {opts.db_path}")
+        print(f"   Watchdog Available: {'Yes' if WATCHDOG_AVAILABLE else 'No (using polling)'}")
+
+        # watchdog監視を開始
+        monitor = JSONLMonitor(
+            task_id=task_id,
+            spider_name=spider_name,
+            jsonl_file_path=opts.output,
+            db_path=opts.db_path
+        )
+
+        monitor.start_monitoring()
+
+        try:
+            # Scrapyの設定を更新
+            self.settings.set('FEED_URI', opts.output)
+            self.settings.set('FEED_FORMAT', 'jsonlines')
+
+            # スパイダーを実行
+            print(f"🕷️ Starting Scrapy crawler...")
+            self.crawler_process.crawl(spider_name, **opts.spkwargs)
+            self.crawler_process.start()
+
+        except KeyboardInterrupt:
+            print(f"\\n⚠️ Interrupted by user")
+        except Exception as e:
+            print(f"❌ Crawler error: {e}")
+        finally:
+            # 監視を停止
+            monitor.stop_monitoring()
+
+            # 最終的な統計を表示
+            print(f"\\n📊 Final Statistics:")
+            print(f"   Total items processed: {monitor.processed_lines}")
+            print(f"   Output file: {opts.output}")
+            print(f"   Database: {opts.db_path}")
+            print(f"✅ crawlwithwatchdog completed")
+'''
+
+        with open(target_file, 'w', encoding='utf-8') as f:
+            f.write(command_content)
+
+    def _add_commands_module_to_settings(self, project_package_dir: Path, project_name: str):
+        """settings.pyにCOMMANDS_MODULEを追加"""
+        try:
+            settings_file = project_package_dir / "settings.py"
+
+            if not settings_file.exists():
+                self.logger.warning(f"settings.py not found: {settings_file}")
+                return
+
+            # 既存のsettings.pyを読み取り
+            with open(settings_file, 'r', encoding='utf-8') as f:
+                content = f.read()
+
+            # COMMANDS_MODULEが既に存在するかチェック
+            if 'COMMANDS_MODULE' in content:
+                self.logger.info(f"COMMANDS_MODULE already exists in {settings_file}")
+                return
+
+            # COMMANDS_MODULEを追加
+            commands_module_setting = f'''
+# カスタムコマンドモジュール
+COMMANDS_MODULE = "{project_name}.commands"
+'''
+
+            # NEWSPIDER_MODULEの後に追加
+            if 'NEWSPIDER_MODULE' in content:
+                content = content.replace(
+                    f'NEWSPIDER_MODULE = "{project_name}.spiders"',
+                    f'NEWSPIDER_MODULE = "{project_name}.spiders"{commands_module_setting}'
+                )
+            else:
+                # NEWSPIDER_MODULEが見つからない場合は末尾に追加
+                content += commands_module_setting
+
+            # ファイルに書き戻し
+            with open(settings_file, 'w', encoding='utf-8') as f:
+                f.write(content)
+
+            self.logger.info(f"Added COMMANDS_MODULE to {settings_file}")
+
+        except Exception as e:
+            self.logger.warning(f"Failed to add COMMANDS_MODULE to settings.py: {str(e)}")
+
+    def _sync_commands_to_database(self, project_id: str, project_name: str, user_id: str, project_package_dir: Path):
+        """commandsディレクトリのファイルをデータベースに同期"""
+        try:
+            from ..database import SessionLocal, ProjectFile as DBProjectFile
+            from datetime import datetime
+            import uuid
+
+            db = SessionLocal()
+            try:
+                commands_dir = project_package_dir / "commands"
+
+                if not commands_dir.exists():
+                    self.logger.info(f"Commands directory does not exist: {commands_dir}")
+                    return
+
+                # commandsディレクトリ内のファイルを同期
+                for file_path in commands_dir.rglob("*.py"):
+                    if file_path.is_file():
+                        # 相対パスを構築
+                        relative_path = file_path.relative_to(project_package_dir.parent)
+
+                        # ファイル内容を読み取り
+                        with open(file_path, 'r', encoding='utf-8') as f:
+                            content = f.read()
+
+                        # 既存のファイルを検索
+                        existing_file = db.query(DBProjectFile).filter(
+                            DBProjectFile.project_id == project_id,
+                            DBProjectFile.path == str(relative_path)
+                        ).first()
+
+                        if existing_file:
+                            # 既存ファイルを更新
+                            existing_file.content = content
+                            existing_file.updated_at = datetime.now()
+                            self.logger.info(f"Updated commands file in database: {relative_path}")
+                        else:
+                            # 新しいファイルを作成
+                            db_file = DBProjectFile(
+                                id=str(uuid.uuid4()),
+                                name=file_path.name,
+                                path=str(relative_path),
+                                content=content,
+                                file_type="python",
+                                project_id=project_id,
+                                user_id=user_id,
+                                created_at=datetime.now(),
+                                updated_at=datetime.now()
+                            )
+                            db.add(db_file)
+                            self.logger.info(f"Added commands file to database: {relative_path}")
+
+                db.commit()
+                self.logger.info(f"Successfully synced commands files to database for project: {project_name}")
+
+            except Exception as e:
+                db.rollback()
+                self.logger.error(f"Failed to sync commands files to database: {str(e)}")
+                raise
+            finally:
+                db.close()
+
+        except Exception as e:
+            self.logger.error(f"Error syncing commands files to database: {str(e)}")
+            # データベース同期失敗は警告のみ（ファイル作成は成功とする）
+
+    def _sync_pipeline_to_database(self, project_id: str, project_name: str, pipelines_content: str, user_id: str):
+        """pipelines.pyをデータベースに同期"""
+        try:
+            from ..database import SessionLocal, ProjectFile as DBProjectFile
+            from datetime import datetime
+            import uuid
+
+            db = SessionLocal()
+            try:
+                # pipelines.pyのパス（プロジェクト構造に応じて）
+                pipelines_path = f"{project_name}/pipelines.py"
+
+                # 既存のpipelines.pyファイルを検索
+                existing_file = db.query(DBProjectFile).filter(
+                    DBProjectFile.project_id == project_id,
+                    DBProjectFile.path == pipelines_path
+                ).first()
+
+                if existing_file:
+                    # 既存ファイルを更新
+                    existing_file.content = pipelines_content
+                    existing_file.updated_at = datetime.now()
+                    self.logger.info(f"Updated pipelines.py in database: {pipelines_path}")
+                else:
+                    # 新しいファイルを作成
+                    db_file = DBProjectFile(
+                        id=str(uuid.uuid4()),
+                        name="pipelines.py",
+                        path=pipelines_path,
+                        content=pipelines_content,
+                        file_type="python",
+                        project_id=project_id,
+                        user_id=user_id,
+                        created_at=datetime.now(),
+                        updated_at=datetime.now()
+                    )
+                    db.add(db_file)
+                    self.logger.info(f"Added pipelines.py to database: {pipelines_path}")
+
+                db.commit()
+                self.logger.info(f"Successfully synced pipelines.py to database for project: {project_name}")
+
+            except Exception as e:
+                db.rollback()
+                self.logger.error(f"Failed to sync pipelines.py to database: {str(e)}")
+                raise
+            finally:
+                db.close()
+
+        except Exception as e:
+            self.logger.error(f"Error syncing pipelines.py to database: {str(e)}")
+            # データベース同期失敗は警告のみ（ファイル作成は成功とする）
 
     def _validate_and_fix_scrapy_cfg(self, project_name: str, project_path: str = None) -> None:
         """scrapy.cfgファイルを検証し、必要に応じて修正（WebUI対応版）"""
@@ -534,6 +1051,71 @@ project = {project_path}
                 'error': str(e)
             }
 
+    async def run_spider_with_watchdog(self, project_path: str, spider_name: str, task_id: str,
+                                     settings: Optional[Dict[str, Any]] = None,
+                                     websocket_callback: Optional[callable] = None) -> Dict[str, Any]:
+        """watchdog監視付きでscrapy crawlを実行"""
+        try:
+            log_with_context(
+                self.logger, "INFO",
+                f"Starting spider execution with watchdog monitoring: {spider_name}",
+                task_id=task_id,
+                project_id=project_path,
+                spider_id=spider_name,
+                extra_data={"settings": settings}
+            )
+
+            # watchdog監視が利用可能かチェック
+            try:
+                from watchdog.observers import Observer
+                from watchdog.events import FileSystemEventHandler
+            except ImportError:
+                self.logger.warning("watchdog not available, falling back to regular execution")
+                return await self.run_spider_with_manager(
+                    project_path, spider_name, task_id, settings, None, websocket_callback
+                )
+
+            # プロジェクトパスを構築
+            full_project_path = self.base_projects_dir / project_path
+
+            # watchdog監視クラスをインポート
+            from .scrapy_watchdog_monitor import ScrapyWatchdogMonitor
+
+            # 監視クラスを作成
+            monitor = ScrapyWatchdogMonitor(
+                task_id=task_id,
+                project_path=str(full_project_path),
+                spider_name=spider_name,
+                db_path=str(self.base_projects_dir.parent / "backend" / "database" / "scrapy_ui.db"),
+                websocket_callback=websocket_callback
+            )
+
+            # watchdog監視付きで実行
+            result = await monitor.execute_spider_with_monitoring(settings)
+
+            log_with_context(
+                self.logger, "INFO",
+                f"Spider execution with watchdog completed: {spider_name}",
+                task_id=task_id,
+                extra_data={"result": result}
+            )
+
+            return result
+
+        except Exception as e:
+            log_exception(
+                self.logger,
+                f"Error in spider execution with watchdog: {str(e)}",
+                task_id=task_id,
+                project_id=project_path,
+                spider_id=spider_name
+            )
+            return {
+                'success': False,
+                'task_id': task_id,
+                'error': str(e)
+            }
+
     def run_spider(self, project_path: str, spider_name: str, task_id: str, settings: Optional[Dict[str, Any]] = None) -> str:
         """スパイダーを実行（非同期）"""
         try:
@@ -561,11 +1143,40 @@ project = {project_path}
             # スパイダー固有設定を確認
             spider_custom_settings = self._get_spider_custom_settings(project_path, spider_name)
 
+            # プロジェクトのDB保存設定を確認
+            from ..database import SessionLocal, Project as DBProject
+            db = SessionLocal()
+            try:
+                project = db.query(DBProject).filter(DBProject.path == project_path).first()
+                db_save_enabled = project.db_save_enabled if project else True
+            except Exception as e:
+                self.logger.warning(f"Failed to get project DB save setting: {e}")
+                db_save_enabled = True  # デフォルトで有効
+            finally:
+                db.close()
+
             # 最小限のデフォルト設定（CLIと同じ動作を目指す）
             default_settings = {
                 'LOG_LEVEL': 'INFO',  # ログレベルのみ設定
-                'ROBOTSTXT_OBEY': False  # robots.txtを無視
+                'ROBOTSTXT_OBEY': False,  # robots.txtを無視
             }
+
+            # DB保存が有効な場合のみパイプライン設定を追加
+            if db_save_enabled:
+                default_settings.update({
+                    # ScrapyUIデータベースパイプライン設定
+                    'SCRAPYUI_DATABASE_URL': f"sqlite:///{self.base_projects_dir.parent}/backend/database/scrapy_ui.db",
+                    'SCRAPYUI_TASK_ID': task_id,
+                    'SCRAPYUI_JSON_FILE': f"results_{task_id}.jsonl",
+                    # パイプライン設定を有効化
+                    'ITEM_PIPELINES': {
+                        f'{project_name}.pipelines.ScrapyUIDatabasePipeline': 100,
+                        f'{project_name}.pipelines.ScrapyUIJSONPipeline': 200,
+                    }
+                })
+                print(f"✅ DB保存が有効: パイプライン設定を適用しました")
+            else:
+                print(f"⚠️ DB保存が無効: ファイル出力のみになります")
 
             # 最小限の設定のみ適用（スパイダーのcustom_settingsを優先）
             final_settings = default_settings.copy()
@@ -996,11 +1607,31 @@ project = {project_path}
                         stored_count = 0
                         for item in data:
                             import uuid
+
+                            # 日時フィールドを処理
+                            crawl_start_datetime = None
+                            item_acquired_datetime = None
+
+                            if isinstance(item, dict):
+                                if 'crawl_start_datetime' in item:
+                                    try:
+                                        crawl_start_datetime = datetime.fromisoformat(item['crawl_start_datetime'].replace('Z', '+00:00'))
+                                    except (ValueError, TypeError):
+                                        crawl_start_datetime = datetime.now()
+
+                                if 'item_acquired_datetime' in item:
+                                    try:
+                                        item_acquired_datetime = datetime.fromisoformat(item['item_acquired_datetime'].replace('Z', '+00:00'))
+                                    except (ValueError, TypeError):
+                                        item_acquired_datetime = datetime.now()
+
                             db_result = DBResult(
                                 id=str(uuid.uuid4()),  # IDを手動で生成
                                 task_id=task_id,
                                 data=item,
-                                created_at=datetime.now()
+                                created_at=datetime.now(),
+                                crawl_start_datetime=crawl_start_datetime,
+                                item_acquired_datetime=item_acquired_datetime
                             )
                             db.add(db_result)
                             stored_count += 1
@@ -1011,11 +1642,31 @@ project = {project_path}
                     else:
                         # 単一オブジェクトの場合
                         import uuid
+
+                        # 日時フィールドを処理
+                        crawl_start_datetime = None
+                        item_acquired_datetime = None
+
+                        if isinstance(data, dict):
+                            if 'crawl_start_datetime' in data:
+                                try:
+                                    crawl_start_datetime = datetime.fromisoformat(data['crawl_start_datetime'].replace('Z', '+00:00'))
+                                except (ValueError, TypeError):
+                                    crawl_start_datetime = datetime.now()
+
+                            if 'item_acquired_datetime' in data:
+                                try:
+                                    item_acquired_datetime = datetime.fromisoformat(data['item_acquired_datetime'].replace('Z', '+00:00'))
+                                except (ValueError, TypeError):
+                                    item_acquired_datetime = datetime.now()
+
                         db_result = DBResult(
                             id=str(uuid.uuid4()),  # IDを手動で生成
                             task_id=task_id,
                             data=data,
-                            created_at=datetime.now()
+                            created_at=datetime.now(),
+                            crawl_start_datetime=crawl_start_datetime,
+                            item_acquired_datetime=item_acquired_datetime
                         )
                         db.add(db_result)
                         db.commit()
@@ -1037,11 +1688,31 @@ project = {project_path}
 
                                     # DBに結果を保存
                                     import uuid
+
+                                    # 日時フィールドを処理
+                                    crawl_start_datetime = None
+                                    item_acquired_datetime = None
+
+                                    if isinstance(item_data, dict):
+                                        if 'crawl_start_datetime' in item_data:
+                                            try:
+                                                crawl_start_datetime = datetime.fromisoformat(item_data['crawl_start_datetime'].replace('Z', '+00:00'))
+                                            except (ValueError, TypeError):
+                                                crawl_start_datetime = datetime.now()
+
+                                        if 'item_acquired_datetime' in item_data:
+                                            try:
+                                                item_acquired_datetime = datetime.fromisoformat(item_data['item_acquired_datetime'].replace('Z', '+00:00'))
+                                            except (ValueError, TypeError):
+                                                item_acquired_datetime = datetime.now()
+
                                     db_result = DBResult(
                                         id=str(uuid.uuid4()),  # IDを手動で生成
                                         task_id=task_id,
                                         data=item_data,
-                                        created_at=datetime.now()
+                                        created_at=datetime.now(),
+                                        crawl_start_datetime=crawl_start_datetime,
+                                        item_acquired_datetime=item_acquired_datetime
                                     )
                                     db.add(db_result)
                                     stored_count += 1

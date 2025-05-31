@@ -1182,6 +1182,123 @@ async def fix_failed_tasks(
         )
 
 @router.get(
+    "/{task_id}/results",
+    summary="タスク結果取得",
+    description="指定されたタスクの結果一覧を取得します。"
+)
+async def get_task_results(
+    task_id: str,
+    limit: int = Query(1000, ge=1, le=10000, description="取得件数の制限"),
+    offset: int = Query(0, ge=0, description="オフセット"),
+    db: Session = Depends(get_db)
+):
+    """
+    ## タスク結果取得
+
+    指定されたタスクの結果一覧を取得します。
+
+    ### パラメータ
+    - **task_id**: 結果を取得するタスクのID
+    - **limit**: 取得件数の制限 (1-10000, デフォルト: 1000)
+    - **offset**: オフセット (デフォルト: 0)
+
+    ### レスポンス
+    - **200**: 結果のリストを返します
+    - **404**: タスクが見つからない場合
+    - **500**: サーバーエラー
+    """
+
+    # タスクの存在確認
+    task = db.query(DBTask).filter(DBTask.id == task_id).first()
+    if not task:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found"
+        )
+
+    # データベースから結果を取得
+    query = db.query(DBResult).filter(DBResult.task_id == task_id)
+    results = query.order_by(DBResult.created_at.desc()).offset(offset).limit(limit).all()
+
+    # 結果をフォーマット
+    formatted_results = []
+    for result in results:
+        result_data = {
+            "id": result.id,
+            "task_id": result.task_id,
+            "url": result.url,
+            "created_at": result.created_at.isoformat(),
+            "crawl_start_datetime": result.crawl_start_datetime.isoformat() if result.crawl_start_datetime else None,
+            "item_acquired_datetime": result.item_acquired_datetime.isoformat() if result.item_acquired_datetime else None,
+            "data": result.data
+        }
+        formatted_results.append(result_data)
+
+    return formatted_results
+
+@router.get(
+    "/{task_id}/results/export-formats",
+    summary="利用可能なエクスポート形式取得",
+    description="プロジェクトのDB保存設定に基づいて利用可能なエクスポート形式を取得します。"
+)
+async def get_available_export_formats(
+    task_id: str,
+    db: Session = Depends(get_db)
+):
+    """
+    ## 利用可能なエクスポート形式取得
+
+    プロジェクトのDB保存設定に基づいて利用可能なエクスポート形式を取得します。
+
+    ### パラメータ
+    - **task_id**: タスクのID
+
+    ### レスポンス
+    - **200**: 利用可能なエクスポート形式のリスト
+    - **404**: タスクまたはプロジェクトが見つからない場合
+    """
+    # タスクの存在確認
+    task = db.query(DBTask).filter(DBTask.id == task_id).first()
+    if not task:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found"
+        )
+
+    # プロジェクトのDB保存設定を確認
+    project = db.query(DBProject).filter(DBProject.id == task.project_id).first()
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project not found"
+        )
+
+    # DB保存設定に基づいて利用可能な形式を決定
+    if project.db_save_enabled:
+        # DB保存有効: 多形式エクスポート対応
+        available_formats = [
+            {"format": "json", "name": "JSON", "description": "JSON形式でエクスポート"},
+            {"format": "jsonl", "name": "JSONL", "description": "JSON Lines形式でエクスポート"},
+            {"format": "csv", "name": "CSV", "description": "CSV形式でエクスポート"},
+            {"format": "excel", "name": "Excel", "description": "Excel形式でエクスポート"},
+            {"format": "xml", "name": "XML", "description": "XML形式でエクスポート"}
+        ]
+    else:
+        # DB保存無効: JSONLのみ
+        available_formats = [
+            {"format": "jsonl", "name": "JSONL", "description": "JSON Lines形式でエクスポート（ファイルベース）"}
+        ]
+
+    return {
+        "task_id": task_id,
+        "project_id": project.id,
+        "project_name": project.name,
+        "db_save_enabled": project.db_save_enabled,
+        "available_formats": available_formats,
+        "total_formats": len(available_formats)
+    }
+
+@router.get(
     "/{task_id}/results/download",
     summary="タスク結果ダウンロード",
     description="タスクの結果ファイルを指定された形式でダウンロードします。"
@@ -1207,14 +1324,6 @@ async def download_task_results(
     - **400**: 不正な形式が指定された場合
     - **500**: サーバーエラー
     """
-    # サポートされている形式をチェック
-    supported_formats = ["json", "jsonl", "csv", "excel", "xlsx", "xml"]
-    if format.lower() not in supported_formats:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Unsupported format. Supported formats: {', '.join(supported_formats)}"
-        )
-
     # タスクの存在確認（一時的にuser_idフィルタリングを無効化）
     task = db.query(DBTask).filter(DBTask.id == task_id).first()
     # task = db.query(DBTask).filter(
@@ -1227,69 +1336,153 @@ async def download_task_results(
             detail="Task not found"
         )
 
+    # プロジェクトのDB保存設定を確認
+    project = db.query(DBProject).filter(DBProject.id == task.project_id).first()
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project not found"
+        )
+
+    # DB保存設定に基づいてサポートされている形式を決定
+    if project.db_save_enabled:
+        # DB保存有効: 多形式エクスポート対応
+        supported_formats = ["json", "jsonl", "csv", "excel", "xlsx", "xml"]
+    else:
+        # DB保存無効: JSONLのみ
+        supported_formats = ["jsonl"]
+
+    if format.lower() not in supported_formats:
+        if project.db_save_enabled:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unsupported format: {format}. Supported formats: {', '.join(supported_formats)}"
+            )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"This project has database saving disabled. Only JSONL format is supported for file-based results."
+            )
+
     try:
-        # 結果ファイルのパスを構築
-        scrapy_service = ScrapyPlaywrightService()
-        project = db.query(DBProject).filter(DBProject.id == task.project_id).first()
+        # データベースから結果を取得（優先）
+        results = db.query(DBResult).filter(DBResult.task_id == task_id).all()
 
-        if not project:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Project not found"
-            )
+        if results:
+            # データベースから結果を取得できた場合
+            data = []
+            for result in results:
+                result_data = {
+                    "id": result.id,
+                    "task_id": result.task_id,
+                    "url": result.url,
+                    "created_at": result.created_at.isoformat(),
+                    "crawl_start_datetime": result.crawl_start_datetime.isoformat() if result.crawl_start_datetime else None,
+                    "item_acquired_datetime": result.item_acquired_datetime.isoformat() if result.item_acquired_datetime else None,
+                }
+                # dataフィールドの内容をマージ
+                if result.data:
+                    result_data.update(result.data)
+                data.append(result_data)
 
-        # 結果ファイルパス（実際のファイル配置に基づく順序）
-        # 最初に実際のパス（プロジェクトルートディレクトリ）を試行
-        json_file_path = scrapy_service.base_projects_dir / project.path / f"results_{task_id}.json"
+            print(f"✅ データベースから{len(data)}件の結果を取得")
+        else:
+            # データベースに結果がない場合はファイルから取得（フォールバック）
+            print(f"⚠️ データベースに結果がないため、ファイルから取得を試行")
 
-        # 代替パスも試行
-        if not json_file_path.exists():
-            # 二重パス（プロジェクト内のプロジェクトディレクトリ）
-            json_file_path = scrapy_service.base_projects_dir / project.path / project.path / f"results_{task_id}.json"
+            # 結果ファイルのパスを構築
+            scrapy_service = ScrapyPlaywrightService()
+            project = db.query(DBProject).filter(DBProject.id == task.project_id).first()
 
-        # さらに代替パス
-        if not json_file_path.exists():
-            # プロジェクトディレクトリ内を検索
-            import glob
-            pattern = str(scrapy_service.base_projects_dir / project.path / "**" / f"results_{task_id}.json")
-            matches = glob.glob(pattern, recursive=True)
-            if matches:
-                json_file_path = Path(matches[0])
+            if not project:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Project not found"
+                )
+
+            # 結果ファイルパス（JSONLとJSONの両方を検索）
+            result_file_path = None
+
+            # JSONLファイルを優先的に検索
+            jsonl_file_path = scrapy_service.base_projects_dir / project.path / f"results_{task_id}.jsonl"
+            if jsonl_file_path.exists():
+                result_file_path = jsonl_file_path
             else:
-                # 最後の手段：全体検索
-                pattern = str(scrapy_service.base_projects_dir / "**" / f"results_{task_id}.json")
-                matches = glob.glob(pattern, recursive=True)
-                if matches:
-                    json_file_path = Path(matches[0])
+                # JSONファイルを検索
+                json_file_path = scrapy_service.base_projects_dir / project.path / f"results_{task_id}.json"
+                if json_file_path.exists():
+                    result_file_path = json_file_path
+                else:
+                    # 代替パスも試行
+                    # 二重パス（プロジェクト内のプロジェクトディレクトリ）
+                    jsonl_file_path = scrapy_service.base_projects_dir / project.path / project.path / f"results_{task_id}.jsonl"
+                    json_file_path = scrapy_service.base_projects_dir / project.path / project.path / f"results_{task_id}.json"
 
-        if not json_file_path.exists():
-            # より詳細なエラー情報を提供
-            searched_paths = [
-                str(scrapy_service.base_projects_dir / project.path / project.path / f"results_{task_id}.json"),
-                str(scrapy_service.base_projects_dir / project.path / f"results_{task_id}.json"),
-                f"Pattern: {scrapy_service.base_projects_dir / project.path / '**' / f'results_{task_id}.json'}",
-                f"Global pattern: {scrapy_service.base_projects_dir / '**' / f'results_{task_id}.json'}"
-            ]
+                    if jsonl_file_path.exists():
+                        result_file_path = jsonl_file_path
+                    elif json_file_path.exists():
+                        result_file_path = json_file_path
+                    else:
+                        # プロジェクトディレクトリ内を検索
+                        import glob
+                        # JSONLファイルを検索
+                        pattern = str(scrapy_service.base_projects_dir / project.path / "**" / f"results_{task_id}.jsonl")
+                        matches = glob.glob(pattern, recursive=True)
+                        if matches:
+                            result_file_path = Path(matches[0])
+                        else:
+                            # JSONファイルを検索
+                            pattern = str(scrapy_service.base_projects_dir / project.path / "**" / f"results_{task_id}.json")
+                            matches = glob.glob(pattern, recursive=True)
+                            if matches:
+                                result_file_path = Path(matches[0])
+                            else:
+                                # 最後の手段：全体検索
+                                pattern = str(scrapy_service.base_projects_dir / "**" / f"results_{task_id}.jsonl")
+                                matches = glob.glob(pattern, recursive=True)
+                                if matches:
+                                    result_file_path = Path(matches[0])
+                                else:
+                                    pattern = str(scrapy_service.base_projects_dir / "**" / f"results_{task_id}.json")
+                                    matches = glob.glob(pattern, recursive=True)
+                                    if matches:
+                                        result_file_path = Path(matches[0])
 
-            # タスクの状態も確認
-            task_status = task.status.value if hasattr(task.status, 'value') else str(task.status)
-            task_info = {
-                "task_id": task_id,
-                "task_status": task_status,
-                "items_count": task.items_count or 0,
-                "error_count": task.error_count or 0,
-                "project_path": project.path,
-                "searched_paths": searched_paths
-            }
+            if not result_file_path:
+                # より詳細なエラー情報を提供
+                searched_paths = [
+                    str(scrapy_service.base_projects_dir / project.path / f"results_{task_id}.jsonl"),
+                    str(scrapy_service.base_projects_dir / project.path / f"results_{task_id}.json"),
+                    str(scrapy_service.base_projects_dir / project.path / project.path / f"results_{task_id}.jsonl"),
+                    str(scrapy_service.base_projects_dir / project.path / project.path / f"results_{task_id}.json"),
+                    f"Pattern: {scrapy_service.base_projects_dir / project.path / '**' / f'results_{task_id}.*'}",
+                    f"Global pattern: {scrapy_service.base_projects_dir / '**' / f'results_{task_id}.*'}"
+                ]
 
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Results file not found. Task info: {json.dumps(task_info, indent=2)}"
-            )
+                # タスクの状態も確認
+                task_status = task.status.value if hasattr(task.status, 'value') else str(task.status)
+                task_info = {
+                    "task_id": task_id,
+                    "task_status": task_status,
+                    "items_count": task.items_count or 0,
+                    "error_count": task.error_count or 0,
+                    "project_path": project.path,
+                    "searched_paths": searched_paths
+                }
 
-        # JSONデータを読み込み
-        with open(json_file_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Results not found in database or file. Task info: {json.dumps(task_info, indent=2)}"
+                )
+
+            # ファイル形式に応じてデータを読み込み
+            if result_file_path.suffix == '.jsonl':
+                data = _read_jsonl_file(result_file_path)
+            else:
+                with open(result_file_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+
+            print(f"✅ ファイルから{len(data)}件の結果を取得")
 
         # 形式に応じてファイルを生成
         if format.lower() == "json":
@@ -1472,9 +1665,22 @@ def _create_csv_response(data, task_id):
     if not data:
         raise HTTPException(status_code=400, detail="No data to export")
 
-    # データを正規化
+    # データを正規化（日時フィールドを含む）
     if isinstance(data, list) and len(data) > 0:
-        df = pd.json_normalize(data)
+        # 各アイテムに日時フィールドを追加
+        enhanced_data = []
+        for item in data:
+            enhanced_item = item.copy()
+            # dataフィールド内の日時情報を最上位に移動
+            if isinstance(item.get('data'), dict):
+                data_dict = item['data']
+                if 'crawl_start_datetime' in data_dict:
+                    enhanced_item['crawl_start_datetime'] = data_dict['crawl_start_datetime']
+                if 'item_acquired_datetime' in data_dict:
+                    enhanced_item['item_acquired_datetime'] = data_dict['item_acquired_datetime']
+            enhanced_data.append(enhanced_item)
+
+        df = pd.json_normalize(enhanced_data)
     else:
         df = pd.DataFrame([data])
 
@@ -1541,6 +1747,26 @@ def _create_xml_response(data, task_id):
         media_type="application/xml",
         headers={"Content-Disposition": f"attachment; filename=task_{task_id}_results.xml"}
     )
+
+def _read_jsonl_file(file_path):
+    """JSONLファイルを読み込み"""
+    items = []
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            for line_num, line in enumerate(f, 1):
+                line = line.strip()
+                if line:  # 空行をスキップ
+                    try:
+                        item = json.loads(line)
+                        items.append(item)
+                    except json.JSONDecodeError as e:
+                        print(f"⚠️ JSONL Line {line_num}: JSON decode error - {e}")
+                        continue
+        print(f"📊 JSONL読み込み完了: {len(items)}件 from {file_path.name}")
+        return items
+    except Exception as e:
+        print(f"❌ JSONLファイル読み込みエラー: {e}")
+        return []
 
 def _dict_to_xml(data, parent):
     """辞書をXML要素に変換"""

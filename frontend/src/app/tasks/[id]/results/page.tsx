@@ -24,6 +24,8 @@ interface Result {
   data: Record<string, any>;
   url?: string;
   created_at: string;
+  crawl_start_datetime?: string;
+  item_acquired_datetime?: string;
   task_id: string;
 }
 
@@ -39,11 +41,18 @@ interface Task {
   project?: {
     id: string;
     name: string;
+    db_save_enabled?: boolean;
   };
   spider?: {
     id: string;
     name: string;
   };
+}
+
+interface ExportFormat {
+  format: string;
+  name: string;
+  description: string;
 }
 
 export default function TaskResultsPage() {
@@ -57,6 +66,7 @@ export default function TaskResultsPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedResult, setSelectedResult] = useState<Result | null>(null);
   const [isDownloading, setIsDownloading] = useState<string | null>(null);
+  const [availableFormats, setAvailableFormats] = useState<ExportFormat[]>([]);
 
   useEffect(() => {
     loadData();
@@ -69,6 +79,18 @@ export default function TaskResultsPage() {
       // タスク情報を取得
       const taskData = await apiClient.getTask(taskId);
       setTask(taskData);
+
+      // 利用可能なエクスポート形式を取得
+      try {
+        const formatsData = await apiClient.request(`/api/tasks/${taskId}/results/export-formats`);
+        setAvailableFormats(formatsData.available_formats || []);
+      } catch (formatsError) {
+        console.error('Failed to load export formats:', formatsError);
+        // フォールバック: デフォルトの形式を設定
+        setAvailableFormats([
+          { format: 'jsonl', name: 'JSONL', description: 'JSON Lines形式でエクスポート' }
+        ]);
+      }
 
       // 結果データを取得
       let resultsData = await apiClient.getResults({ task_id: taskId });
@@ -177,41 +199,40 @@ export default function TaskResultsPage() {
 
           {/* Download Buttons */}
           <div className="flex items-center space-x-2">
-            <button
-              onClick={() => handleDownload('json')}
-              disabled={isDownloading === 'json'}
-              className="px-3 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            >
-              {isDownloading === 'json' ? '...' : 'JSON'}
-            </button>
-            <button
-              onClick={() => handleDownload('jsonl')}
-              disabled={isDownloading === 'jsonl'}
-              className="px-3 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            >
-              {isDownloading === 'jsonl' ? '...' : 'JSONL'}
-            </button>
-            <button
-              onClick={() => handleDownload('csv')}
-              disabled={isDownloading === 'csv'}
-              className="px-3 py-2 bg-yellow-600 text-white text-sm rounded-lg hover:bg-yellow-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            >
-              {isDownloading === 'csv' ? '...' : 'CSV'}
-            </button>
-            <button
-              onClick={() => handleDownload('excel')}
-              disabled={isDownloading === 'excel'}
-              className="px-3 py-2 bg-purple-600 text-white text-sm rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            >
-              {isDownloading === 'excel' ? '...' : 'Excel'}
-            </button>
-            <button
-              onClick={() => handleDownload('xml')}
-              disabled={isDownloading === 'xml'}
-              className="px-3 py-2 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            >
-              {isDownloading === 'xml' ? '...' : 'XML'}
-            </button>
+            {availableFormats.map((format) => {
+              const getButtonColor = (formatType: string) => {
+                switch (formatType) {
+                  case 'json': return 'bg-blue-600 hover:bg-blue-700';
+                  case 'jsonl': return 'bg-green-600 hover:bg-green-700';
+                  case 'csv': return 'bg-yellow-600 hover:bg-yellow-700';
+                  case 'excel': return 'bg-purple-600 hover:bg-purple-700';
+                  case 'xml': return 'bg-red-600 hover:bg-red-700';
+                  default: return 'bg-gray-600 hover:bg-gray-700';
+                }
+              };
+
+              return (
+                <button
+                  key={format.format}
+                  onClick={() => handleDownload(format.format as any)}
+                  disabled={isDownloading === format.format}
+                  className={`px-3 py-2 text-white text-sm rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors ${getButtonColor(format.format)}`}
+                  title={format.description}
+                >
+                  {isDownloading === format.format ? '...' : format.name}
+                </button>
+              );
+            })}
+
+            {/* DB保存設定の表示 */}
+            {task?.project && (
+              <div className="ml-4 px-3 py-2 bg-gray-700 rounded-lg text-sm">
+                <span className="text-gray-400">DB保存: </span>
+                <span className={task.project.db_save_enabled ? 'text-green-400' : 'text-yellow-400'}>
+                  {task.project.db_save_enabled ? '有効' : '無効'}
+                </span>
+              </div>
+            )}
           </div>
         </div>
 
@@ -279,9 +300,21 @@ export default function TaskResultsPage() {
                         <h3 className="text-lg font-semibold text-white">
                           結果 #{index + 1}
                         </h3>
-                        <p className="text-sm text-gray-400">
-                          {formatDate(result.created_at)}
-                        </p>
+                        <div className="text-sm text-gray-400 space-y-1">
+                          <p>作成: {formatDate(result.created_at)}</p>
+                          {result.crawl_start_datetime && (
+                            <p className="flex items-center space-x-1">
+                              <Clock className="h-3 w-3" />
+                              <span>開始: {formatDate(result.crawl_start_datetime)}</span>
+                            </p>
+                          )}
+                          {result.item_acquired_datetime && (
+                            <p className="flex items-center space-x-1">
+                              <CheckCircle className="h-3 w-3" />
+                              <span>取得: {formatDate(result.item_acquired_datetime)}</span>
+                            </p>
+                          )}
+                        </div>
                       </div>
                     </div>
 

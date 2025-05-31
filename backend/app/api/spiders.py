@@ -7,6 +7,7 @@ from ..database import get_db, Spider as DBSpider, Project as DBProject, User as
 from ..models.schemas import Spider, SpiderCreate, SpiderUpdate
 from ..services.scrapy_service import ScrapyPlaywrightService
 from ..services.integrity_service import integrity_service
+from ..services.default_settings_service import default_settings_service
 from .auth import get_current_active_user
 
 router = APIRouter(
@@ -500,6 +501,18 @@ async def create_spider(
             detail="Spider with this name already exists in the project"
         )
 
+    # デフォルト設定を適用（JSONL形式対応）
+    spider_type = spider.template or "basic"
+    default_settings = default_settings_service.get_spider_default_settings(spider_type)
+
+    # 既存の設定とマージ
+    merged_settings = default_settings.copy()
+    if spider.settings:
+        merged_settings.update(spider.settings)
+
+    print(f"DEBUG: Applied default settings for spider type: {spider_type}")
+    print(f"DEBUG: Default feed format: {merged_settings.get('FEEDS', {}).get('results.jsonl', {}).get('format', 'unknown')}")
+
     # スパイダーコード内のname=を確実に更新（継承関係も保持）
     updated_code = update_spider_name_in_code(spider.code, spider.name)
     print(f"DEBUG: Updated spider code name to: {spider.name}")
@@ -537,13 +550,13 @@ async def create_spider(
     file_created = False
 
     try:
-        # 1. データベースに保存
+        # 1. データベースに保存（デフォルト設定適用）
         db_spider = DBSpider(
             id=str(uuid.uuid4()),
             name=spider.name,
             code=updated_code,
             template=spider.template,
-            settings=spider.settings,
+            settings=merged_settings,  # デフォルト設定を適用
             project_id=spider.project_id,
             user_id=user_id
         )
@@ -1226,3 +1239,118 @@ async def check_all_spider_indentation(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to check spider indentation: {str(e)}"
         )
+
+@router.post("/{spider_id}/run-with-watchdog")
+async def run_spider_with_watchdog(
+    spider_id: str,
+    project_id: str,
+    request: dict,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_active_user)
+):
+    """watchdog監視付きでスパイダーを実行"""
+    try:
+        # スパイダーの存在確認
+        spider = db.query(DBSpider).filter(
+            DBSpider.id == spider_id,
+            DBSpider.project_id == project_id,
+            DBSpider.user_id == current_user.id
+        ).first()
+
+        if not spider:
+            raise HTTPException(status_code=404, detail="Spider not found")
+
+        # プロジェクトの存在確認
+        project = db.query(DBProject).filter(
+            DBProject.id == project_id,
+            DBProject.user_id == current_user.id
+        ).first()
+
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        # watchdog監視付きタスクを開始
+        from ..tasks.spider_tasks import run_spider_with_watchdog_task
+
+        # Celeryタスクを開始
+        celery_task = run_spider_with_watchdog_task.delay(
+            project_id=project_id,
+            spider_id=spider_id,
+            settings=request.get('settings', {})
+        )
+
+        return {
+            "task_id": celery_task.id,
+            "celery_task_id": celery_task.id,
+            "status": "started_with_watchdog",
+            "monitoring": "jsonl_file_watchdog",
+            "spider_name": spider.name,
+            "project_name": project.name,
+            "message": f"Spider {spider.name} started with watchdog monitoring"
+        }
+
+    except Exception as e:
+        print(f"❌ Error running spider with watchdog: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/commands/available")
+async def get_available_commands(
+    project_id: str,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_active_user)
+):
+    """プロジェクトで利用可能なScrapyコマンドを取得"""
+    try:
+        # プロジェクトの存在確認
+        project = db.query(DBProject).filter(
+            DBProject.id == project_id,
+            DBProject.user_id == current_user.id
+        ).first()
+
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        # プロジェクトパスを構築
+        from pathlib import Path
+        scrapy_service = ScrapyPlaywrightService()
+        project_path = scrapy_service.base_projects_dir / project.path
+        commands_dir = project_path / project.path / "commands"
+
+        available_commands = {
+            "standard_commands": [
+                {
+                    "name": "crawl",
+                    "description": "Run a spider",
+                    "usage": "scrapy crawl <spider_name>",
+                    "watchdog_support": False
+                }
+            ],
+            "custom_commands": [],
+            "watchdog_available": False
+        }
+
+        # watchdogライブラリの確認
+        try:
+            import watchdog
+            available_commands["watchdog_available"] = True
+        except ImportError:
+            available_commands["watchdog_available"] = False
+
+        # カスタムコマンドの確認
+        if commands_dir.exists():
+            crawlwithwatchdog_file = commands_dir / "crawlwithwatchdog.py"
+            if crawlwithwatchdog_file.exists():
+                available_commands["custom_commands"].append({
+                    "name": "crawlwithwatchdog",
+                    "description": "Run a spider with watchdog monitoring for real-time DB insertion",
+                    "usage": "scrapy crawlwithwatchdog <spider_name> -o results.jsonl --task-id=<task_id>",
+                    "watchdog_support": True,
+                    "file_path": str(crawlwithwatchdog_file),
+                    "requirements": ["watchdog"] if not available_commands["watchdog_available"] else []
+                })
+
+        return available_commands
+
+    except Exception as e:
+        print(f"❌ Error getting available commands: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))

@@ -308,6 +308,8 @@ async def export_results(
             "task_id": result.task_id,
             "url": result.url,
             "created_at": result.created_at.isoformat(),
+            "crawl_start_datetime": result.crawl_start_datetime.isoformat() if result.crawl_start_datetime else None,
+            "item_acquired_datetime": result.item_acquired_datetime.isoformat() if result.item_acquired_datetime else None,
             "data": result.data
         }
 

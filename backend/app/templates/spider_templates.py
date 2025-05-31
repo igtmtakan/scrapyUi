@@ -10,6 +10,7 @@ def get_basic_spider_template(spider_name: str, project_name: str, start_urls: l
     return f"""import scrapy
 from scrapy_playwright.page import PageMethod
 from {project_name}.items import {project_name.capitalize()}Item
+from datetime import datetime
 
 
 class {spider_name.capitalize()}Spider(scrapy.Spider):
@@ -19,7 +20,12 @@ class {spider_name.capitalize()}Spider(scrapy.Spider):
         {urls_str}
     ]
 
-    # 最適化されたPlaywright設定
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # クロールスタート日時を記録
+        self.crawl_start_datetime = datetime.now().isoformat()
+
+    # 最適化されたPlaywright設定（JSONL形式対応）
     custom_settings = {{
         'PLAYWRIGHT_BROWSER_TYPE': 'chromium',
         'PLAYWRIGHT_LAUNCH_OPTIONS': {{
@@ -30,6 +36,25 @@ class {spider_name.capitalize()}Spider(scrapy.Spider):
         'CONCURRENT_REQUESTS': 1,
         'DOWNLOAD_DELAY': 0.5,
         'AUTOTHROTTLE_ENABLED': False,
+        'FEED_EXPORT_ENCODING': 'utf-8',
+        'FEEDS': {{
+            'results.jsonl': {{
+                'format': 'jsonl',
+                'encoding': 'utf8',
+                'store_empty': False,
+                'item_export_kwargs': {{
+                    'ensure_ascii': False
+                }}
+            }}
+        }},
+        # ScrapyUI データベースパイプライン設定
+        'ITEM_PIPELINES': {{
+            '{project_name}.pipelines.ScrapyUIDatabasePipeline': 100,
+            '{project_name}.pipelines.ScrapyUIJSONPipeline': 200,
+        }},
+        'SCRAPYUI_DATABASE_URL': None,  # 実行時に設定
+        'SCRAPYUI_TASK_ID': None,       # 実行時に設定
+        'SCRAPYUI_JSON_FILE': None,     # 実行時に設定
     }}
 
     # 新しいstart()メソッド（Scrapy 2.13.0+対応）
@@ -71,6 +96,9 @@ class {spider_name.capitalize()}Spider(scrapy.Spider):
             scrapy_item['title'] = item.css('h2::text').get()
             scrapy_item['description'] = item.css('p::text').get()
             scrapy_item['url'] = response.url
+            # 日時フィールドを追加
+            scrapy_item['crawl_start_datetime'] = self.crawl_start_datetime
+            scrapy_item['item_acquired_datetime'] = datetime.now().isoformat()
             yield scrapy_item
 
         # 次のページへのリンクを辿る例
@@ -100,6 +128,7 @@ def get_advanced_spider_template(spider_name: str, project_name: str, start_urls
 from scrapy_playwright.page import PageMethod
 from {project_name}.items import {project_name.capitalize()}Item
 from urllib.parse import urljoin
+from datetime import datetime
 import re
 
 
@@ -110,7 +139,12 @@ class {spider_name.capitalize()}Spider(scrapy.Spider):
         {urls_str}
     ]
 
-    # 最適化されたPlaywright設定（高度版）
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # クロールスタート日時を記録
+        self.crawl_start_datetime = datetime.now().isoformat()
+
+    # 最適化されたPlaywright設定（高度版・JSONL形式対応）
     custom_settings = {{
         'PLAYWRIGHT_BROWSER_TYPE': 'chromium',
         'PLAYWRIGHT_LAUNCH_OPTIONS': {{
@@ -123,6 +157,25 @@ class {spider_name.capitalize()}Spider(scrapy.Spider):
         'AUTOTHROTTLE_ENABLED': False,
         'ROBOTSTXT_OBEY': True,
         'USER_AGENT': 'ScrapyUI Advanced Spider 1.0',
+        'FEED_EXPORT_ENCODING': 'utf-8',
+        'FEEDS': {{
+            'results.jsonl': {{
+                'format': 'jsonl',
+                'encoding': 'utf8',
+                'store_empty': False,
+                'item_export_kwargs': {{
+                    'ensure_ascii': False
+                }}
+            }}
+        }},
+        # ScrapyUI データベースパイプライン設定
+        'ITEM_PIPELINES': {{
+            '{project_name}.pipelines.ScrapyUIDatabasePipeline': 100,
+            '{project_name}.pipelines.ScrapyUIJSONPipeline': 200,
+        }},
+        'SCRAPYUI_DATABASE_URL': None,  # 実行時に設定
+        'SCRAPYUI_TASK_ID': None,       # 実行時に設定
+        'SCRAPYUI_JSON_FILE': None,     # 実行時に設定
     }}
 
     # 新しいstart()メソッド（Scrapy 2.13.0+対応）
@@ -183,6 +236,10 @@ class {spider_name.capitalize()}Spider(scrapy.Spider):
             content = item.css('p::text, .content::text, .description::text').getall()
             scrapy_item['content'] = ' '.join([text.strip() for text in content if text.strip()])
 
+            # 日時フィールドを追加
+            scrapy_item['crawl_start_datetime'] = self.crawl_start_datetime
+            scrapy_item['item_acquired_datetime'] = datetime.now().isoformat()
+
             yield scrapy_item
 
         # 次のページへのリンクを探す
@@ -221,6 +278,7 @@ def get_mobile_spider_template(spider_name: str, project_name: str, start_urls: 
     return f"""import scrapy
 from scrapy_playwright.page import PageMethod
 from {project_name}.items import {project_name.capitalize()}Item
+from datetime import datetime
 
 
 class {spider_name.capitalize()}Spider(scrapy.Spider):
@@ -230,7 +288,12 @@ class {spider_name.capitalize()}Spider(scrapy.Spider):
         {urls_str}
     ]
 
-    # 最適化されたPlaywright設定（モバイル用）
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # クロールスタート日時を記録
+        self.crawl_start_datetime = datetime.now().isoformat()
+
+    # 最適化されたPlaywright設定（モバイル用・JSONL形式対応）
     custom_settings = {{
         'PLAYWRIGHT_BROWSER_TYPE': 'chromium',
         'PLAYWRIGHT_LAUNCH_OPTIONS': {{
@@ -250,6 +313,25 @@ class {spider_name.capitalize()}Spider(scrapy.Spider):
         'DOWNLOAD_DELAY': 0.5,
         'AUTOTHROTTLE_ENABLED': False,
         'USER_AGENT': 'ScrapyUI Mobile Spider 1.0',
+        'FEED_EXPORT_ENCODING': 'utf-8',
+        'FEEDS': {{
+            'results.jsonl': {{
+                'format': 'jsonl',
+                'encoding': 'utf8',
+                'store_empty': False,
+                'item_export_kwargs': {{
+                    'ensure_ascii': False
+                }}
+            }}
+        }},
+        # ScrapyUI データベースパイプライン設定
+        'ITEM_PIPELINES': {{
+            '{project_name}.pipelines.ScrapyUIDatabasePipeline': 100,
+            '{project_name}.pipelines.ScrapyUIJSONPipeline': 200,
+        }},
+        'SCRAPYUI_DATABASE_URL': None,  # 実行時に設定
+        'SCRAPYUI_TASK_ID': None,       # 実行時に設定
+        'SCRAPYUI_JSON_FILE': None,     # 実行時に設定
     }}
 
     def start_requests(self):
@@ -302,6 +384,9 @@ class {spider_name.capitalize()}Spider(scrapy.Spider):
             scrapy_item['content'] = ' '.join([text.strip() for text in content if text.strip()])
 
             scrapy_item['url'] = response.url
+            # 日時フィールドを追加
+            scrapy_item['crawl_start_datetime'] = self.crawl_start_datetime
+            scrapy_item['item_acquired_datetime'] = datetime.now().isoformat()
             yield scrapy_item
 
         # 次のページ（モバイル用）

@@ -29,6 +29,14 @@ export function ScriptEditor({
   fileName = 'spider.py',
   className = ''
 }: ScriptEditorProps) {
+  // Props をログ出力
+  console.log('📝 ScriptEditor props:', {
+    fileName,
+    valueLength: value?.length || 0,
+    valuePreview: value?.substring(0, 100) + (value?.length > 100 ? '...' : ''),
+    isEmpty: value === '',
+    language
+  });
   const editorRef = useRef<any>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [errors, setErrors] = useState<any[]>([])

@@ -26,6 +26,20 @@ class ExportService:
 
         return str(filepath)
 
+    def export_to_jsonl(self, data: List[Dict[str, Any]], filename: Optional[str] = None) -> str:
+        """JSONLエクスポート"""
+        if filename is None:
+            filename = f"export_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.jsonl"
+
+        filepath = self.export_dir / filename
+
+        with open(filepath, 'w', encoding='utf-8') as f:
+            for item in data:
+                json.dump(item, f, ensure_ascii=False)
+                f.write('\n')
+
+        return str(filepath)
+
     def export_to_csv(self, data: List[Dict[str, Any]], filename: Optional[str] = None) -> str:
         """CSVエクスポート"""
         if filename is None:

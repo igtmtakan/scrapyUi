@@ -297,34 +297,105 @@ class {project_name.capitalize()}Pipeline:
 def _initialize_project_files_from_filesystem(db: Session, project: Project) -> List[DBProjectFile]:
     """ファイルシステムからプロジェクトファイルをデータベースに初期化"""
     try:
+        from pathlib import Path
+
         db_files = []
-        files_dir = get_project_files_dir(project.id)
 
-        for filename in SCRAPY_FILES:
-            file_path = files_dir / filename
-            if file_path.exists():
-                content = file_path.read_text(encoding='utf-8')
-            else:
-                content = get_default_file_content(filename, project.name)
+        # 実際のプロジェクトディレクトリから読み取り
+        scrapy_projects_dir = Path("scrapy_projects")
+        actual_project_dir = scrapy_projects_dir / project.path
 
-            # データベースに保存
-            db_file = DBProjectFile(
-                id=str(uuid.uuid4()),
-                name=filename,
-                path=filename,
-                content=content,
-                file_type="python" if filename.endswith('.py') else "config",
-                project_id=project.id,
-                user_id=project.user_id
-            )
-            db.add(db_file)
-            db_files.append(db_file)
+        # プロジェクト構造のパスパターンを試す
+        possible_project_dirs = [
+            actual_project_dir / project.path,  # 標準構造: scrapy_projects/project_path/project_path/
+            actual_project_dir,                 # 簡略構造: scrapy_projects/project_path/
+        ]
+
+        project_package_dir = None
+        for dir_path in possible_project_dirs:
+            if dir_path.exists():
+                project_package_dir = dir_path
+                break
+
+        if not project_package_dir:
+            # ファイルシステムにプロジェクトが見つからない場合はデフォルト内容を使用
+            print(f"⚠️ Project directory not found in filesystem, using default content: {project.path}")
+            files_dir = get_project_files_dir(project.id)
+
+            for filename in SCRAPY_FILES:
+                file_path = files_dir / filename
+                if file_path.exists():
+                    content = file_path.read_text(encoding='utf-8')
+                else:
+                    content = get_default_file_content(filename, project.name)
+
+                # ファイル名とパスを正しく設定
+                file_name = filename.split('/')[-1]  # ファイル名のみ
+                file_path = filename  # フルパス
+
+                # データベースに保存
+                db_file = DBProjectFile(
+                    id=str(uuid.uuid4()),
+                    name=file_name,
+                    path=file_path,
+                    content=content,
+                    file_type="python" if filename.endswith('.py') else "config",
+                    project_id=project.id,
+                    user_id=project.user_id
+                )
+                db.add(db_file)
+                db_files.append(db_file)
+        else:
+            # ファイルシステムから実際のファイル内容を読み取り
+            print(f"✅ Reading project files from filesystem: {project_package_dir}")
+
+            # 実際のファイルマッピング
+            file_mappings = [
+                ("scrapy.cfg", actual_project_dir / "scrapy.cfg"),
+                ("settings.py", project_package_dir / "settings.py"),
+                ("items.py", project_package_dir / "items.py"),
+                ("pipelines.py", project_package_dir / "pipelines.py"),
+                ("middlewares.py", project_package_dir / "middlewares.py"),
+                ("__init__.py", project_package_dir / "__init__.py"),
+                ("spiders/__init__.py", project_package_dir / "spiders" / "__init__.py"),
+            ]
+
+            for db_filename, actual_file_path in file_mappings:
+                if actual_file_path.exists():
+                    try:
+                        content = actual_file_path.read_text(encoding='utf-8')
+                        print(f"  📄 Read from filesystem: {db_filename} ({len(content)} chars)")
+                    except Exception as read_error:
+                        print(f"  ❌ Failed to read {actual_file_path}: {read_error}")
+                        content = get_default_file_content(db_filename, project.name)
+                else:
+                    print(f"  📝 Using default content: {db_filename}")
+                    content = get_default_file_content(db_filename, project.name)
+
+                # ファイル名とパスを正しく設定
+                file_name = db_filename.split('/')[-1]  # ファイル名のみ
+                file_path = db_filename  # フルパス
+
+                # データベースに保存
+                db_file = DBProjectFile(
+                    id=str(uuid.uuid4()),
+                    name=file_name,
+                    path=file_path,
+                    content=content,
+                    file_type="python" if db_filename.endswith('.py') else "config",
+                    project_id=project.id,
+                    user_id=project.user_id
+                )
+                db.add(db_file)
+                db_files.append(db_file)
 
         db.commit()
+        print(f"✅ Initialized {len(db_files)} project files in database")
         return db_files
 
     except Exception as e:
         db.rollback()
+        print(f"❌ Failed to initialize project files: {str(e)}")
         raise Exception(f"Failed to initialize project files: {str(e)}")
 
 @router.get("/projects/{project_id}/files/", response_model=List[ProjectFileResponse])
@@ -348,17 +419,28 @@ async def get_project_files(project_id: str, db: Session = Depends(get_db)):
         # レスポンス形式に変換
         files = []
         for db_file in db_files:
+            # content が bytes の場合は文字列に変換
+            content = db_file.content
+            if isinstance(content, bytes):
+                content = content.decode('utf-8')
+            elif content is None:
+                content = ""
+
             files.append(ProjectFileResponse(
                 id=db_file.id,
                 name=db_file.name,
                 path=db_file.path,
-                content=db_file.content,
+                content=content,
                 file_type=db_file.file_type,
                 project_id=db_file.project_id,
                 created_at=db_file.created_at,
                 updated_at=db_file.updated_at,
-                size=len(db_file.content.encode('utf-8'))
+                size=len(content.encode('utf-8'))
             ))
+
+        print(f"📁 Returning {len(files)} project files for project {project_id}:")
+        for file in files:
+            print(f"  - {file.name} ({file.path}) - {len(file.content)} chars")
 
         return files
 
@@ -379,10 +461,10 @@ async def get_project_file(project_id: str, file_path: str, db: Session = Depend
         if '..' in file_path or file_path.startswith('/'):
             raise HTTPException(status_code=400, detail="Invalid file path")
 
-        # データベースからファイルを取得
+        # データベースからファイルを取得（nameまたはpathで検索）
         db_file = db.query(DBProjectFile).filter(
             DBProjectFile.project_id == project_id,
-            DBProjectFile.name == file_path
+            (DBProjectFile.name == file_path) | (DBProjectFile.path == file_path)
         ).first()
 
         if not db_file:
@@ -400,16 +482,23 @@ async def get_project_file(project_id: str, file_path: str, db: Session = Depend
             db.add(db_file)
             db.commit()
 
+        # content が bytes の場合は文字列に変換
+        content = db_file.content
+        if isinstance(content, bytes):
+            content = content.decode('utf-8')
+        elif content is None:
+            content = ""
+
         return ProjectFileResponse(
             id=db_file.id,
             name=db_file.name,
             path=db_file.path,
-            content=db_file.content,
+            content=content,
             file_type=db_file.file_type,
             project_id=db_file.project_id,
             created_at=db_file.created_at,
             updated_at=db_file.updated_at,
-            size=len(db_file.content.encode('utf-8'))
+            size=len(content.encode('utf-8'))
         )
 
     except HTTPException:
