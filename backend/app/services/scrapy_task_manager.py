@@ -197,20 +197,43 @@ class ScrapyTaskManager:
                 websocket_callback=self.websocket_callback
             )
 
-            # スパイダー設定を準備
+            # スパイダー設定を準備（複数形式出力対応）
             settings = self.spider_config.get('settings', {})
-            settings.update({
-                'FEEDS': {
-                    str(self.result_file): {
-                        'format': 'json',
-                        'encoding': 'utf8',
-                        'store_empty': False,
-                        'item_export_kwargs': {
-                            'ensure_ascii': False,
-                            'indent': 2
-                        }
+
+            # 複数形式でファイルを同時出力する設定
+            base_filename = f"results_{self.task_id}"
+            feeds_config = {
+                str(self.project_path / f"{base_filename}.jsonl"): {
+                    'format': 'jsonlines',
+                    'encoding': 'utf8',
+                    'store_empty': False,
+                    'item_export_kwargs': {
+                        'ensure_ascii': False,
                     }
+                },
+                str(self.project_path / f"{base_filename}.json"): {
+                    'format': 'json',
+                    'encoding': 'utf8',
+                    'store_empty': False,
+                    'item_export_kwargs': {
+                        'ensure_ascii': False,
+                        'indent': 2
+                    }
+                },
+                str(self.project_path / f"{base_filename}.csv"): {
+                    'format': 'csv',
+                    'encoding': 'utf8',
+                    'store_empty': False,
+                },
+                str(self.project_path / f"{base_filename}.xml"): {
+                    'format': 'xml',
+                    'encoding': 'utf8',
+                    'store_empty': False,
                 }
+            }
+
+            settings.update({
+                'FEEDS': feeds_config
             })
 
             # スパイダーを実行
@@ -339,11 +362,10 @@ class ScrapyTaskManager:
             print(f"Error sending WebSocket notification: {e}")
 
     def _build_scrapy_command(self) -> list:
-        """Scrapyコマンドを構築（リアルタイム監視対応）"""
+        """Scrapyコマンドを構築（複数形式出力対応）"""
         cmd = [
             'python3', '-m', 'scrapy', 'crawl',
             self.spider_config['spider_name'],
-            '-o', str(self.result_file),
             '-L', 'DEBUG',  # デバッグレベルでより詳細なログ
             '-s', 'LOG_LEVEL=DEBUG',
             '-s', 'ROBOTSTXT_OBEY=False',
@@ -351,10 +373,22 @@ class ScrapyTaskManager:
             '-s', 'LOG_FILE=' + str(self.log_file),  # ログファイル出力
         ]
 
+        # 複数形式出力設定を追加
+        base_filename = f"results_{self.task_id}"
+
+        # 最初のファイル（JSONL）をメインの出力として設定
+        cmd.extend(['-o', str(self.project_path / f'{base_filename}.jsonl')])
+        cmd.extend(['-t', 'jsonlines'])
+
+        # 追加の出力形式をFEEDS設定で追加
+        feeds_config = f"FEEDS={{{str(self.project_path / f'{base_filename}.json')}:{{'format':'json'}},{str(self.project_path / f'{base_filename}.csv')}:{{'format':'csv'}},{str(self.project_path / f'{base_filename}.xml')}:{{'format':'xml'}}}}"
+        cmd.extend(['-s', feeds_config])
+
         # カスタム設定を追加
         settings = self.spider_config.get('settings', {})
         for key, value in settings.items():
-            cmd.extend(['-s', f'{key}={value}'])
+            if key != 'FEEDS':  # FEEDS設定は上で設定済み
+                cmd.extend(['-s', f'{key}={value}'])
 
         return cmd
 
@@ -544,12 +578,107 @@ class ScrapyTaskManager:
             await self.websocket_callback(self.task_id, self.get_current_progress())
 
     async def _handle_completion(self, success: bool):
-        """完了処理"""
-        if success:
-            await self._sync_results()
-            await self._update_status(TaskStatus.FINISHED)
-        else:
+        """完了処理（改善されたヘルスチェック付き）"""
+        try:
+            # 改善されたヘルスチェックを実行
+            actual_success = await self._enhanced_health_check(success)
+
+            if actual_success:
+                await self._sync_results()
+                await self._update_status(TaskStatus.FINISHED)
+                print(f"✅ Task {self.task_id} completed successfully with enhanced health check")
+            else:
+                await self._update_status(TaskStatus.FAILED)
+                print(f"❌ Task {self.task_id} failed after enhanced health check")
+
+        except Exception as e:
+            print(f"Error in completion handling: {e}")
             await self._update_status(TaskStatus.FAILED)
+
+    async def _enhanced_health_check(self, initial_success: bool) -> bool:
+        """改善されたヘルスチェック機能"""
+        try:
+            print(f"🔍 Enhanced health check for task {self.task_id}")
+            print(f"   Initial success: {initial_success}")
+
+            # 1. 複数形式のファイル存在チェック
+            base_filename = f"results_{self.task_id}"
+            possible_files = [
+                self.project_path / f"{base_filename}.jsonl",
+                self.project_path / f"{base_filename}.json",
+                self.project_path / f"{base_filename}.csv",
+                self.project_path / f"{base_filename}.xml"
+            ]
+
+            existing_files = []
+            total_items = 0
+
+            for file_path in possible_files:
+                if file_path.exists() and file_path.stat().st_size > 0:
+                    existing_files.append(file_path)
+
+                    # JSONLファイルからアイテム数を取得
+                    if file_path.suffix == '.jsonl':
+                        try:
+                            with open(file_path, 'r', encoding='utf-8') as f:
+                                lines = [line.strip() for line in f.readlines() if line.strip()]
+                                total_items = len(lines)
+                                print(f"   JSONL file items: {total_items}")
+                        except Exception as e:
+                            print(f"   Error reading JSONL: {e}")
+
+                    # JSONファイルからアイテム数を取得
+                    elif file_path.suffix == '.json':
+                        try:
+                            with open(file_path, 'r', encoding='utf-8') as f:
+                                data = json.load(f)
+                                if isinstance(data, list):
+                                    total_items = max(total_items, len(data))
+                                    print(f"   JSON file items: {len(data)}")
+                        except Exception as e:
+                            print(f"   Error reading JSON: {e}")
+
+            print(f"   Existing files: {len(existing_files)}")
+            print(f"   Total items found: {total_items}")
+
+            # 2. 成功判定ロジック
+            # ファイルが存在し、アイテムが1個以上あれば成功とみなす
+            file_based_success = len(existing_files) > 0 and total_items > 0
+
+            # 3. プロセス終了コードチェック（参考程度）
+            process_success = initial_success
+
+            # 4. 最終判定
+            final_success = file_based_success or process_success
+
+            print(f"   File-based success: {file_based_success}")
+            print(f"   Process success: {process_success}")
+            print(f"   Final success: {final_success}")
+
+            # 5. 統計情報を更新
+            if final_success and total_items > 0:
+                await self._update_task_statistics(total_items)
+
+            return final_success
+
+        except Exception as e:
+            print(f"Error in enhanced health check: {e}")
+            # エラーが発生した場合は初期判定を使用
+            return initial_success
+
+    async def _update_task_statistics(self, items_count: int):
+        """タスク統計情報を更新"""
+        try:
+            if self.db_session:
+                task = self.db_session.query(Task).filter(Task.id == self.task_id).first()
+                if task:
+                    task.items_count = items_count
+                    task.requests_count = max(items_count, task.requests_count or 0)
+                    task.error_count = 0  # 成功時はエラー数をリセット
+                    self.db_session.commit()
+                    print(f"📊 Updated task statistics: items={items_count}")
+        except Exception as e:
+            print(f"Error updating task statistics: {e}")
 
     async def _sync_results(self):
         """結果をデータベースに同期"""

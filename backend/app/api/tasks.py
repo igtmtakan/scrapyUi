@@ -1095,8 +1095,48 @@ def _get_logs_from_file(task_id: str, task, db: Session, limit: int = 100, level
         return []
 
 @router.post(
+    "/auto-recovery",
+    summary="タスク自動修復",
+    description="失敗と判定されたが実際にはデータが存在するタスクを自動修復します。"
+)
+async def auto_recovery_tasks(
+    hours_back: int = Query(24, description="過去何時間のタスクをチェックするか"),
+    db: Session = Depends(get_db)
+    # current_user: User = Depends(get_current_active_user)  # 一時的に無効化
+):
+    """
+    ## タスク自動修復
+
+    失敗と判定されたが実際にはデータファイルが存在するタスクを自動的に修復します。
+
+    ### パラメータ
+    - **hours_back**: 過去何時間のタスクをチェックするか（デフォルト: 24時間）
+
+    ### レスポンス
+    - **200**: 修復結果を返します
+    - **500**: サーバーエラー
+    """
+    try:
+        from ..services.task_auto_recovery import task_auto_recovery_service
+
+        # 自動修復を実行
+        recovery_results = await task_auto_recovery_service.run_auto_recovery(hours_back)
+
+        return {
+            "status": "success",
+            "message": f"Auto recovery completed: {recovery_results.get('recovered_tasks', 0)}/{recovery_results.get('checked_tasks', 0)} tasks recovered",
+            "results": recovery_results
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Auto recovery failed: {str(e)}"
+        )
+
+@router.post(
     "/fix-failed-tasks",
-    summary="FAILEDタスクの修正",
+    summary="FAILEDタスクの修正（旧版）",
     description="実際にはデータを取得しているがFAILEDとマークされているタスクを修正します。"
 )
 async def fix_failed_tasks(
@@ -1512,7 +1552,7 @@ async def download_task_results(
 )
 async def download_task_results_file(
     task_id: str,
-    format: str = Query("jsonl", description="ダウンロード形式 (jsonl, json, csv, xml)"),
+    format: str = Query("jsonl", description="ダウンロード形式 (jsonl, json, csv, excel, xml)"),
     db: Session = Depends(get_db)
     # current_user: User = Depends(get_current_active_user)  # 一時的に無効化
 ):
@@ -1551,7 +1591,7 @@ async def download_task_results_file(
             )
 
         # サポートされている形式をチェック
-        supported_formats = ["jsonl", "json", "csv", "xml"]
+        supported_formats = ["jsonl", "json", "csv", "excel", "xlsx", "xml"]
         if format.lower() not in supported_formats:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -1591,6 +1631,33 @@ async def download_task_results_file(
                             result_file_path = Path(pattern)
 
         if not result_file_path:
+            # EXCEL形式の場合はDBからデータを取得して生成
+            if format.lower() in ["excel", "xlsx"]:
+                # データベースから結果を取得
+                results = db.query(DBResult).filter(DBResult.task_id == task_id).all()
+                if results:
+                    # 結果データを変換
+                    data = [result.data for result in results]
+                    return _create_excel_response(data, task_id)
+                else:
+                    # JSONLファイルからデータを読み込んでExcel生成を試行
+                    jsonl_file_path = scrapy_service.base_projects_dir / project.path / f"results_{task_id}.jsonl"
+                    if jsonl_file_path.exists():
+                        data = _read_jsonl_file(jsonl_file_path)
+                        if data:
+                            return _create_excel_response(data, task_id)
+
+                    # JSONファイルからデータを読み込んでExcel生成を試行
+                    json_file_path = scrapy_service.base_projects_dir / project.path / f"results_{task_id}.json"
+                    if json_file_path.exists():
+                        try:
+                            with open(json_file_path, 'r', encoding='utf-8') as f:
+                                data = json.load(f)
+                                if data:
+                                    return _create_excel_response(data, task_id)
+                        except Exception as e:
+                            print(f"Error reading JSON file: {e}")
+
             # タスクの状態も確認
             task_status = task.status.value if hasattr(task.status, 'value') else str(task.status)
             task_info = {
@@ -1612,6 +1679,8 @@ async def download_task_results_file(
             "jsonl": "application/x-ndjson",
             "json": "application/json",
             "csv": "text/csv",
+            "excel": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             "xml": "application/xml"
         }
 
@@ -1770,12 +1839,33 @@ async def load_results_from_file(
 
 def _create_json_response(data, task_id):
     """JSON形式のレスポンスを作成"""
-    json_str = json.dumps(data, ensure_ascii=False, indent=2)
+    if not data:
+        raise HTTPException(status_code=400, detail="No data to export")
+
+    # データがリストでない場合はリストに変換
+    if not isinstance(data, list):
+        data = [data]
+
+    # タイムスタンプを追加
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+
+    # メタデータを追加
+    export_data = {
+        "export_info": {
+            "task_id": task_id,
+            "export_format": "json",
+            "export_timestamp": datetime.now().isoformat(),
+            "total_items": len(data)
+        },
+        "results": data
+    }
+
+    json_str = json.dumps(export_data, ensure_ascii=False, indent=2)
 
     return StreamingResponse(
         io.BytesIO(json_str.encode('utf-8')),
         media_type="application/json",
-        headers={"Content-Disposition": f"attachment; filename=task_{task_id}_results.json"}
+        headers={"Content-Disposition": f"attachment; filename=task_{task_id}_results_{timestamp}.json"}
     )
 
 def _create_jsonl_response(data, task_id):
@@ -1787,17 +1877,26 @@ def _create_jsonl_response(data, task_id):
     if not isinstance(data, list):
         data = [data]
 
+    # タイムスタンプを追加
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+
     # 各アイテムを1行のJSONとして出力
     jsonl_lines = []
     for item in data:
-        jsonl_lines.append(json.dumps(item, ensure_ascii=False))
+        # 各アイテムにエクスポート情報を追加
+        enhanced_item = item.copy() if isinstance(item, dict) else {"data": item}
+        enhanced_item["_export_info"] = {
+            "task_id": task_id,
+            "export_timestamp": datetime.now().isoformat()
+        }
+        jsonl_lines.append(json.dumps(enhanced_item, ensure_ascii=False))
 
     jsonl_content = '\n'.join(jsonl_lines)
 
     return StreamingResponse(
         io.BytesIO(jsonl_content.encode('utf-8')),
         media_type="application/x-ndjson",
-        headers={"Content-Disposition": f"attachment; filename=task_{task_id}_results.jsonl"}
+        headers={"Content-Disposition": f"attachment; filename=task_{task_id}_results_{timestamp}.jsonl"}
     )
 
 def _create_csv_response(data, task_id):
@@ -1805,12 +1904,21 @@ def _create_csv_response(data, task_id):
     if not data:
         raise HTTPException(status_code=400, detail="No data to export")
 
+    # タイムスタンプを追加
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+
     # データを正規化（日時フィールドを含む）
     if isinstance(data, list) and len(data) > 0:
-        # 各アイテムに日時フィールドを追加
+        # 各アイテムに日時フィールドとエクスポート情報を追加
         enhanced_data = []
-        for item in data:
-            enhanced_item = item.copy()
+        for i, item in enumerate(data):
+            enhanced_item = item.copy() if isinstance(item, dict) else {"data": item}
+
+            # エクスポート情報を追加
+            enhanced_item['_export_task_id'] = task_id
+            enhanced_item['_export_timestamp'] = datetime.now().isoformat()
+            enhanced_item['_export_row_number'] = i + 1
+
             # dataフィールド内の日時情報を最上位に移動
             if isinstance(item.get('data'), dict):
                 data_dict = item['data']
@@ -1818,11 +1926,18 @@ def _create_csv_response(data, task_id):
                     enhanced_item['crawl_start_datetime'] = data_dict['crawl_start_datetime']
                 if 'item_acquired_datetime' in data_dict:
                     enhanced_item['item_acquired_datetime'] = data_dict['item_acquired_datetime']
+                if 'scraped_at' in data_dict:
+                    enhanced_item['scraped_at'] = data_dict['scraped_at']
+
             enhanced_data.append(enhanced_item)
 
         df = pd.json_normalize(enhanced_data)
     else:
-        df = pd.DataFrame([data])
+        enhanced_item = data.copy() if isinstance(data, dict) else {"data": data}
+        enhanced_item['_export_task_id'] = task_id
+        enhanced_item['_export_timestamp'] = datetime.now().isoformat()
+        enhanced_item['_export_row_number'] = 1
+        df = pd.DataFrame([enhanced_item])
 
     # CSVを生成
     csv_buffer = io.StringIO()
@@ -1832,7 +1947,7 @@ def _create_csv_response(data, task_id):
     return StreamingResponse(
         io.BytesIO(csv_content.encode('utf-8')),
         media_type="text/csv",
-        headers={"Content-Disposition": f"attachment; filename=task_{task_id}_results.csv"}
+        headers={"Content-Disposition": f"attachment; filename=task_{task_id}_results_{timestamp}.csv"}
     )
 
 def _create_excel_response(data, task_id):
@@ -1840,23 +1955,63 @@ def _create_excel_response(data, task_id):
     if not data:
         raise HTTPException(status_code=400, detail="No data to export")
 
-    # データを正規化
+    # タイムスタンプを追加
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+
+    # データを正規化（エクスポート情報を含む）
     if isinstance(data, list) and len(data) > 0:
-        df = pd.json_normalize(data)
+        # 各アイテムにエクスポート情報を追加
+        enhanced_data = []
+        for i, item in enumerate(data):
+            enhanced_item = item.copy() if isinstance(item, dict) else {"data": item}
+
+            # エクスポート情報を追加
+            enhanced_item['_export_task_id'] = task_id
+            enhanced_item['_export_timestamp'] = datetime.now().isoformat()
+            enhanced_item['_export_row_number'] = i + 1
+
+            # dataフィールド内の日時情報を最上位に移動
+            if isinstance(item.get('data'), dict):
+                data_dict = item['data']
+                if 'crawl_start_datetime' in data_dict:
+                    enhanced_item['crawl_start_datetime'] = data_dict['crawl_start_datetime']
+                if 'item_acquired_datetime' in data_dict:
+                    enhanced_item['item_acquired_datetime'] = data_dict['item_acquired_datetime']
+                if 'scraped_at' in data_dict:
+                    enhanced_item['scraped_at'] = data_dict['scraped_at']
+
+            enhanced_data.append(enhanced_item)
+
+        df = pd.json_normalize(enhanced_data)
     else:
-        df = pd.DataFrame([data])
+        enhanced_item = data.copy() if isinstance(data, dict) else {"data": data}
+        enhanced_item['_export_task_id'] = task_id
+        enhanced_item['_export_timestamp'] = datetime.now().isoformat()
+        enhanced_item['_export_row_number'] = 1
+        df = pd.DataFrame([enhanced_item])
 
     # Excelファイルを生成
     excel_buffer = io.BytesIO()
     with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+        # メインデータシート
         df.to_excel(writer, sheet_name='Results', index=False)
+
+        # エクスポート情報シート
+        export_info_df = pd.DataFrame([{
+            'Task ID': task_id,
+            'Export Format': 'Excel',
+            'Export Timestamp': datetime.now().isoformat(),
+            'Total Items': len(data) if isinstance(data, list) else 1,
+            'Generated By': 'ScrapyUI Export Service'
+        }])
+        export_info_df.to_excel(writer, sheet_name='Export Info', index=False)
 
     excel_buffer.seek(0)
 
     return StreamingResponse(
         excel_buffer,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f"attachment; filename=task_{task_id}_results.xlsx"}
+        headers={"Content-Disposition": f"attachment; filename=task_{task_id}_results_{timestamp}.xlsx"}
     )
 
 def _create_xml_response(data, task_id):
@@ -1864,19 +2019,51 @@ def _create_xml_response(data, task_id):
     if not data:
         raise HTTPException(status_code=400, detail="No data to export")
 
+    # タイムスタンプを追加
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+
     # XMLを生成
-    root = ET.Element("results")
+    root = ET.Element("scrapy_results")
     root.set("task_id", task_id)
+    root.set("export_format", "xml")
     root.set("exported_at", datetime.now().isoformat())
+    root.set("total_items", str(len(data) if isinstance(data, list) else 1))
+    root.set("generated_by", "ScrapyUI Export Service")
+
+    # エクスポート情報セクション
+    export_info = ET.SubElement(root, "export_info")
+    ET.SubElement(export_info, "task_id").text = task_id
+    ET.SubElement(export_info, "export_format").text = "xml"
+    ET.SubElement(export_info, "export_timestamp").text = datetime.now().isoformat()
+    ET.SubElement(export_info, "total_items").text = str(len(data) if isinstance(data, list) else 1)
+
+    # データセクション
+    data_section = ET.SubElement(root, "data")
 
     if isinstance(data, list):
         for i, item in enumerate(data):
-            item_element = ET.SubElement(root, "item")
-            item_element.set("index", str(i))
-            _dict_to_xml(item, item_element)
+            item_element = ET.SubElement(data_section, "item")
+            item_element.set("index", str(i + 1))
+            item_element.set("export_row_number", str(i + 1))
+
+            # エクスポート情報を各アイテムに追加
+            enhanced_item = item.copy() if isinstance(item, dict) else {"data": item}
+            enhanced_item["_export_task_id"] = task_id
+            enhanced_item["_export_timestamp"] = datetime.now().isoformat()
+            enhanced_item["_export_row_number"] = i + 1
+
+            _dict_to_xml(enhanced_item, item_element)
     else:
-        item_element = ET.SubElement(root, "item")
-        _dict_to_xml(data, item_element)
+        item_element = ET.SubElement(data_section, "item")
+        item_element.set("index", "1")
+        item_element.set("export_row_number", "1")
+
+        enhanced_item = data.copy() if isinstance(data, dict) else {"data": data}
+        enhanced_item["_export_task_id"] = task_id
+        enhanced_item["_export_timestamp"] = datetime.now().isoformat()
+        enhanced_item["_export_row_number"] = 1
+
+        _dict_to_xml(enhanced_item, item_element)
 
     # XMLを文字列に変換
     xml_str = ET.tostring(root, encoding='unicode', method='xml')
@@ -1885,7 +2072,7 @@ def _create_xml_response(data, task_id):
     return StreamingResponse(
         io.BytesIO(xml_formatted.encode('utf-8')),
         media_type="application/xml",
-        headers={"Content-Disposition": f"attachment; filename=task_{task_id}_results.xml"}
+        headers={"Content-Disposition": f"attachment; filename=task_{task_id}_results_{timestamp}.xml"}
     )
 
 def _read_jsonl_file(file_path):

@@ -153,15 +153,66 @@ class JSONLMonitor:
             print(f"❌ 行処理エラー: {e}")
     
     def _insert_item_to_db(self, item_data):
-        """アイテムをデータベースにインサート"""
+        """アイテムをScrapyUIデータベースにインサート"""
+        try:
+            # ScrapyUIのデータベース設定を使用
+            import sys
+            import os
+
+            # ScrapyUIのバックエンドパスを追加
+            backend_path = os.path.join(os.path.dirname(__file__), '..', '..', '..', '..', '..', 'backend')
+            if backend_path not in sys.path:
+                sys.path.insert(0, backend_path)
+
+            # ScrapyUIのデータベースモジュールをインポート
+            from app.database import SessionLocal, Result
+
+            # データベースセッションを作成
+            db = SessionLocal()
+
+            try:
+                # resultsテーブルにインサート（ScrapyUI形式）
+                result_id = str(uuid.uuid4())
+                db_result = Result(
+                    id=result_id,
+                    task_id=self.task_id,
+                    data=item_data,
+                    item_acquired_datetime=datetime.now(),
+                    created_at=datetime.now()
+                )
+
+                db.add(db_result)
+                db.commit()
+
+                print(f"✅ ScrapyUI DBインサート成功: {result_id}")
+
+            except Exception as e:
+                db.rollback()
+                print(f"❌ ScrapyUI DBインサートエラー: {e}")
+                # フォールバック: SQLiteに保存
+                self._fallback_sqlite_insert(item_data)
+            finally:
+                db.close()
+
+        except ImportError as e:
+            print(f"⚠️ ScrapyUIデータベースモジュールが見つかりません: {e}")
+            # フォールバック: SQLiteに保存
+            self._fallback_sqlite_insert(item_data)
+        except Exception as e:
+            print(f"❌ DBインサートエラー: {e}")
+            # フォールバック: SQLiteに保存
+            self._fallback_sqlite_insert(item_data)
+
+    def _fallback_sqlite_insert(self, item_data):
+        """フォールバック: SQLiteデータベースにインサート"""
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
-            
+
             # scraped_itemsテーブルにインサート
             item_id = str(uuid.uuid4())
             cursor.execute("""
-                INSERT INTO scraped_items 
+                INSERT INTO scraped_items
                 (id, task_id, project_id, spider_name, data, scraped_at, created_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
             """, (
@@ -173,14 +224,14 @@ class JSONLMonitor:
                 datetime.now().isoformat(),
                 datetime.now().isoformat()
             ))
-            
+
             conn.commit()
             conn.close()
-            
-            print(f"✅ DBインサート成功: {item_id}")
-            
+
+            print(f"✅ SQLite DBインサート成功: {item_id}")
+
         except Exception as e:
-            print(f"❌ DBインサートエラー: {e}")
+            print(f"❌ SQLite DBインサートエラー: {e}")
 
 
 class Command(ScrapyCommand):

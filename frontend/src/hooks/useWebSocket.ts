@@ -17,6 +17,11 @@ interface UseWebSocketOptions {
   onError?: (error: Event) => void
   reconnectAttempts?: number
   reconnectInterval?: number
+  // タスク詳細ページ用のコールバック
+  onProgressUpdate?: (data: any) => void
+  onItemScraped?: (data: any) => void
+  onTaskStatusChange?: (status: string, details?: any) => void
+  onWebSocketError?: (error: any, details?: any) => void
 }
 
 export function useWebSocket({
@@ -26,7 +31,11 @@ export function useWebSocket({
   onDisconnect,
   onError,
   reconnectAttempts = 5,
-  reconnectInterval = 3000
+  reconnectInterval = 3000,
+  onProgressUpdate,
+  onItemScraped,
+  onTaskStatusChange,
+  onWebSocketError
 }: UseWebSocketOptions) {
   const [isConnected, setIsConnected] = useState(false)
   const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected' | 'error'>('disconnected')
@@ -86,9 +95,31 @@ export function useWebSocket({
         try {
           const message: WebSocketMessage = JSON.parse(event.data)
           setLastMessage(message)
+
+          // 汎用メッセージコールバック
           onMessage?.(message)
+
+          // 特定のメッセージタイプに対する専用コールバック
+          switch (message.type) {
+            case 'progress_update':
+              onProgressUpdate?.(message.data)
+              break
+            case 'item_scraped':
+              onItemScraped?.(message.data)
+              break
+            case 'task_status_change':
+              onTaskStatusChange?.(message.data?.status, message.data)
+              break
+            case 'error':
+              onWebSocketError?.(message.data?.error, message.data)
+              break
+            default:
+              // その他のメッセージタイプは汎用コールバックで処理
+              break
+          }
         } catch (error) {
           console.error('Failed to parse WebSocket message:', error)
+          onWebSocketError?.(error, { raw_data: event.data })
         }
       }
 
@@ -107,22 +138,29 @@ export function useWebSocket({
       }
 
       ws.current.onerror = (error) => {
-        console.error('WebSocket error:', {
+        const errorDetails = {
           url,
           readyState: ws.current?.readyState,
           error: error,
           errorType: error.type,
           errorMessage: error instanceof ErrorEvent ? error.message : 'Unknown error'
-        })
+        }
+
+        console.error('WebSocket error:', errorDetails)
         setConnectionStatus('error')
+
+        // 汎用エラーコールバック
         onError?.(error)
+
+        // 専用エラーコールバック
+        onWebSocketError?.(error, errorDetails)
       }
 
     } catch (error) {
       setConnectionStatus('error')
       console.error('WebSocket connection error:', error)
     }
-  }, [url, onMessage, onConnect, onDisconnect, onError, reconnectAttempts, reconnectInterval])
+  }, [url, onMessage, onConnect, onDisconnect, onError, reconnectAttempts, reconnectInterval, onProgressUpdate, onItemScraped, onTaskStatusChange, onWebSocketError])
 
   const disconnect = useCallback(() => {
     if (reconnectTimer.current) {

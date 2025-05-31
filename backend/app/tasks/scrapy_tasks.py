@@ -316,19 +316,16 @@ def run_spider_task(self, project_id: str, spider_id: str, settings: dict = None
         except Exception as log_error:
             print(f"Failed to save error log: {str(log_error)}")
 
-        # エラー通知（Celeryワーカー内では非同期処理をスキップ）
-        try:
-            asyncio.create_task(manager.send_task_update(task_id, {
-                "status": "FAILED",
-                "finished_at": datetime.now().isoformat(),
-                "error": error_details['error_message'],
-                "error_type": error_details['error_type'],
-                "items_count": current_items if 'current_items' in locals() else 0,
-                "requests_count": current_requests if 'current_requests' in locals() else 0,
-                "error_count": (current_errors + 1) if 'current_errors' in locals() else 1
-            }))
-        except RuntimeError:
-            print(f"📡 WebSocket error notification skipped: Task {task_id} failed with error: {str(e)}")
+        # エラー通知（安全な方法で）
+        _safe_websocket_notify(task_id, {
+            "status": "FAILED",
+            "finished_at": datetime.now().isoformat(),
+            "error": error_details['error_message'],
+            "error_type": error_details['error_type'],
+            "items_count": current_items if 'current_items' in locals() else 0,
+            "requests_count": current_requests if 'current_requests' in locals() else 0,
+            "error_count": (current_errors + 1) if 'current_errors' in locals() else 1
+        })
 
         # 詳細なエラー情報を含む例外を再発生
         enhanced_error = Exception(f"Task {task_id} failed: {error_details['error_type']}: {error_details['error_message']}")
@@ -374,6 +371,107 @@ def cleanup_old_results(days_old: int = 30):
     finally:
         db.close()
 
+@celery_app.task(bind=True, queue='scrapy')
+def process_jsonl_lines_task(self, task_id: str, lines: list, file_position: int):
+    """JSONLファイルの新しい行をDBに挿入（別プロセス処理）"""
+    try:
+        from app.database import SessionLocal, Result, Task
+        import json
+        from datetime import datetime
+        import uuid
+
+        print(f"🚀 Celeryタスク開始: {len(lines)}件の行を処理")
+
+        db = SessionLocal()
+        successful_inserts = 0
+
+        try:
+            # タスク情報を取得
+            task = db.query(Task).filter(Task.id == task_id).first()
+            if not task:
+                print(f"❌ タスクが見つかりません: {task_id}")
+                return {"error": "Task not found", "task_id": task_id}
+
+            print(f"🔍 タスク情報: {task.spider_name} - {task.status}")
+
+            # 各行を処理
+            for i, line in enumerate(lines):
+                try:
+                    print(f"🔍 処理中 {i+1}/{len(lines)}: {line[:50]}...")
+
+                    # JSON解析
+                    item_data = json.loads(line.strip())
+                    print(f"🔍 JSON解析成功: {item_data.get('title', 'N/A')[:30]}...")
+
+                    # DB挿入
+                    result = Result(
+                        id=str(uuid.uuid4()),
+                        task_id=task_id,
+                        data=item_data,
+                        created_at=datetime.now()
+                    )
+
+                    db.add(result)
+                    db.commit()
+                    successful_inserts += 1
+                    print(f"✅ DB挿入成功: {successful_inserts}件目")
+
+                except json.JSONDecodeError as e:
+                    print(f"❌ JSON解析エラー: {e} - Line: {line[:100]}...")
+                except Exception as e:
+                    print(f"❌ 行処理エラー: {e}")
+                    db.rollback()
+
+            # タスクのアイテム数を更新
+            if successful_inserts > 0:
+                task.items_count = (task.items_count or 0) + successful_inserts
+                db.commit()
+                print(f"✅ タスクアイテム数更新: {task.items_count}")
+
+            # WebSocket通知を送信（同期的に）
+            try:
+                import requests
+                notification_data = {
+                    'type': 'items_update',
+                    'task_id': task_id,
+                    'new_items': successful_inserts,
+                    'total_items': task.items_count or 0
+                }
+
+                response = requests.post(
+                    'http://localhost:8000/api/tasks/internal/websocket-notify',
+                    json=notification_data,
+                    timeout=5
+                )
+
+                if response.status_code == 200:
+                    print(f"✅ WebSocket通知送信成功: {successful_inserts}件")
+                else:
+                    print(f"❌ WebSocket通知失敗: {response.status_code}")
+
+            except Exception as ws_error:
+                print(f"📡 WebSocket通知エラー: {ws_error}")
+
+            result_data = {
+                "task_id": task_id,
+                "processed_lines": len(lines),
+                "successful_inserts": successful_inserts,
+                "file_position": file_position,
+                "timestamp": datetime.now().isoformat()
+            }
+
+            print(f"✅ Celeryタスク完了: {successful_inserts}/{len(lines)}件挿入")
+            return result_data
+
+        finally:
+            db.close()
+
+    except Exception as e:
+        print(f"❌ Celeryタスクエラー: {e}")
+        import traceback
+        print(f"❌ エラー詳細: {traceback.format_exc()}")
+        return {"error": str(e), "task_id": task_id}
+
 @celery_app.task
 def system_health_check():
     """
@@ -415,12 +513,6 @@ def system_health_check():
             ]) else "warning"
         }
 
-        # WebSocketでシステム通知を送信
-        asyncio.create_task(manager.send_system_notification({
-            "type": "health_check",
-            "data": health_data
-        }))
-
         return health_data
 
     except Exception as e:
@@ -429,12 +521,6 @@ def system_health_check():
             "status": "error",
             "error": str(e)
         }
-
-        asyncio.create_task(manager.send_system_notification({
-            "type": "health_check_error",
-            "data": error_data
-        }))
-
         return error_data
 
 @celery_app.task
@@ -532,19 +618,22 @@ def scheduled_spider_run(schedule_id: str):
 
             # 実行結果を処理
             if result.get('success', False):
+                # データベースから実際の結果数を取得
+                actual_items_count = db.query(DBResult).filter(DBResult.task_id == task_id).count()
+
                 db_task.status = TaskStatus.FINISHED
                 db_task.finished_at = datetime.now()
-                db_task.items_count = result.get('items_processed', 0)
+                db_task.items_count = actual_items_count  # 実際のDB結果数を使用
 
                 # 成功通知
                 _safe_websocket_notify(task_id, {
                     "status": "FINISHED",
                     "finished_at": datetime.now().isoformat(),
-                    "items_processed": result.get('items_processed', 0),
+                    "items_processed": actual_items_count,
                     "message": f"Scheduled spider {spider.name} completed successfully with watchdog monitoring"
                 })
 
-                print(f"✅ Scheduled spider execution completed with watchdog: {spider.name} - {result.get('items_processed', 0)} items processed")
+                print(f"✅ Scheduled spider execution completed with watchdog: {spider.name} - {actual_items_count} items processed")
             else:
                 db_task.status = TaskStatus.FAILED
                 db_task.finished_at = datetime.now()
@@ -772,19 +861,22 @@ def run_spider_with_watchdog_task(self, project_id: str, spider_id: str, setting
 
         # 実行結果を処理
         if result.get('success', False):
+            # データベースから実際の結果数を取得
+            actual_items_count = db.query(DBResult).filter(DBResult.task_id == task_id).count()
+
             db_task.status = TaskStatus.FINISHED
             db_task.finished_at = datetime.now()
-            db_task.items_count = result.get('items_processed', 0)
+            db_task.items_count = actual_items_count  # 実際のDB結果数を使用
 
             # 成功通知
             _safe_websocket_notify(task_id, {
                 "status": "FINISHED",
                 "finished_at": datetime.now().isoformat(),
-                "items_processed": result.get('items_processed', 0),
+                "items_processed": actual_items_count,
                 "message": f"Spider {spider.name} completed successfully with watchdog monitoring"
             })
 
-            print(f"✅ Watchdog spider task completed: {spider.name} - {result.get('items_processed', 0)} items processed")
+            print(f"✅ Watchdog spider task completed: {spider.name} - {actual_items_count} items processed")
         else:
             db_task.status = TaskStatus.FAILED
             db_task.finished_at = datetime.now()

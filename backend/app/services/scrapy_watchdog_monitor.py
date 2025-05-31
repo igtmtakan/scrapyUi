@@ -47,16 +47,46 @@ class JSONLWatchdogHandler(FileSystemEventHandler):
             ).start()
 
     def _handle_file_change(self):
-        """ファイル変更の処理（スレッドで実行）"""
+        """ファイル変更の処理（重複防止のためDB挿入無効化）"""
         try:
-            # asyncioループで実行
-            if self.monitor.loop and not self.monitor.loop.is_closed():
-                asyncio.run_coroutine_threadsafe(
-                    self.monitor._process_new_lines(),
-                    self.monitor.loop
-                )
+            print(f"📝 ファイル変更を検出しました")
+            print(f"ℹ️ DB挿入はcrawlwithwatchdogコマンドが処理するため、watchdog監視では実行しません")
+
+            # ファイルサイズのみ更新（DB挿入は行わない）
+            if self.monitor.jsonl_file_path.exists():
+                current_size = self.monitor.jsonl_file_path.stat().st_size
+                print(f"📊 ファイルサイズ更新: {self.monitor.last_file_size} → {current_size}")
+                self.monitor.last_file_size = current_size
+
+                # 行数をカウント
+                with open(self.monitor.jsonl_file_path, 'r', encoding='utf-8') as f:
+                    lines = [line.strip() for line in f.readlines() if line.strip()]
+                    self.monitor.processed_lines = len(lines)
+                    print(f"📊 現在の行数: {len(lines)}行")
+
+                # WebSocket通知のみ送信（DB挿入なし）
+                if self.monitor.websocket_callback:
+                    try:
+                        import requests
+                        response = requests.post(
+                            'http://localhost:8000/api/tasks/internal/websocket-notify',
+                            json={
+                                'type': 'file_update',
+                                'task_id': self.monitor.task_id,
+                                'file_lines': len(lines),
+                                'message': 'ファイル更新検出（DB挿入はcrawlwithwatchdogが処理）'
+                            },
+                            timeout=5
+                        )
+                        if response.status_code == 200:
+                            print(f"📡 WebSocket通知送信完了")
+                    except Exception as ws_error:
+                        print(f"📡 WebSocket通知エラー: {ws_error}")
+
         except Exception as e:
             print(f"❌ ファイル変更処理エラー: {e}")
+            import traceback
+            print(f"❌ ファイル変更処理エラー詳細: {traceback.format_exc()}")
 
 
 class ScrapyWatchdogMonitor:
@@ -163,12 +193,13 @@ class ScrapyWatchdogMonitor:
         print(f"🛑 watchdog監視停止: 処理済み行数 {self.processed_lines}")
 
     async def _execute_scrapy_crawl(self, settings: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """scrapy crawlコマンドを実行"""
+        """scrapy crawlwithwatchdogコマンドを実行（DB挿入機能付き）"""
         try:
-            # コマンドを構築
+            # コマンドを構築（crawlwithwatchdogを使用）
             cmd = [
-                sys.executable, "-m", "scrapy", "crawl", self.spider_name,
+                sys.executable, "-m", "scrapy", "crawlwithwatchdog", self.spider_name,
                 "-o", str(self.jsonl_file_path),  # JSONLファイル出力
+                "--task-id", self.task_id,        # タスクIDを指定
                 "-s", "FEED_FORMAT=jsonlines",    # JSONL形式指定
                 "-s", "LOG_LEVEL=INFO"
             ]
@@ -221,46 +252,185 @@ class ScrapyWatchdogMonitor:
             print(f"❌ Scrapyプロセス実行エラー: {e}")
             raise
 
-    async def _process_new_lines(self):
-        """新しい行を処理（watchdogイベントから呼ばれる）"""
+    def _process_new_lines_threading(self):
+        """新しい行を処理（threading版・asyncio完全回避）"""
+        import threading
+        print(f"🧵 _process_new_lines_threading開始: {threading.current_thread().name}")
         try:
             if not self.jsonl_file_path.exists():
+                print(f"❌ ファイルが存在しません: {self.jsonl_file_path}")
                 return
 
             # ファイルサイズをチェック
             current_size = self.jsonl_file_path.stat().st_size
+            print(f"🔍 ファイルサイズ: 現在={current_size}, 前回={self.last_file_size}")
             if current_size <= self.last_file_size:
+                print(f"🔍 新しいデータなし")
                 return
 
             # 新しい部分のみ読み取り
+            print(f"🔍 新しい内容を読み取り中...")
             with open(self.jsonl_file_path, 'r', encoding='utf-8') as f:
                 f.seek(self.last_file_size)
                 new_content = f.read()
 
             # 新しい行を処理
             new_lines = [line.strip() for line in new_content.split('\n') if line.strip()]
+            print(f"🔍 新しい行数: {len(new_lines)}")
 
             if new_lines:
                 print(f"📝 新しい行を検出: {len(new_lines)}件")
 
-                for line in new_lines:
-                    await self._process_single_line(line)
-                    self.processed_lines += 1
+                # 直接DB挿入処理（threading版・asyncio完全回避）
+                successful_inserts = 0
+                print(f"🔍 直接DB挿入処理開始: {len(new_lines)}件の新しい行")
 
-                # WebSocket通知
-                if self.websocket_callback:
-                    await self.websocket_callback({
-                        'type': 'items_update',
-                        'task_id': self.task_id,
-                        'new_items': len(new_lines),
-                        'total_items': self.processed_lines
-                    })
+                for i, line in enumerate(new_lines):
+                    print(f"🔍 処理中 {i+1}/{len(new_lines)}: {line[:50]}...")
+                    try:
+                        # JSON解析
+                        item_data = json.loads(line.strip())
+                        print(f"🔍 JSON解析成功: {item_data.get('title', 'N/A')[:30]}...")
+
+                        # 直接DB挿入（threading版）
+                        print(f"🔍 DB挿入開始...")
+                        insert_result = self._sync_insert_item_threading(item_data)
+                        if insert_result:
+                            successful_inserts += 1
+                            print(f"✅ DB挿入成功: {successful_inserts}件目")
+                        else:
+                            print(f"❌ DB挿入失敗: {successful_inserts}件目")
+
+                        self.processed_lines += 1
+
+                    except json.JSONDecodeError as e:
+                        print(f"❌ JSON解析エラー: {e} - Line: {line[:100]}...")
+                    except Exception as e:
+                        print(f"❌ 行処理エラー: {e}")
+                        import traceback
+                        print(f"❌ 行処理エラー詳細: {traceback.format_exc()}")
+
+                print(f"✅ 直接DB挿入完了: {successful_inserts}/{len(new_lines)}件")
+
+                # WebSocket通知（threading版・同期的）
+                print(f"🔍 WebSocket通知開始...")
+                try:
+                    if self.websocket_callback and successful_inserts > 0:
+                        print(f"🔍 WebSocket通知実行中...")
+                        # 同期的にWebSocket通知を送信
+                        self._safe_websocket_notify_threading({
+                            'type': 'items_update',
+                            'task_id': self.task_id,
+                            'new_items': successful_inserts,
+                            'total_items': self.processed_lines
+                        })
+                        print(f"✅ WebSocket通知完了")
+                    else:
+                        print(f"🔍 WebSocket通知スキップ: callback={self.websocket_callback is not None}, inserts={successful_inserts}")
+                except Exception as ws_error:
+                    print(f"📡 WebSocket通知エラー: {ws_error}")
+                    import traceback
+                    print(f"📡 WebSocket通知エラー詳細: {traceback.format_exc()}")
 
             # ファイルサイズを更新
+            print(f"🔍 ファイルサイズ更新: {current_size}")
             self.last_file_size = current_size
+            print(f"✅ _process_new_lines_threading完了")
 
         except Exception as e:
             print(f"❌ 新しい行処理エラー: {e}")
+            import traceback
+            print(f"❌ エラー詳細: {traceback.format_exc()}")
+
+    async def _process_new_lines(self):
+        """新しい行を処理（完全同期版）"""
+        # asyncラッパーを削除し、直接同期処理を実行
+        print(f"🔍 _process_new_lines開始（完全同期版）")
+        try:
+            if not self.jsonl_file_path.exists():
+                print(f"❌ ファイルが存在しません: {self.jsonl_file_path}")
+                return
+
+            # ファイルサイズをチェック
+            current_size = self.jsonl_file_path.stat().st_size
+            print(f"🔍 ファイルサイズ: 現在={current_size}, 前回={self.last_file_size}")
+            if current_size <= self.last_file_size:
+                print(f"🔍 新しいデータなし")
+                return
+
+            # 新しい部分のみ読み取り
+            print(f"🔍 新しい内容を読み取り中...")
+            with open(self.jsonl_file_path, 'r', encoding='utf-8') as f:
+                f.seek(self.last_file_size)
+                new_content = f.read()
+
+            # 新しい行を処理
+            new_lines = [line.strip() for line in new_content.split('\n') if line.strip()]
+            print(f"🔍 新しい行数: {len(new_lines)}")
+
+            if new_lines:
+                print(f"📝 新しい行を検出: {len(new_lines)}件")
+
+                # 直接DB挿入処理（Celeryタスクを使わない）
+                successful_inserts = 0
+                print(f"🔍 直接DB挿入処理開始: {len(new_lines)}件の新しい行")
+
+                for i, line in enumerate(new_lines):
+                    print(f"🔍 処理中 {i+1}/{len(new_lines)}: {line[:50]}...")
+                    try:
+                        # JSON解析
+                        item_data = json.loads(line.strip())
+                        print(f"🔍 JSON解析成功: {item_data.get('title', 'N/A')[:30]}...")
+
+                        # 直接DB挿入
+                        print(f"🔍 DB挿入開始...")
+                        insert_result = self._sync_insert_item(item_data)
+                        if insert_result:
+                            successful_inserts += 1
+                            print(f"✅ DB挿入成功: {successful_inserts}件目")
+                        else:
+                            print(f"❌ DB挿入失敗: {successful_inserts}件目")
+
+                        self.processed_lines += 1
+
+                    except json.JSONDecodeError as e:
+                        print(f"❌ JSON解析エラー: {e} - Line: {line[:100]}...")
+                    except Exception as e:
+                        print(f"❌ 行処理エラー: {e}")
+                        import traceback
+                        print(f"❌ 行処理エラー詳細: {traceback.format_exc()}")
+
+                print(f"✅ 直接DB挿入完了: {successful_inserts}/{len(new_lines)}件")
+
+                # WebSocket通知（同期的に）
+                print(f"🔍 WebSocket通知開始...")
+                try:
+                    if self.websocket_callback and successful_inserts > 0:
+                        print(f"🔍 WebSocket通知実行中...")
+                        # 同期的にWebSocket通知を送信
+                        self._safe_websocket_notify({
+                            'type': 'items_update',
+                            'task_id': self.task_id,
+                            'new_items': successful_inserts,
+                            'total_items': self.processed_lines
+                        })
+                        print(f"✅ WebSocket通知完了")
+                    else:
+                        print(f"🔍 WebSocket通知スキップ: callback={self.websocket_callback is not None}, inserts={successful_inserts}")
+                except Exception as ws_error:
+                    print(f"📡 WebSocket通知エラー: {ws_error}")
+                    import traceback
+                    print(f"📡 WebSocket通知エラー詳細: {traceback.format_exc()}")
+
+            # ファイルサイズを更新
+            print(f"🔍 ファイルサイズ更新: {current_size}")
+            self.last_file_size = current_size
+            print(f"✅ _process_new_lines完了（完全同期版）")
+
+        except Exception as e:
+            print(f"❌ 新しい行処理エラー: {e}")
+            import traceback
+            print(f"❌ エラー詳細: {traceback.format_exc()}")
 
     async def _process_remaining_lines(self):
         """残りの行を処理（最終処理）"""
@@ -278,62 +448,277 @@ class ScrapyWatchdogMonitor:
             if remaining_lines > 0:
                 print(f"📝 残りの行を処理: {remaining_lines}件")
 
-                # 未処理の行を処理
+                # 未処理の行を同期的に処理
+                successful_inserts = 0
                 for i in range(self.processed_lines, total_lines):
                     if i < len(all_lines):
                         line = all_lines[i].strip()
                         if line:
-                            await self._process_single_line(line)
-                            self.processed_lines += 1
+                            try:
+                                # JSON解析
+                                item_data = json.loads(line)
+
+                                # 同期的にDBインサート
+                                self._sync_insert_item(item_data)
+                                successful_inserts += 1
+                                self.processed_lines += 1
+
+                            except json.JSONDecodeError as e:
+                                print(f"❌ JSON解析エラー: {e} - Line: {line[:100]}...")
+                            except Exception as e:
+                                print(f"❌ 行処理エラー: {e}")
+
+                print(f"✅ 残り行DB挿入完了: {successful_inserts}/{remaining_lines}件")
 
             print(f"✅ 最終処理完了: 総処理行数 {self.processed_lines}")
 
         except Exception as e:
             print(f"❌ 残り行処理エラー: {e}")
 
-    async def _process_single_line(self, json_line: str):
-        """単一の行を処理してDBにインサート"""
-        try:
-            # JSON解析
-            item_data = json.loads(json_line)
+    def _sync_insert_item_threading(self, item_data: Dict[str, Any]):
+        """同期的にDBインサート（threading版・asyncio完全回避）"""
+        import threading
+        max_retries = 3
+        retry_count = 0
 
-            # 非同期でDBインサート
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, self._sync_insert_item, item_data)
+        print(f"🧵 DB挿入開始: {threading.current_thread().name}")
 
-        except json.JSONDecodeError as e:
-            print(f"❌ JSON解析エラー: {e} - Line: {json_line[:100]}...")
-        except Exception as e:
-            print(f"❌ 行処理エラー: {e}")
+        while retry_count < max_retries:
+            try:
+                # SQLAlchemyを使用してDBインサート
+                from ..database import SessionLocal, Result
+
+                db = SessionLocal()
+                try:
+                    # resultsテーブルにインサート
+                    result_id = str(uuid.uuid4())
+                    db_result = Result(
+                        id=result_id,
+                        task_id=self.task_id,
+                        data=item_data,
+                        item_acquired_datetime=datetime.now(),
+                        created_at=datetime.now()
+                    )
+
+                    db.add(db_result)
+                    db.commit()
+
+                    print(f"✅ DBインサート成功: {result_id[:8]}... (試行: {retry_count + 1}) - Thread: {threading.current_thread().name}")
+
+                    # タスク統計を更新（threading版）
+                    self._update_task_statistics_threading()
+
+                    return True  # 成功
+
+                except Exception as e:
+                    db.rollback()
+                    retry_count += 1
+                    print(f"❌ DBインサートエラー (試行 {retry_count}/{max_retries}): {e}")
+
+                    if retry_count >= max_retries:
+                        raise
+                    else:
+                        # 短時間待機してリトライ
+                        import time
+                        time.sleep(0.1 * retry_count)
+
+                finally:
+                    db.close()
+
+            except Exception as e:
+                retry_count += 1
+                if retry_count >= max_retries:
+                    print(f"❌ DBインサート最終失敗: {e}")
+                    return False
+
+        return False
 
     def _sync_insert_item(self, item_data: Dict[str, Any]):
-        """同期的にDBインサート"""
+        """同期的にDBインサート（強化版）"""
+        max_retries = 3
+        retry_count = 0
+
+        while retry_count < max_retries:
+            try:
+                # SQLAlchemyを使用してDBインサート
+                from ..database import SessionLocal, Result
+
+                db = SessionLocal()
+                try:
+                    # resultsテーブルにインサート
+                    result_id = str(uuid.uuid4())
+                    db_result = Result(
+                        id=result_id,
+                        task_id=self.task_id,
+                        data=item_data,
+                        item_acquired_datetime=datetime.now(),
+                        created_at=datetime.now()
+                    )
+
+                    db.add(db_result)
+                    db.commit()
+
+                    print(f"✅ DBインサート成功: {result_id[:8]}... (試行: {retry_count + 1})")
+
+                    # タスク統計を更新（別のトランザクションで）
+                    self._update_task_statistics_safe()
+
+                    return True  # 成功
+
+                except Exception as e:
+                    db.rollback()
+                    retry_count += 1
+                    print(f"❌ DBインサートエラー (試行 {retry_count}/{max_retries}): {e}")
+
+                    if retry_count >= max_retries:
+                        raise
+                    else:
+                        # 短時間待機してリトライ
+                        import time
+                        time.sleep(0.1 * retry_count)
+
+                finally:
+                    db.close()
+
+            except Exception as e:
+                retry_count += 1
+                if retry_count >= max_retries:
+                    print(f"❌ DBインサート最終失敗: {e}")
+                    return False
+
+        return False
+
+    def _update_task_statistics(self, db):
+        """タスク統計を更新"""
         try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
+            from ..database import Task, Result
 
-            # scraped_itemsテーブルにインサート
-            item_id = str(uuid.uuid4())
-            cursor.execute("""
-                INSERT INTO scraped_items
-                (id, task_id, project_id, spider_name, data, scraped_at, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (
-                item_id,
-                self.task_id,
-                str(self.project_path.name),  # プロジェクト名をproject_idとして使用
-                self.spider_name,
-                json.dumps(item_data, ensure_ascii=False),
-                datetime.now().isoformat(),
-                datetime.now().isoformat()
-            ))
+            # タスクを取得
+            task = db.query(Task).filter(Task.id == self.task_id).first()
+            if task:
+                # 結果数を取得
+                result_count = db.query(Result).filter(Result.task_id == self.task_id).count()
 
-            conn.commit()
-            conn.close()
+                # タスク統計を更新
+                task.items_count = result_count
+                task.updated_at = datetime.now()
+
+                db.commit()
+                print(f"📊 タスク統計更新: {self.task_id} - アイテム数: {result_count}")
 
         except Exception as e:
-            print(f"❌ DBインサートエラー: {e}")
-            raise
+            print(f"❌ タスク統計更新エラー: {e}")
+
+    def _update_task_statistics_threading(self):
+        """安全なタスク統計更新（threading版）"""
+        import threading
+        try:
+            from ..database import SessionLocal, Task, Result
+
+            print(f"🧵 タスク統計更新開始: {threading.current_thread().name}")
+            db = SessionLocal()
+            try:
+                # タスクを取得
+                task = db.query(Task).filter(Task.id == self.task_id).first()
+                if task:
+                    # 結果数を取得
+                    result_count = db.query(Result).filter(Result.task_id == self.task_id).count()
+
+                    # タスク統計を更新
+                    task.items_count = result_count
+                    task.updated_at = datetime.now()
+
+                    db.commit()
+                    print(f"📊 タスク統計更新: {self.task_id[:8]}... - アイテム数: {result_count} - Thread: {threading.current_thread().name}")
+
+            except Exception as e:
+                db.rollback()
+                print(f"❌ タスク統計更新エラー: {e}")
+            finally:
+                db.close()
+
+        except Exception as e:
+            print(f"❌ タスク統計更新エラー: {e}")
+
+    def _update_task_statistics_safe(self):
+        """安全なタスク統計更新（別のセッションで）"""
+        try:
+            from ..database import SessionLocal, Task, Result
+
+            db = SessionLocal()
+            try:
+                # タスクを取得
+                task = db.query(Task).filter(Task.id == self.task_id).first()
+                if task:
+                    # 結果数を取得
+                    result_count = db.query(Result).filter(Result.task_id == self.task_id).count()
+
+                    # タスク統計を更新
+                    task.items_count = result_count
+                    task.updated_at = datetime.now()
+
+                    db.commit()
+                    print(f"📊 タスク統計更新: {self.task_id[:8]}... - アイテム数: {result_count}")
+
+            except Exception as e:
+                db.rollback()
+                print(f"❌ タスク統計更新エラー: {e}")
+            finally:
+                db.close()
+
+        except Exception as e:
+            print(f"❌ タスク統計更新エラー: {e}")
+
+    def _safe_websocket_notify_threading(self, data: Dict[str, Any]):
+        """安全なWebSocket通知（threading版）"""
+        import threading
+        try:
+            if not self.websocket_callback:
+                return
+
+            print(f"🧵 WebSocket通知開始: {threading.current_thread().name}")
+
+            # HTTPリクエストでWebSocket通知を送信
+            import requests
+
+            # バックエンドのWebSocket通知エンドポイントを呼び出し
+            response = requests.post(
+                'http://localhost:8000/api/tasks/internal/websocket-notify',
+                json=data,
+                timeout=5
+            )
+
+            if response.status_code == 200:
+                print(f"📡 WebSocket notification sent: Task {data.get('task_id', 'unknown')[:8]}... - {data.get('type', 'unknown')} - Thread: {threading.current_thread().name}")
+            else:
+                print(f"📡 WebSocket notification failed: {response.status_code}")
+
+        except Exception as e:
+            print(f"📡 WebSocket通知エラー: {e}")
+
+    def _safe_websocket_notify(self, data: Dict[str, Any]):
+        """安全なWebSocket通知（同期的）"""
+        try:
+            if not self.websocket_callback:
+                return
+
+            # HTTPリクエストでWebSocket通知を送信
+            import requests
+
+            # バックエンドのWebSocket通知エンドポイントを呼び出し
+            response = requests.post(
+                'http://localhost:8000/api/tasks/internal/websocket-notify',
+                json=data,
+                timeout=5
+            )
+
+            if response.status_code == 200:
+                print(f"📡 WebSocket notification sent: Task {data.get('task_id', 'unknown')[:8]}... - {data.get('type', 'unknown')}")
+            else:
+                print(f"📡 WebSocket notification failed: {response.status_code}")
+
+        except Exception as e:
+            print(f"📡 WebSocket通知エラー: {e}")
 
 
 # 使用例とテスト

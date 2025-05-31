@@ -1196,6 +1196,10 @@ class ApiClient {
     return this.request<any[]>(`/api/tasks/${taskId}/logs?limit=${limit}`);
   }
 
+  async getTaskProgress(taskId: string): Promise<any> {
+    return this.request<any>(`/api/tasks/${taskId}/progress`);
+  }
+
   // Results
   async getResults(params?: { project_id?: string; spider_id?: string; task_id?: string }): Promise<Result[]> {
     const queryParams = new URLSearchParams();
@@ -1321,7 +1325,7 @@ class ApiClient {
     return response.blob();
   }
 
-  async downloadTaskResultsFile(taskId: string, format: 'jsonl' | 'json' | 'csv' | 'xml' = 'jsonl'): Promise<Blob> {
+  async downloadTaskResultsFile(taskId: string, format: 'jsonl' | 'json' | 'csv' | 'excel' | 'xml' = 'jsonl'): Promise<Blob> {
     const headers: HeadersInit = {};
 
     if (this.token) {

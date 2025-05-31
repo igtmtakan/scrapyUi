@@ -421,6 +421,8 @@ export default function AdminPage() {
   const [showEditModal, setShowEditModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [userToDelete, setUserToDelete] = useState<User | null>(null);
+  const [autoRecoveryLoading, setAutoRecoveryLoading] = useState(false);
+  const [autoRecoveryResult, setAutoRecoveryResult] = useState<any>(null);
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -503,6 +505,41 @@ export default function AdminPage() {
     }
   };
 
+  const handleAutoRecovery = async (hoursBack: number = 24) => {
+    setAutoRecoveryLoading(true);
+    setAutoRecoveryResult(null);
+
+    try {
+      const response = await fetch('/api/tasks/auto-recovery', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ hours_back: hoursBack }),
+      });
+
+      if (!response.ok) {
+        throw new Error('自動修復に失敗しました');
+      }
+
+      const result = await response.json();
+      setAutoRecoveryResult(result);
+
+      // 成功メッセージを表示
+      if (result.results?.recovered_tasks > 0) {
+        alert(`✅ ${result.results.recovered_tasks}個のタスクを修復しました！`);
+      } else {
+        alert('ℹ️ 修復が必要なタスクは見つかりませんでした。');
+      }
+
+    } catch (error) {
+      console.error('Auto recovery error:', error);
+      alert('❌ 自動修復中にエラーが発生しました: ' + (error instanceof Error ? error.message : '不明なエラー'));
+    } finally {
+      setAutoRecoveryLoading(false);
+    }
+  };
+
   const filteredUsers = users.filter(user => {
     const matchesSearch = user.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          user.username.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -579,13 +616,24 @@ export default function AdminPage() {
             <h1 className="text-3xl font-bold text-gray-900">ユーザー管理</h1>
             <p className="mt-2 text-gray-600">システムユーザーの管理と統計情報</p>
           </div>
-          <button
-            onClick={() => setShowCreateModal(true)}
-            className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-          >
-            <UserPlus className="w-4 h-4 mr-2" />
-            新規ユーザー追加
-          </button>
+          <div className="flex space-x-3">
+            <button
+              onClick={() => handleAutoRecovery(24)}
+              disabled={autoRecoveryLoading}
+              className="inline-flex items-center px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              title="失敗したタスクを自動修復します"
+            >
+              <Settings className="w-4 h-4 mr-2" />
+              {autoRecoveryLoading ? '修復中...' : 'タスク自動修復'}
+            </button>
+            <button
+              onClick={() => setShowCreateModal(true)}
+              className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+            >
+              <UserPlus className="w-4 h-4 mr-2" />
+              新規ユーザー追加
+            </button>
+          </div>
         </div>
 
         {/* Stats Cards */}

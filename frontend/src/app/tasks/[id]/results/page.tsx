@@ -135,7 +135,8 @@ export default function TaskResultsPage() {
       link.href = url;
 
       const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, '-');
-      const filename = `${task?.spider?.name || 'results'}_${timestamp}.${format === 'jsonl' ? 'jsonl' : format}`;
+      const fileExtension = format === 'excel' ? 'xlsx' : (format === 'jsonl' ? 'jsonl' : format);
+      const filename = `${task?.spider?.name || 'results'}_${timestamp}.${fileExtension}`;
       link.download = filename;
 
       document.body.appendChild(link);
@@ -151,7 +152,7 @@ export default function TaskResultsPage() {
     }
   };
 
-  const handleFileDownload = async (format: 'jsonl' | 'json' | 'csv' | 'xml') => {
+  const handleFileDownload = async (format: 'jsonl' | 'json' | 'csv' | 'excel' | 'xml') => {
     try {
       setIsDownloading(format);
 
@@ -161,7 +162,8 @@ export default function TaskResultsPage() {
       link.href = url;
 
       const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, '-');
-      const filename = `${task?.spider?.name || 'results'}_${timestamp}_file.${format}`;
+      const fileExtension = format === 'excel' ? 'xlsx' : format;
+      const filename = `${task?.spider?.name || 'results'}_${timestamp}_file.${fileExtension}`;
       link.download = filename;
 
       document.body.appendChild(link);
@@ -235,6 +237,9 @@ export default function TaskResultsPage() {
                 <Database className="w-4 h-4 mr-2" />
                 DBエクスポート（データベースから）
               </h4>
+              <p className="text-xs text-gray-400 mb-2">
+                💾 データベースに保存された結果を各種形式でエクスポートします
+              </p>
               <div className="flex flex-wrap gap-2">
                 {[
                   { format: 'jsonl', name: 'JSONL', description: 'JSON Lines形式でエクスポート', color: 'bg-green-600 hover:bg-green-700' },
@@ -266,19 +271,23 @@ export default function TaskResultsPage() {
                 <Download className="w-4 h-4 mr-2" />
                 ファイルエクスポート（Scrapyファイルから）
               </h4>
+              <p className="text-xs text-gray-400 mb-2">
+                💡 Scrapyが生成した各種形式のファイルを直接ダウンロードします
+              </p>
               <div className="flex flex-wrap gap-2">
                 {[
-                  { format: 'jsonl', name: 'JSONL', color: 'bg-green-600 hover:bg-green-700' },
-                  { format: 'json', name: 'JSON', color: 'bg-blue-600 hover:bg-blue-700' },
-                  { format: 'csv', name: 'CSV', color: 'bg-yellow-600 hover:bg-yellow-700' },
-                  { format: 'xml', name: 'XML', color: 'bg-purple-600 hover:bg-purple-700' }
+                  { format: 'jsonl', name: 'JSONL', color: 'bg-green-600 hover:bg-green-700', description: 'JSON Lines形式でダウンロード' },
+                  { format: 'json', name: 'JSON', color: 'bg-blue-600 hover:bg-blue-700', description: '標準JSON形式でダウンロード' },
+                  { format: 'csv', name: 'CSV', color: 'bg-yellow-600 hover:bg-yellow-700', description: 'CSV形式でダウンロード' },
+                  { format: 'excel', name: 'EXCEL', color: 'bg-orange-600 hover:bg-orange-700', description: 'Excel形式でダウンロード（動的生成）' },
+                  { format: 'xml', name: 'XML', color: 'bg-purple-600 hover:bg-purple-700', description: 'XML形式でダウンロード' }
                 ].map((format) => (
                   <button
                     key={`file-${format.format}`}
                     onClick={() => handleFileDownload(format.format as any)}
                     disabled={isDownloading === format.format}
                     className={`px-3 py-2 text-white text-sm rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors ${format.color}`}
-                    title={`Scrapyが生成した${format.name}ファイルを直接ダウンロード`}
+                    title={format.description}
                   >
                     {isDownloading === format.format ? '...' : format.name}
                   </button>
