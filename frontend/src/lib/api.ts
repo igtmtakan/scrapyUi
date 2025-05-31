@@ -1135,6 +1135,37 @@ class ApiClient {
     });
   }
 
+  // Watchdog監視付きスパイダー実行
+  async runSpiderWithWatchdog(
+    projectId: string,
+    spiderId: string,
+    request: { settings?: Record<string, any> } = {}
+  ): Promise<{
+    task_id: string;
+    celery_task_id: string;
+    status: string;
+    monitoring: string;
+    spider_name: string;
+    project_name: string;
+    message: string;
+  }> {
+    console.log(`🐕 Running spider with watchdog monitoring: projectId=${projectId}, spiderId=${spiderId}`);
+    return this.request<{
+      task_id: string;
+      celery_task_id: string;
+      status: string;
+      monitoring: string;
+      spider_name: string;
+      project_name: string;
+      message: string;
+    }>(`/api/spiders/${spiderId}/run-with-watchdog?project_id=${projectId}`, {
+      method: 'POST',
+      body: JSON.stringify({
+        settings: request.settings || {}
+      }),
+    });
+  }
+
   // カスタムScrapyラッパー実行
   async runSpiderWrapper(
     projectId: string,

@@ -480,7 +480,7 @@ def scheduled_spider_run(schedule_id: str):
 
         print(f"✅ Task record updated with Celery ID: {scheduled_spider_run.request.id}")
 
-        # 直接スパイダーを実行（run_spider_taskを呼び出さない）
+        # watchdog監視付きでスパイダーを実行（手動実行と同じ方式）
         try:
             # スパイダー実行の準備
             from ..services.scrapy_service import ScrapyPlaywrightService
@@ -492,7 +492,7 @@ def scheduled_spider_run(schedule_id: str):
             db_task.started_at = datetime.now()
             db.commit()
 
-            print(f"🚀 Starting spider execution for task: {task_id}")
+            print(f"🚀 Starting scheduled spider execution with watchdog for task: {task_id}")
 
             # プロジェクト情報を取得
             project = db.query(DBProject).filter(DBProject.id == schedule.project_id).first()
@@ -501,15 +501,66 @@ def scheduled_spider_run(schedule_id: str):
             if not project or not spider:
                 raise Exception(f"Project or Spider not found: {schedule.project_id}, {schedule.spider_id}")
 
-            # スパイダーを実行（正しい引数順序）
-            result = scrapy_service.run_spider(
-                project.path,  # project_path
-                spider.name,   # spider_name
-                task_id,       # task_id
-                schedule.settings or {}  # settings
-            )
+            # WebSocketコールバック関数（スケジュール実行用）
+            def websocket_callback(data: dict):
+                try:
+                    _safe_websocket_notify(task_id, data)
+                except Exception as e:
+                    print(f"⚠️ WebSocket callback error in scheduled run: {e}")
 
-            print(f"✅ Spider execution completed: {result}")
+            # 非同期実行をCeleryタスク内で処理（手動実行と同じ方式）
+            import asyncio
+
+            async def run_async_with_watchdog():
+                return await scrapy_service.run_spider_with_watchdog(
+                    project_path=project.path,
+                    spider_name=spider.name,
+                    task_id=task_id,
+                    settings=schedule.settings or {},
+                    websocket_callback=websocket_callback
+                )
+
+            # 新しいイベントループで実行
+            try:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                result = loop.run_until_complete(run_async_with_watchdog())
+                loop.close()
+            except Exception as e:
+                print(f"❌ Error in async scheduled spider execution with watchdog: {str(e)}")
+                raise
+
+            # 実行結果を処理
+            if result.get('success', False):
+                db_task.status = TaskStatus.FINISHED
+                db_task.finished_at = datetime.now()
+                db_task.items_count = result.get('items_processed', 0)
+
+                # 成功通知
+                _safe_websocket_notify(task_id, {
+                    "status": "FINISHED",
+                    "finished_at": datetime.now().isoformat(),
+                    "items_processed": result.get('items_processed', 0),
+                    "message": f"Scheduled spider {spider.name} completed successfully with watchdog monitoring"
+                })
+
+                print(f"✅ Scheduled spider execution completed with watchdog: {spider.name} - {result.get('items_processed', 0)} items processed")
+            else:
+                db_task.status = TaskStatus.FAILED
+                db_task.finished_at = datetime.now()
+                db_task.error_message = result.get('error', 'Unknown error')
+
+                # エラー通知
+                _safe_websocket_notify(task_id, {
+                    "status": "FAILED",
+                    "finished_at": datetime.now().isoformat(),
+                    "error": result.get('error', 'Unknown error'),
+                    "message": f"Scheduled spider {spider.name} failed with watchdog monitoring"
+                })
+
+                print(f"❌ Scheduled spider execution failed with watchdog: {spider.name} - {result.get('error', 'Unknown error')}")
+
+            db.commit()
             return {"task_id": task_id, "result": result}
 
         except Exception as e:

@@ -161,7 +161,9 @@ class DefaultSettingsService:
             base_settings.update(self.get_mobile_settings())
         elif spider_type == "ecommerce":
             base_settings.update(self.get_ecommerce_settings())
-        
+        elif spider_type == "amazon-ranking60":
+            base_settings.update(self.get_amazon_ranking60_settings())
+
         return base_settings
     
     def get_large_data_settings(self) -> Dict[str, Any]:
@@ -227,6 +229,60 @@ class DefaultSettingsService:
             'USER_AGENT': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'COOKIES_ENABLED': True,
             'SESSION_PERSISTENCE': True
+        }
+
+    def get_amazon_ranking60_settings(self) -> Dict[str, Any]:
+        """AmazonRanking60スパイダー用設定"""
+        return {
+            'DOWNLOAD_DELAY': 3.0,
+            'RANDOMIZE_DOWNLOAD_DELAY': 0.5,
+            'CONCURRENT_REQUESTS': 1,
+            'DEPTH_LIMIT': 3,
+            'CLOSESPIDER_PAGECOUNT': 10,
+            'CLOSESPIDER_ITEMCOUNT': 70,
+            'AUTOTHROTTLE_ENABLED': False,  # 手動で制御
+            'ROBOTSTXT_OBEY': True,
+            'USER_AGENT': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'DEFAULT_REQUEST_HEADERS': {
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+                'Accept-Language': 'ja,en-US;q=0.9,en;q=0.8',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'Cache-Control': 'no-cache',
+                'Sec-Fetch-Dest': 'document',
+                'Sec-Fetch-Mode': 'navigate',
+                'Sec-Fetch-Site': 'none',
+                'Sec-Fetch-User': '?1',
+                'Upgrade-Insecure-Requests': '1',
+            },
+            'PLAYWRIGHT_BROWSER_TYPE': 'chromium',
+            'PLAYWRIGHT_LAUNCH_OPTIONS': {
+                'headless': True,
+                'timeout': 30000,
+            },
+            'PLAYWRIGHT_DEFAULT_NAVIGATION_TIMEOUT': 30000,
+            'FEEDS': {
+                'ranking_results.jsonl': {
+                    'format': 'jsonlines',
+                    'encoding': 'utf8',
+                    'store_empty': False,
+                    'item_export_kwargs': {
+                        'ensure_ascii': False,
+                    },
+                },
+                'ranking_results.json': {
+                    'format': 'json',
+                    'encoding': 'utf8',
+                    'store_empty': False,
+                    'item_export_kwargs': {
+                        'ensure_ascii': False,
+                    },
+                },
+                'ranking_results.csv': {
+                    'format': 'csv',
+                    'encoding': 'utf8',
+                    'store_empty': False,
+                },
+            }
         }
     
     def get_export_settings(self) -> Dict[str, Any]:

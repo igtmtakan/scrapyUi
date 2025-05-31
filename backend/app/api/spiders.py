@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Dict, Any
+from pydantic import BaseModel
 import uuid
 
 from ..database import get_db, Spider as DBSpider, Project as DBProject, User as DBUser, UserRole, ProjectFile
@@ -17,6 +18,10 @@ router = APIRouter(
         500: {"description": "Internal server error"}
     }
 )
+
+# Pydanticモデル定義
+class RunSpiderWithWatchdogRequest(BaseModel):
+    settings: Dict[str, Any] = {}
 
 
 def sync_spider_file_to_database(db, project_id: str, project_path: str, spider_name: str, spider_code: str, user_id: str):
@@ -764,6 +769,46 @@ async def delete_spider(
 
     return None
 
+@router.get("/{spider_id}/sync-from-filesystem")
+async def sync_spider_code_from_filesystem(spider_id: str, db: Session = Depends(get_db)):
+    """実際のファイルシステムからスパイダーのコードを取得"""
+    try:
+        db_spider = db.query(DBSpider).filter(DBSpider.id == spider_id).first()
+        if not db_spider:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Spider not found"
+            )
+
+        # プロジェクト情報を取得
+        project = db.query(DBProject).filter(DBProject.id == db_spider.project_id).first()
+        if not project:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Project not found"
+            )
+
+        # ScrapyPlaywrightServiceを使用して実際のファイルから読み取り
+        scrapy_service = ScrapyPlaywrightService()
+        code = scrapy_service.get_spider_code(project.path, db_spider.name)
+
+        print(f"✅ Read spider code from filesystem: {db_spider.name}.py ({len(code)} chars)")
+
+        return {
+            "spider_id": spider_id,
+            "spider_name": db_spider.name,
+            "project_path": project.path,
+            "code": code,
+            "size": len(code.encode('utf-8'))
+        }
+
+    except Exception as e:
+        print(f"❌ Failed to read spider code from filesystem: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to read spider code from filesystem: {str(e)}"
+        )
+
 @router.get("/{spider_id}/code")
 async def get_spider_code(spider_id: str, db: Session = Depends(get_db)):
     """スパイダーのコードを取得"""
@@ -1287,13 +1332,19 @@ async def check_all_spider_indentation(
 @router.post("/{spider_id}/run-with-watchdog")
 async def run_spider_with_watchdog(
     spider_id: str,
-    project_id: str,
-    request: dict,
+    request: RunSpiderWithWatchdogRequest,
+    project_id: str = Query(..., description="Project ID"),
     db: Session = Depends(get_db),
     current_user = Depends(get_current_active_user)
 ):
     """watchdog監視付きでスパイダーを実行"""
     try:
+        print(f"🚀 watchdog監視付きスパイダー実行開始: {spider_id}")
+        print(f"📋 Project ID: {project_id}")
+        print(f"👤 User: {current_user.email}")
+        print(f"📦 Request data: {request}")
+        print(f"⚙️ Settings: {request.settings}")
+
         # スパイダーの存在確認
         spider = db.query(DBSpider).filter(
             DBSpider.id == spider_id,
@@ -1314,18 +1365,58 @@ async def run_spider_with_watchdog(
             raise HTTPException(status_code=404, detail="Project not found")
 
         # watchdog監視付きタスクを開始
-        from ..tasks.spider_tasks import run_spider_with_watchdog_task
+        # Celeryタスクの代わりに直接実行（一時的な解決策）
+        import uuid
+        import asyncio
+        from ..services.scrapy_watchdog_monitor import ScrapyWatchdogMonitor
+        from pathlib import Path
 
-        # Celeryタスクを開始
-        celery_task = run_spider_with_watchdog_task.delay(
-            project_id=project_id,
-            spider_id=spider_id,
-            settings=request.get('settings', {})
+        # タスクIDを生成
+        task_id = str(uuid.uuid4())
+
+        # プロジェクトパスを構築
+        scrapy_service = ScrapyPlaywrightService()
+        project_path = scrapy_service.base_projects_dir / project.path
+
+        # データベースパスを絶対パスで指定
+        import os
+        # backend/app/api/spiders.py から backend/database/scrapy_ui.db へのパス
+        current_file = os.path.abspath(__file__)  # backend/app/api/spiders.py
+        app_dir = os.path.dirname(current_file)  # backend/app/api
+        backend_dir = os.path.dirname(os.path.dirname(app_dir))  # backend/app -> backend
+        db_path = os.path.join(backend_dir, "database", "scrapy_ui.db")
+
+        # watchdog監視クラスを作成
+        monitor = ScrapyWatchdogMonitor(
+            task_id=task_id,
+            project_path=str(project_path),
+            spider_name=spider.name,
+            db_path=db_path
         )
 
+        # バックグラウンドで実行開始
+        import threading
+        def run_spider_background():
+            try:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                result = loop.run_until_complete(
+                    monitor.execute_spider_with_monitoring(request.settings)
+                )
+                print(f"✅ Spider execution completed: {result}")
+            except Exception as e:
+                print(f"❌ Background spider execution error: {e}")
+            finally:
+                loop.close()
+
+        # バックグラウンドスレッドで実行
+        thread = threading.Thread(target=run_spider_background)
+        thread.daemon = True
+        thread.start()
+
         return {
-            "task_id": celery_task.id,
-            "celery_task_id": celery_task.id,
+            "task_id": task_id,
+            "celery_task_id": task_id,
             "status": "started_with_watchdog",
             "monitoring": "jsonl_file_watchdog",
             "spider_name": spider.name,
