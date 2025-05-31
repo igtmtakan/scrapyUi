@@ -45,7 +45,7 @@ class PlaywrightCrawlerService:
                     "browser_type": "chromium",
                     "headless": True,
                     "viewport": {"width": 1280, "height": 720},
-                    "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                    "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                 },
                 "crawl_settings": {
                     "delay": 1000,

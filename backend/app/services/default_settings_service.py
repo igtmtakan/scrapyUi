@@ -150,7 +150,8 @@ class DefaultSettingsService:
             'ROBOTSTXT_OBEY': self.default_settings["spider_defaults"]["error_handling"]["robotstxt_obey"],
             'MEMUSAGE_ENABLED': self.default_settings["spider_defaults"]["memory_settings"]["memusage_enabled"],
             'MEMUSAGE_LIMIT_MB': self.default_settings["spider_defaults"]["memory_settings"]["memusage_limit_mb"],
-            'MEMUSAGE_WARNING_MB': self.default_settings["spider_defaults"]["memory_settings"]["memusage_warning_mb"]
+            'MEMUSAGE_WARNING_MB': self.default_settings["spider_defaults"]["memory_settings"]["memusage_warning_mb"],
+            'USER_AGENT': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         }
         
         # スパイダータイプ別の設定
@@ -207,12 +208,12 @@ class DefaultSettingsService:
             'PLAYWRIGHT_CONTEXTS': {
                 'mobile': {
                     'viewport': {'width': 375, 'height': 667},
-                    'user_agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15',
+                    'user_agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1',
                     'is_mobile': True,
                     'has_touch': True,
                 }
             },
-            'USER_AGENT': 'ScrapyUI Mobile Spider 1.0'
+            'USER_AGENT': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1'
         }
     
     def get_ecommerce_settings(self) -> Dict[str, Any]:
@@ -223,7 +224,7 @@ class DefaultSettingsService:
             'AUTOTHROTTLE_ENABLED': True,
             'AUTOTHROTTLE_START_DELAY': 2,
             'AUTOTHROTTLE_MAX_DELAY': 10,
-            'USER_AGENT': 'ScrapyUI E-commerce Spider 1.0',
+            'USER_AGENT': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'COOKIES_ENABLED': True,
             'SESSION_PERSISTENCE': True
         }
