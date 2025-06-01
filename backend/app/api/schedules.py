@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime
 from croniter import croniter
 
-from ..database import get_db, Schedule as DBSchedule, Project as DBProject, Spider as DBSpider, Task as DBTask, User as DBUser, UserRole
+from ..database import get_db, Schedule as DBSchedule, Project as DBProject, Spider as DBSpider, Task as DBTask, User as DBUser, UserRole, TaskStatus
 from ..models.schemas import Schedule, ScheduleCreate, ScheduleUpdate
 from ..tasks.scrapy_tasks import scheduled_spider_run
 from ..services.scheduler_service import scheduler_service
@@ -481,6 +481,24 @@ async def run_schedule_now(schedule_id: str, db: Session = Depends(get_db)):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Schedule is not active"
+        )
+
+    # 実行中タスクチェック（重複実行防止）
+    running_tasks = db.query(DBTask).filter(
+        DBTask.project_id == db_schedule.project_id,
+        DBTask.spider_id == db_schedule.spider_id,
+        DBTask.status.in_([TaskStatus.RUNNING, TaskStatus.PENDING])
+    ).all()
+
+    if running_tasks:
+        running_task_info = []
+        for task in running_tasks:
+            elapsed = (datetime.now() - task.started_at).total_seconds() if task.started_at else 0
+            running_task_info.append(f"Task {task.id[:8]}... (running for {elapsed:.0f}s)")
+
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Cannot execute schedule: {len(running_tasks)} task(s) already running. {', '.join(running_task_info)}"
         )
 
     # Celeryタスクとして実行（テスト環境では簡略化）

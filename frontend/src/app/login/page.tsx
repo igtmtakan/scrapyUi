@@ -18,19 +18,24 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
 
-  // 初期化
+  // 初期化処理
   useEffect(() => {
-    initialize()
-  }, [initialize])
+    if (!isInitialized) {
+      console.log('🚀 Initializing auth store from login page...');
+      initialize();
+    }
+  }, [isInitialized, initialize]);
 
+  // 認証済みユーザーのリダイレクト処理
   useEffect(() => {
-    if (isInitialized && isAuthenticated) {
-      // リダイレクト先を確認（デフォルトはプロジェクト一覧ページ）
+    if (!isInitialized) return; // 初期化完了まで待機
+
+    if (isAuthenticated) {
       const redirectTo = searchParams.get('redirect') || '/projects';
       console.log('🔄 Authenticated user detected, redirecting to:', redirectTo);
 
-      // 無限ループを防ぐため、現在のパスと異なる場合のみリダイレクト
-      if (window.location.pathname !== redirectTo) {
+      // 現在のパスがログインページの場合のみリダイレクト
+      if (typeof window !== 'undefined' && window.location.pathname === '/login') {
         router.push(redirectTo);
       }
     }

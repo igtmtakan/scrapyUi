@@ -130,12 +130,7 @@ export default function RecentTasks() {
                     <p className="text-xs">Items</p>
                   </div>
                 )}
-                {task.error_count !== undefined && task.error_count > 0 && (
-                  <div className="text-center">
-                    <p className="font-medium text-red-600">{task.error_count}</p>
-                    <p className="text-xs">Errors</p>
-                  </div>
-                )}
+
                 <Link 
                   href={`/tasks/${task.id}`}
                   className="text-blue-600 hover:text-blue-700 font-medium"

@@ -157,6 +157,9 @@ async def get_tasks(
         task_dict = task.__dict__.copy()
         task_dict['project'] = project
         task_dict['spider'] = spider
+        task_dict['spider_name'] = spider.name  # フロントエンド互換性のため追加
+        task_dict['items_scraped'] = task.items_count or 0  # フロントエンド互換性のため追加
+        task_dict['errors_count'] = task.error_count or 0  # フロントエンド互換性のため追加
         task_dict['results_count'] = len(task.results) if task.results else 0
         task_dict['logs_count'] = len(task.logs) if task.logs else 0
 
@@ -207,6 +210,14 @@ async def get_task(
             detail="Access denied"
         )
 
+    # アイテム数を実際のDB結果数に同期
+    actual_db_count = db.query(DBResult).filter(DBResult.task_id == task_id).count()
+    if task.items_count != actual_db_count:
+        print(f"🔧 Syncing task {task_id[:8]}... items count: {task.items_count} → {actual_db_count}")
+        task.items_count = actual_db_count
+        task.requests_count = max(actual_db_count, task.requests_count or 1)
+        db.commit()
+
     # 関連情報を含めて返す
     project = db.query(DBProject).filter(DBProject.id == task.project_id).first()
     spider = db.query(DBSpider).filter(DBSpider.id == task.spider_id).first()
@@ -236,6 +247,9 @@ async def get_task(
     task_dict = task.__dict__.copy()
     task_dict['project'] = project
     task_dict['spider'] = spider
+    task_dict['spider_name'] = spider.name  # フロントエンド互換性のため追加
+    task_dict['items_scraped'] = task.items_count or 0  # フロントエンド互換性のため追加
+    task_dict['errors_count'] = task.error_count or 0  # フロントエンド互換性のため追加
     task_dict['results_count'] = len(task.results) if task.results else 0
     task_dict['logs_count'] = len(task.logs) if task.logs else 0
 
@@ -1255,6 +1269,14 @@ async def get_task_results(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Task not found"
         )
+
+    # アイテム数を実際のDB結果数に同期
+    actual_db_count = db.query(DBResult).filter(DBResult.task_id == task_id).count()
+    if task.items_count != actual_db_count:
+        print(f"🔧 Syncing task {task_id[:8]}... items count: {task.items_count} → {actual_db_count}")
+        task.items_count = actual_db_count
+        task.requests_count = max(actual_db_count, task.requests_count or 1)
+        db.commit()
 
     # データベースから結果を取得
     query = db.query(DBResult).filter(DBResult.task_id == task_id)
@@ -2316,83 +2338,84 @@ async def fix_failed_tasks():
                     if not project:
                         continue
 
-                    # 結果ファイルを検索（実際のファイル配置に基づく順序）
+                    # 1. データベースの結果を確認
+                    db_results_count = db.query(DBResult).filter(DBResult.task_id == task.id).count()
+
+                    # 2. 結果ファイルを検索（JSONLとJSONの両方）
                     base_dir = Path(scrapy_service.base_projects_dir) / project.path
-                    patterns = [
-                        # 実際のパス（プロジェクトルートディレクトリ）
-                        str(base_dir / f"results_{task.id}.json"),
-                        # 二重パス（プロジェクト内のプロジェクトディレクトリ）
-                        str(base_dir / project.path / f"results_{task.id}.json"),
-                        # 再帰検索
-                        str(base_dir / "**" / f"results_{task.id}.json")
+                    file_patterns = [
+                        # JSONLファイル（優先）
+                        f"results_{task.id}.jsonl",
+                        f"results_{task.id}.json",
+                        # 汎用パターン
+                        f"*{task.id}*.jsonl",
+                        f"*{task.id}*.json"
+                    ]
+
+                    search_dirs = [
+                        base_dir,  # プロジェクトルート
+                        base_dir / project.path,  # 二重パス
                     ]
 
                     result_file = None
-                    for pattern in patterns:
-                        matches = glob.glob(pattern, recursive=True)
-                        if matches:
-                            result_file = Path(matches[0])
+                    file_items_count = 0
+
+                    for search_dir in search_dirs:
+                        if result_file:
                             break
+                        for pattern in file_patterns:
+                            matches = glob.glob(str(search_dir / "**" / pattern), recursive=True)
+                            if matches:
+                                result_file = Path(matches[0])
+                                break
 
-                    # 最新のresults_*.jsonファイルも確認
-                    if not result_file:
-                        pattern = str(base_dir / "**" / "results_*.json")
-                        matches = glob.glob(pattern, recursive=True)
-                        if matches:
-                            # タスク作成時間の前後5分以内に作成されたファイル
-                            task_time = task.created_at.timestamp()
-                            for match in matches:
-                                file_time = Path(match).stat().st_mtime
-                                if abs(file_time - task_time) < 300:  # 5分以内
-                                    result_file = Path(match)
-                                    break
-
+                    # ファイルからアイテム数を取得
                     if result_file and result_file.exists():
-                        file_size = result_file.stat().st_size
-
-                        # ファイルサイズが十分大きい場合
-                        if file_size > 1000:  # 1KB以上
-                            try:
-                                with open(result_file, 'r', encoding='utf-8') as f:
+                        try:
+                            with open(result_file, 'r', encoding='utf-8') as f:
+                                if result_file.suffix == '.jsonl':
+                                    # JSONLファイルの場合は行数をカウント
+                                    lines = [line.strip() for line in f.readlines() if line.strip()]
+                                    file_items_count = len(lines)
+                                else:
+                                    # JSONファイルの場合
                                     content = f.read().strip()
                                     if content:
                                         data = json.loads(content)
-                                        item_count = len(data) if isinstance(data, list) else 1
+                                        file_items_count = len(data) if isinstance(data, list) else 1
+                        except Exception as e:
+                            print(f"Error reading file {result_file}: {e}")
+                            # ファイルサイズから推定
+                            file_size = result_file.stat().st_size
+                            file_items_count = max(file_size // 200, 1) if file_size > 1000 else 0
 
-                                        # タスクを修正
-                                        task.status = TaskStatus.FINISHED
-                                        task.items_count = item_count
-                                        task.requests_count = max(item_count + 10, 15)
-                                        task.error_count = 0
-                                        task.finished_at = datetime.now()
+                    # 3. 修復判定：データベースまたはファイルにデータがある場合
+                    total_items = max(db_results_count, file_items_count)
 
-                                        fixed_tasks.append({
-                                            "task_id": task.id,
-                                            "spider_name": task.spider.name if task.spider else "Unknown",
-                                            "items_count": item_count,
-                                            "file_size": file_size,
-                                            "file_path": str(result_file)
-                                        })
+                    if total_items > 0:
+                        # タスクを成功状態に修正
+                        task.status = TaskStatus.FINISHED
+                        task.items_count = total_items
+                        task.requests_count = max(total_items, 1)  # 最低1リクエスト
+                        task.error_count = 0
+                        task.finished_at = datetime.now()
 
-                            except (json.JSONDecodeError, Exception) as e:
-                                # JSONエラーでもファイルサイズが大きければ修正
-                                if file_size > 5000:  # 5KB以上
-                                    estimated_items = max(file_size // 100, 10)  # 推定アイテム数
+                        fixed_info = {
+                            "task_id": task.id,
+                            "spider_name": task.spider.name if task.spider else "Unknown",
+                            "items_count": total_items,
+                            "db_results_count": db_results_count,
+                            "file_items_count": file_items_count,
+                            "file_path": str(result_file) if result_file else None,
+                            "source": "database" if db_results_count > file_items_count else "file"
+                        }
 
-                                    task.status = TaskStatus.FINISHED
-                                    task.items_count = estimated_items
-                                    task.requests_count = estimated_items + 10
-                                    task.error_count = 0
-                                    task.finished_at = datetime.now()
+                        if result_file:
+                            fixed_info["file_size"] = result_file.stat().st_size
 
-                                    fixed_tasks.append({
-                                        "task_id": task.id,
-                                        "spider_name": task.spider.name if task.spider else "Unknown",
-                                        "items_count": estimated_items,
-                                        "file_size": file_size,
-                                        "file_path": str(result_file),
-                                        "note": "Estimated from file size"
-                                    })
+                        fixed_tasks.append(fixed_info)
+
+                        print(f"✅ Fixed task {task.id}: {total_items} items (DB: {db_results_count}, File: {file_items_count})")
 
                 except Exception as e:
                     print(f"Error processing task {task.id}: {str(e)}")

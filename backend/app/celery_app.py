@@ -26,15 +26,20 @@ celery_app.conf.update(
 
 # 定期実行タスクの設定
 celery_app.conf.beat_schedule = {
-    # 例: 毎日午前2時にクリーンアップタスクを実行
+    # 毎日午前2時にクリーンアップタスクを実行
     'cleanup-old-results': {
         'task': 'app.tasks.scrapy_tasks.cleanup_old_results',
         'schedule': crontab(hour=2, minute=0),
     },
-    # 例: 5分ごとにシステムヘルスチェック
+    # 5分ごとにシステムヘルスチェック
     'system-health-check': {
         'task': 'app.tasks.scrapy_tasks.system_health_check',
         'schedule': crontab(minute='*/5'),
+    },
+    # 2分ごとに失敗タスクの自動修復（失敗判定を自動修復に委任）
+    'auto-repair-failed-tasks': {
+        'task': 'app.tasks.scrapy_tasks.auto_repair_failed_tasks',
+        'schedule': crontab(minute='*/2'),
     },
 }
 
@@ -42,6 +47,7 @@ celery_app.conf.beat_schedule = {
 celery_app.conf.task_routes = {
     'app.tasks.scrapy_tasks.run_spider_task': {'queue': 'scrapy'},
     'app.tasks.scrapy_tasks.scheduled_spider_run': {'queue': 'scrapy'},  # スケジュール実行もscrapyキューに配置
+    'app.tasks.scrapy_tasks.auto_repair_failed_tasks': {'queue': 'maintenance'},
     'app.tasks.scrapy_tasks.cleanup_old_results': {'queue': 'maintenance'},
     'app.tasks.scrapy_tasks.system_health_check': {'queue': 'monitoring'},
 }

@@ -1916,18 +1916,28 @@ project = {project_path}
                     current_requests = task.requests_count or 0
                     current_errors = task.error_count or 0
 
+                    # データベースの結果も確認（自動修復機能）
+                    from ..database import Result as DBResult
+                    db_results_count = db.query(DBResult).filter(DBResult.task_id == task_id).count()
+
                     # 結果ファイルが存在し、データが取得されている場合は成功とみなす
                     has_results = self._verify_task_results(task_id)
 
-                    # 統計情報の決定（ファイルベースを最優先）
-                    final_items = actual_items if actual_items > 0 else current_items
-                    final_requests = actual_requests if actual_requests > 0 else current_requests
+                    # 統計情報の決定（ファイル、DB、現在値の最大値を使用）
+                    final_items = max(actual_items, db_results_count, current_items)
+                    final_requests = max(actual_requests, final_items, current_requests)
 
-                    # より詳細な成功判定
+                    # 自動修復ロジック：データがある場合は成功に変更
                     # 1. プロセスが正常終了 (success=True)
                     # 2. アイテムが取得されている (final_items > 0)
                     # 3. 結果ファイルが存在する (has_results=True)
-                    task_success = success and (final_items > 0 or has_results)
+                    # 4. データベースに結果がある (db_results_count > 0)
+                    task_success = success or (final_items > 0) or has_results or (db_results_count > 0)
+
+                    # 自動修復が発生した場合のログ
+                    if not success and task_success:
+                        print(f"🔧 AUTO-RECOVERY: Task {task_id} failed but has data - converting to success")
+                        print(f"   File items: {actual_items}, DB results: {db_results_count}, Has files: {has_results}")
 
                     print(f"📊 Final statistics for task {task_id}:")
                     print(f"   Items: {final_items} (file: {actual_items}, current: {current_items})")

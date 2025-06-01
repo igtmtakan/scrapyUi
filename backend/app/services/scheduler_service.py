@@ -208,6 +208,16 @@ class SchedulerService:
                         print(f"⏳ Skipping {schedule.name}: Last run was {time_since_last.total_seconds():.0f}s ago (< 60s)")
                         should_execute = False
 
+                # 実行中タスクチェック（重複実行防止）
+                if should_execute:
+                    running_tasks = self._check_running_tasks(schedule)
+                    if running_tasks:
+                        print(f"⏳ Skipping {schedule.name}: {len(running_tasks)} running task(s) found")
+                        for task in running_tasks:
+                            elapsed = (current_time - task.started_at).total_seconds() if task.started_at else 0
+                            print(f"   - Task {task.id[:8]}... running for {elapsed:.0f}s")
+                        should_execute = False
+
                 if should_execute:
                     print(f"✅ Should execute {schedule.name}: Current={current_time.strftime('%H:%M:%S')}, Next={schedule.next_run.strftime('%H:%M:%S')}")
 
@@ -258,6 +268,44 @@ class SchedulerService:
         except Exception as e:
             print(f"❌ Error executing schedule {schedule.name}: {str(e)}")
             db.rollback()
+
+    def _check_running_tasks(self, schedule: DBSchedule) -> List:
+        """指定されたスケジュールの実行中タスクをチェック"""
+        try:
+            from ..database import Task as DBTask, TaskStatus
+
+            db = SessionLocal()
+            try:
+                # 同じプロジェクト・スパイダーの実行中タスクを検索
+                running_tasks = db.query(DBTask).filter(
+                    DBTask.project_id == schedule.project_id,
+                    DBTask.spider_id == schedule.spider_id,
+                    DBTask.status.in_([TaskStatus.RUNNING, TaskStatus.PENDING])
+                ).all()
+
+                # 長時間実行タスクのタイムアウトチェック（30分以上）
+                current_time = datetime.now()
+                timeout_threshold = current_time - timedelta(minutes=30)
+
+                valid_running_tasks = []
+                for task in running_tasks:
+                    if task.started_at and task.started_at < timeout_threshold:
+                        print(f"⚠️ Task {task.id[:8]}... timed out (running for {(current_time - task.started_at).total_seconds()/60:.1f} minutes), marking as completed")
+                        # タイムアウトしたタスクを完了状態に変更
+                        task.status = TaskStatus.FINISHED
+                        task.finished_at = current_time
+                        db.commit()
+                    else:
+                        valid_running_tasks.append(task)
+
+                return valid_running_tasks
+
+            finally:
+                db.close()
+
+        except Exception as e:
+            print(f"❌ Error checking running tasks for {schedule.name}: {str(e)}")
+            return []
 
     def _update_next_run_time(self, schedule: DBSchedule, db: Session):
         """次回実行時刻を更新"""

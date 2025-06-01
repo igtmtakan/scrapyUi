@@ -23,6 +23,15 @@ router = APIRouter(
 class RunSpiderWithWatchdogRequest(BaseModel):
     settings: Dict[str, Any] = {}
 
+class PuppeteerSpiderRequest(BaseModel):
+    spider_name: str
+    start_urls: List[str]
+    spider_type: str = "spa"  # "spa" or "dynamic"
+    puppeteer_config: Dict[str, Any] = {}
+    extract_data: Dict[str, Any] = {}
+    actions: List[Dict[str, Any]] = []  # for dynamic spiders
+    custom_settings: Dict[str, Any] = {}
+
 
 def sync_spider_file_to_database(db, project_id: str, project_path: str, spider_name: str, spider_code: str, user_id: str):
     """スパイダーファイルをデータベースに同期"""
@@ -514,6 +523,269 @@ def update_project_imports_in_code(code: str, old_project_name: str, new_project
             print(f"🔄 Updated import: {old_import} -> {new_import}")
 
     return updated_code
+
+@router.post("/puppeteer", response_model=Spider, status_code=status.HTTP_201_CREATED)
+async def create_puppeteer_spider(
+    request: PuppeteerSpiderRequest,
+    project_id: str,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_active_user)
+):
+    """Puppeteerスパイダーを作成"""
+
+    # プロジェクトの存在確認
+    project = db.query(DBProject).filter(DBProject.id == project_id).first()
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project not found"
+        )
+
+    # 管理者以外は自分のプロジェクトのみアクセス可能
+    is_admin = (current_user.role == UserRole.ADMIN or
+                current_user.role == "ADMIN" or
+                current_user.role == "admin")
+    if not is_admin and project.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied"
+        )
+
+    # スパイダー名の重複チェック
+    existing_spider = db.query(DBSpider).filter(
+        DBSpider.project_id == project_id,
+        DBSpider.name == request.spider_name
+    ).first()
+
+    if existing_spider:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Spider '{request.spider_name}' already exists in this project"
+        )
+
+    try:
+        # Puppeteerスパイダーコードを生成
+        spider_code = generate_puppeteer_spider_code(request)
+
+        # データベースにスパイダーを作成
+        db_spider = DBSpider(
+            id=str(uuid.uuid4()),
+            name=request.spider_name,
+            code=spider_code,
+            project_id=project_id,
+            user_id=current_user.id
+        )
+
+        db.add(db_spider)
+        db.commit()
+        db.refresh(db_spider)
+
+        print(f"✅ Puppeteer spider created successfully: {request.spider_name}")
+        return db_spider
+
+    except Exception as e:
+        db.rollback()
+        print(f"❌ Error creating Puppeteer spider: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create Puppeteer spider: {str(e)}"
+        )
+
+def generate_puppeteer_spider_code(request: PuppeteerSpiderRequest) -> str:
+    """Puppeteerスパイダーのコードを生成"""
+
+    # クラス名を生成
+    class_name = ''.join(word.capitalize() for word in request.spider_name.replace('_', ' ').replace('-', ' ').split())
+    if not class_name.endswith('Spider'):
+        class_name += 'Spider'
+
+    # start_urlsの文字列を生成
+    start_urls_str = ',\n        '.join([f'"{url}"' for url in request.start_urls])
+
+    # extractDataの設定を生成
+    extract_data_str = ""
+    if request.extract_data:
+        import json
+        extract_data_str = f"""
+                extractData={json.dumps(request.extract_data, indent=16).replace('    ', '')},"""
+
+    # actionsの設定を生成（dynamicタイプの場合）
+    actions_str = ""
+    if request.spider_type == "dynamic" and request.actions:
+        import json
+        actions_str = f"""
+            actions = {json.dumps(request.actions, indent=12).replace('    ', '')}
+
+            yield self.make_dynamic_request(
+                url=url,
+                actions=actions,
+                extract_after={json.dumps(request.extract_data, indent=16).replace('    ', '') if request.extract_data else 'None'}
+            )"""
+    else:
+        actions_str = f"""yield self.make_puppeteer_request(
+                url=url,{extract_data_str}
+                screenshot=False,
+                waitFor=3000
+            )"""
+
+    # カスタム設定を生成
+    custom_settings_str = ""
+    if request.custom_settings:
+        import json
+        custom_settings_str = f"""
+    custom_settings = {json.dumps(request.custom_settings, indent=8).replace('    ', '')}"""
+
+    # Puppeteerスパイダーコードテンプレート
+    spider_code = f'''"""
+{request.spider_name} - Puppeteerスパイダー
+Generated by ScrapyUI
+"""
+
+import scrapy
+import json
+from datetime import datetime
+
+
+class {class_name}(scrapy.Spider):
+    """
+    Puppeteerを使用したスパイダー
+    JavaScript重要なSPAサイトやダイナミックコンテンツの取得
+    """
+
+    name = "{request.spider_name}"
+    start_urls = [
+        {start_urls_str}
+    ]
+
+    # Puppeteerサービスの設定
+    puppeteer_service_url = 'http://localhost:3001'{custom_settings_str}
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.puppeteer_config = {json.dumps(request.puppeteer_config, indent=12).replace('    ', '') if request.puppeteer_config else '{}'}
+
+    def start_requests(self):
+        """開始リクエストを生成"""
+        for url in self.start_urls:
+            {actions_str}
+
+    def make_puppeteer_request(self, url, **kwargs):
+        """Puppeteerを使用したリクエストを作成"""
+        config = {{**self.puppeteer_config, **kwargs}}
+
+        puppeteer_data = {{
+            'url': url,
+            'viewport': config.get('viewport', {{'width': 1920, 'height': 1080}}),
+            'userAgent': config.get('userAgent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'),
+            'timeout': config.get('timeout', 30000),
+            'waitFor': config.get('waitFor', 3000),
+            'extractData': config.get('extractData'),
+            'screenshot': config.get('screenshot', False),
+        }}
+
+        puppeteer_data = {{k: v for k, v in puppeteer_data.items() if v is not None}}
+
+        return scrapy.Request(
+            url=f"{{self.puppeteer_service_url}}/api/scraping/spa",
+            method='POST',
+            headers={{'Content-Type': 'application/json'}},
+            body=json.dumps(puppeteer_data),
+            callback=self.parse_puppeteer_response,
+            meta={{'original_url': url, 'puppeteer_data': puppeteer_data}}
+        )
+
+    def make_dynamic_request(self, url, actions, extract_after=None, **kwargs):
+        """動的コンテンツ用のPuppeteerリクエストを作成"""
+        config = {{**self.puppeteer_config, **kwargs}}
+
+        puppeteer_data = {{
+            'url': url,
+            'actions': actions,
+            'extractAfter': extract_after,
+            'timeout': config.get('timeout', 30000),
+        }}
+
+        return scrapy.Request(
+            url=f"{{self.puppeteer_service_url}}/api/scraping/dynamic",
+            method='POST',
+            headers={{'Content-Type': 'application/json'}},
+            body=json.dumps(puppeteer_data),
+            callback=self.parse_dynamic_response,
+            meta={{'original_url': url, 'puppeteer_data': puppeteer_data}}
+        )
+
+    def parse_puppeteer_response(self, response):
+        """Puppeteerサービスからのレスポンスを解析"""
+        try:
+            data = json.loads(response.text)
+
+            if not data.get('success'):
+                self.logger.error(f"Puppeteer scraping failed: {{data.get('message', 'Unknown error')}}")
+                return
+
+            scraping_data = data.get('data', {{}})
+            original_url = response.meta.get('original_url')
+
+            item = {{
+                'url': original_url,
+                'scraped_url': scraping_data.get('url'),
+                'title': scraping_data.get('pageInfo', {{}}).get('title'),
+                'timestamp': scraping_data.get('timestamp'),
+                'scraped_at': datetime.now().isoformat(),
+            }}
+
+            # 抽出されたデータを追加
+            if 'extractedData' in scraping_data:
+                item.update(scraping_data['extractedData'])
+
+            # カスタムJavaScriptの結果を追加
+            if 'customData' in scraping_data:
+                item['custom_data'] = scraping_data['customData']
+
+            yield item
+
+        except json.JSONDecodeError as e:
+            self.logger.error(f"Failed to parse Puppeteer response: {{e}}")
+        except Exception as e:
+            self.logger.error(f"Error processing Puppeteer response: {{e}}")
+
+    def parse_dynamic_response(self, response):
+        """動的コンテンツのレスポンスを解析"""
+        try:
+            data = json.loads(response.text)
+
+            if not data.get('success'):
+                self.logger.error(f"Dynamic scraping failed: {{data.get('message', 'Unknown error')}}")
+                return
+
+            original_url = response.meta.get('original_url')
+
+            item = {{
+                'url': original_url,
+                'scraped_url': data.get('url'),
+                'title': data.get('pageInfo', {{}}).get('title'),
+                'timestamp': data.get('timestamp'),
+                'actions_executed': data.get('actionsExecuted', 0),
+                'scraped_at': datetime.now().isoformat(),
+            }}
+
+            # 抽出されたデータを追加
+            if 'data' in data:
+                item.update(data['data'])
+
+            # カスタムJavaScriptの結果を追加
+            if 'customData' in data:
+                item['custom_data'] = data['customData']
+
+            yield item
+
+        except json.JSONDecodeError as e:
+            self.logger.error(f"Failed to parse dynamic response: {{e}}")
+        except Exception as e:
+            self.logger.error(f"Error processing dynamic response: {{e}}")
+'''
+
+    return spider_code
 
 @router.post("/", response_model=Spider, status_code=status.HTTP_201_CREATED)
 async def create_spider(

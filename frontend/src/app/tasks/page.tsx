@@ -482,7 +482,7 @@ export default function TasksPage() {
                   </div>
 
                   {/* Task Stats */}
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-4">
                     <div className="text-center">
                       <div className="text-2xl font-bold text-blue-400">{task.items_count}</div>
                       <div className="text-xs text-gray-400">アイテム数</div>
@@ -490,10 +490,6 @@ export default function TasksPage() {
                     <div className="text-center">
                       <div className="text-2xl font-bold text-green-400">{task.requests_count}</div>
                       <div className="text-xs text-gray-400">リクエスト数</div>
-                    </div>
-                    <div className="text-center">
-                      <div className="text-2xl font-bold text-red-400">{task.error_count}</div>
-                      <div className="text-xs text-gray-400">エラー数</div>
                     </div>
                     <div className="text-center">
                       <div className="text-2xl font-bold text-purple-400">

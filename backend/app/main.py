@@ -509,6 +509,7 @@ async def startup_event():
 
         from .services.scrapy_service import ScrapyPlaywrightService
         from .services.scheduler_service import scheduler_service
+        from .services.task_sync_service import task_sync_service
 
         # ScrapyServiceのシングルトンインスタンスを取得
         scrapy_service_instance = ScrapyPlaywrightService()
@@ -521,6 +522,10 @@ async def startup_event():
         # スケジューラーサービスを開始
         scheduler_service.start()
         logger.info("⏰ Schedule service started")
+
+        # タスクアイテム数同期サービスを開始
+        task_sync_service.start()
+        logger.info("🔧 Task sync service started")
 
         # リアルタイムWebSocket管理を開始
         realtime_websocket_manager.start()
@@ -556,6 +561,11 @@ async def shutdown_event():
         # スケジューラーサービスを停止
         scheduler_service.stop()
         logger.info("⏰ Schedule service stopped")
+
+        # タスクアイテム数同期サービスを停止
+        from .services.task_sync_service import task_sync_service
+        task_sync_service.stop()
+        logger.info("🔧 Task sync service stopped")
 
         logger.info("🛑 ScrapyUI Application shutdown completed")
         print("🛑 ScrapyUI Application shutdown completed")

@@ -144,8 +144,13 @@ class ScrapyWatchdogMonitor:
             # 5. 最終的な結果処理
             await self._process_remaining_lines()
 
+            # 最終的な成功判定：プロセス成功 OR データ取得成功
+            final_success = scrapy_result['success'] or (self.processed_lines > 0)
+
             return {
-                'success': scrapy_result['success'],
+                'success': final_success,
+                'process_success': scrapy_result.get('process_success', scrapy_result['success']),
+                'data_success': self.processed_lines > 0,
                 'task_id': self.task_id,
                 'items_processed': self.processed_lines,
                 'scrapy_result': scrapy_result,
@@ -230,27 +235,109 @@ class ScrapyWatchdogMonitor:
             # プロセス完了を待機
             stdout, stderr = await self.scrapy_process.communicate()
 
-            # 結果を解析
-            success = self.scrapy_process.returncode == 0
+            # 結果を解析（改善版：データ取得状況も考慮）
+            process_success = self.scrapy_process.returncode == 0
+            data_success = self.processed_lines > 0
+
+            # 最終的な成功判定：プロセス成功 OR データ取得成功
+            success = process_success or data_success
 
             result = {
                 'success': success,
+                'process_success': process_success,
+                'data_success': data_success,
                 'return_code': self.scrapy_process.returncode,
+                'processed_lines': self.processed_lines,
                 'stdout': stdout.decode('utf-8', errors='ignore'),
                 'stderr': stderr.decode('utf-8', errors='ignore')
             }
 
             if success:
-                print(f"✅ Scrapyプロセス完了")
+                if process_success and data_success:
+                    print(f"✅ Scrapyプロセス完了（プロセス成功 + データ取得: {self.processed_lines}件）")
+                elif data_success:
+                    print(f"✅ Scrapyプロセス完了（データ取得成功: {self.processed_lines}件、プロセスコード: {self.scrapy_process.returncode}）")
+                    print(f"🔍 プロセス失敗原因調査 - stderr: {result['stderr'][:500]}")
+                    print(f"🔍 プロセス失敗原因調査 - stdout: {result['stdout'][-500:]}")
+                else:
+                    print(f"✅ Scrapyプロセス完了（プロセス成功、データ: {self.processed_lines}件）")
             else:
-                print(f"❌ Scrapyプロセスエラー (code: {self.scrapy_process.returncode})")
-                print(f"   stderr: {result['stderr'][:200]}...")
+                print(f"❌ Scrapyプロセス失敗 (code: {self.scrapy_process.returncode}, データ: {self.processed_lines}件)")
+                print(f"🔍 完全失敗 - stderr: {result['stderr']}")
+                print(f"🔍 完全失敗 - stdout: {result['stdout']}")
+
+                # 失敗原因の詳細分析
+                self._analyze_failure_cause(result)
 
             return result
 
         except Exception as e:
             print(f"❌ Scrapyプロセス実行エラー: {e}")
             raise
+
+    def _analyze_failure_cause(self, result: Dict[str, Any]):
+        """Scrapyプロセス失敗原因を分析"""
+        try:
+            print(f"🔍 === Scrapyプロセス失敗原因分析開始 ===")
+            print(f"リターンコード: {result['return_code']}")
+
+            stderr = result['stderr']
+            stdout = result['stdout']
+
+            # 一般的な失敗パターンを分析
+            failure_patterns = {
+                'ImportError': 'モジュールのインポートエラー',
+                'ModuleNotFoundError': 'モジュールが見つからない',
+                'AttributeError': '属性エラー',
+                'SyntaxError': 'シンタックスエラー',
+                'IndentationError': 'インデントエラー',
+                'NameError': '名前エラー',
+                'TypeError': '型エラー',
+                'ValueError': '値エラー',
+                'ConnectionError': '接続エラー',
+                'TimeoutError': 'タイムアウトエラー',
+                'PermissionError': '権限エラー',
+                'FileNotFoundError': 'ファイルが見つからない',
+                'twisted.internet.error': 'Twistedエラー',
+                'scrapy.exceptions': 'Scrapyエラー',
+                'playwright': 'Playwrightエラー',
+                'ERROR': '一般的なエラー',
+                'CRITICAL': '重大なエラー',
+                'Traceback': 'Python例外',
+                'Exception': '例外発生'
+            }
+
+            detected_issues = []
+            for pattern, description in failure_patterns.items():
+                if pattern in stderr or pattern in stdout:
+                    detected_issues.append(f"{description} ({pattern})")
+
+            if detected_issues:
+                print(f"🔍 検出された問題:")
+                for issue in detected_issues:
+                    print(f"   - {issue}")
+            else:
+                print(f"🔍 既知のパターンに該当しない失敗")
+
+            # リターンコード別の分析
+            return_code_meanings = {
+                1: "一般的なエラー",
+                2: "シェルの誤用",
+                126: "実行権限なし",
+                127: "コマンドが見つからない",
+                128: "無効な終了引数",
+                130: "Ctrl+Cによる中断",
+                137: "SIGKILL (強制終了)",
+                139: "セグメンテーション違反"
+            }
+
+            if result['return_code'] in return_code_meanings:
+                print(f"🔍 リターンコード {result['return_code']}: {return_code_meanings[result['return_code']]}")
+
+            print(f"🔍 === 失敗原因分析完了 ===")
+
+        except Exception as e:
+            print(f"❌ 失敗原因分析エラー: {e}")
 
     def _process_new_lines_threading(self):
         """新しい行を処理（threading版・asyncio完全回避）"""

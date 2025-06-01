@@ -109,14 +109,15 @@ export const useAuthStore = create<AuthState>()(
       initialize: async () => {
         const state = get();
 
-        // 既に初期化済みで、認証状態が有効な場合はスキップ
-        if (state.isInitialized && state.isAuthenticated && state.user) {
-          console.log('🔄 Already initialized and authenticated, skipping...');
+        // 既に初期化済みの場合はスキップ
+        if (state.isInitialized) {
+          console.log('🔄 Already initialized, skipping...');
           return;
         }
 
         console.log('🚀 Initializing auth store...');
         set({ isLoading: true });
+
         const token = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null;
         console.log('🔑 Token found:', !!token);
 
@@ -143,12 +144,8 @@ export const useAuthStore = create<AuthState>()(
           });
         } catch (error) {
           console.log('❌ Token invalid, removing:', error);
-          console.log('❌ Error details:', {
-            message: error instanceof Error ? error.message : 'Unknown error',
-            error
-          });
 
-          // トークンが無効な場合は削除（リダイレクトはAPIクライアントで処理）
+          // トークンが無効な場合は削除
           if (typeof window !== 'undefined') {
             localStorage.removeItem('access_token');
             localStorage.removeItem('refresh_token');
@@ -178,12 +175,6 @@ export const useAuthStore = create<AuthState>()(
             isAuthenticated: false,
             error: null
           });
-
-          // ログインページにリダイレクト（ログインページ以外の場合）
-          if (typeof window !== 'undefined' && !window.location.pathname.includes('/login')) {
-            console.warn('🔄 Redirecting to login page');
-            window.location.href = '/login';
-          }
         } else {
           // トークンがある場合はユーザー情報を取得
           const { getCurrentUser } = get();

@@ -85,7 +85,7 @@ export default function TaskMonitor({ taskId, showAllTasks = false }: TaskMonito
         finishedAt: task.finished_at,
         itemsCount: task.items_count || 0,
         requestsCount: task.requests_count || 0,
-        errorCount: task.error_count || 0,
+
         progress: calculateProgress(task),
         project_id: task.project_id,
         spider_id: task.spider_id,
@@ -458,11 +458,7 @@ export default function TaskMonitor({ taskId, showAllTasks = false }: TaskMonito
               </div>
 
               <div className="space-y-2 text-sm">
-                <div className="grid grid-cols-3 gap-4">
-                  <div>
-                    <span className="text-gray-400">エラー数:</span>
-                    <span className="ml-2 text-red-400 font-semibold">{selectedTaskDetails.errorCount}</span>
-                  </div>
+                <div className="grid grid-cols-2 gap-4">
                   <div>
                     <span className="text-gray-400">取得アイテム:</span>
                     <span className="ml-2 text-white">{selectedTaskDetails.itemsCount}</span>

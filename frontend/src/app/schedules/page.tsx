@@ -171,11 +171,21 @@ export default function SchedulesPage() {
           });
 
           // まずRUNNINGタスクを確認
-          let tasks = await apiClient.request(`/api/tasks/?${runningParams.toString()}`)
+          let tasks = await apiClient.getTasks({
+            project_id: schedule.project_id,
+            spider_id: schedule.spider_id,
+            status: 'RUNNING',
+            limit: 1
+          })
 
           // RUNNINGタスクが見つからない場合、PENDINGタスクを確認
           if (tasks.length === 0) {
-            tasks = await apiClient.request(`/api/tasks/?${pendingParams.toString()}`)
+            tasks = await apiClient.getTasks({
+              project_id: schedule.project_id,
+              spider_id: schedule.spider_id,
+              status: 'PENDING',
+              limit: 1
+            })
           }
 
           if (tasks.length > 0) {
@@ -188,7 +198,6 @@ export default function SchedulesPage() {
                 status: task.status.toLowerCase(),
                 itemsScraped: task.items_count || 0,
                 requestsCount: task.requests_count || 0,
-                errorsCount: task.error_count || 0,
                 startedAt: task.started_at,
                 elapsedTime: task.started_at ?
                   Math.floor((new Date().getTime() - new Date(task.started_at).getTime()) / 1000) : 0
@@ -202,7 +211,7 @@ export default function SchedulesPage() {
           // エラーの詳細を表示
           if (error instanceof TypeError && error.message.includes('fetch')) {
             console.error('Fetch failed - possible network or CORS issue')
-            console.error('Attempted URL:', `${window.location.origin}/api/tasks/?${runningParams.toString()}`)
+            console.error('Attempted URL:', `${window.location.origin}/api/tasks/?project_id=${schedule.project_id}&spider_id=${schedule.spider_id}`)
           } else if (error instanceof Error) {
             console.error('Error details:', {
               message: error.message,
@@ -214,7 +223,7 @@ export default function SchedulesPage() {
           // フォールバック: 基本的なタスク取得を試行
           try {
             console.log('Trying fallback for schedule:', schedule.id)
-            const fallbackTasks = await apiClient.request(`/api/tasks/?project_id=${schedule.project_id}&limit=1`)
+            const fallbackTasks = await apiClient.getTasks({ project_id: schedule.project_id, limit: 1 })
             console.log('Fallback response:', fallbackTasks)
           } catch (fallbackError) {
             console.error('Fallback also failed:', fallbackError)
@@ -300,7 +309,12 @@ export default function SchedulesPage() {
       // 最終実行時刻を更新
       loadSchedules()
     } catch (error: any) {
-      alert(error.response?.data?.detail || 'スケジュールの実行に失敗しました')
+      if (error.response?.status === 409) {
+        // 重複実行エラーの場合
+        alert(`⚠️ 重複実行防止: ${error.response?.data?.detail || '同じスパイダーが既に実行中です。実行中のタスクが完了してから再試行してください。'}`)
+      } else {
+        alert(error.response?.data?.detail || 'スケジュールの実行に失敗しました')
+      }
     }
   }
 
@@ -341,7 +355,11 @@ export default function SchedulesPage() {
         limit: '1'
       });
 
-      const tasks = await apiClient.request(`/api/tasks?${params.toString()}`)
+      const tasks = await apiClient.getTasks({
+        project_id: schedule.project_id,
+        spider_id: schedule.spider_id,
+        limit: 1
+      })
 
       if (tasks.length > 0) {
         const latestTask = tasks[0]
@@ -647,78 +665,80 @@ export default function SchedulesPage() {
                           </button>
                         </div>
 
-                        <div className="grid grid-cols-3 gap-4 mb-3 text-sm">
-                          <div className="text-center">
-                            <p className="text-gray-400">リクエスト数</p>
-                            <p className="text-lg font-bold text-blue-400">
-                              {taskProgress[schedule.id].requestsCount.toLocaleString()}
-                            </p>
+                        {/* プログレスバー */}
+                        <div className="space-y-3 mb-4">
+                          {/* リクエスト数プログレス */}
+                          <div>
+                            <div className="flex justify-between items-center mb-1">
+                              <span className="text-sm text-gray-400">リクエスト数</span>
+                              <span className="text-sm font-bold text-blue-400">
+                                {taskProgress[schedule.id].requestsCount.toLocaleString()}
+                              </span>
+                            </div>
+                            <div className="w-full bg-gray-700 rounded-full h-2">
+                              <div
+                                className="bg-blue-400 h-2 rounded-full transition-all duration-300"
+                                style={{
+                                  width: `${Math.min(100, Math.max(5, (taskProgress[schedule.id].requestsCount / 100) * 100))}%`
+                                }}
+                              ></div>
+                            </div>
                           </div>
-                          <div className="text-center">
-                            <p className="text-gray-400">アイテム数</p>
-                            <p className="text-lg font-bold text-green-400">
-                              {taskProgress[schedule.id].itemsScraped.toLocaleString()}
-                            </p>
+
+                          {/* アイテム数プログレス */}
+                          <div>
+                            <div className="flex justify-between items-center mb-1">
+                              <span className="text-sm text-gray-400">アイテム数</span>
+                              <span className="text-sm font-bold text-green-400">
+                                {taskProgress[schedule.id].itemsScraped.toLocaleString()}
+                              </span>
+                            </div>
+                            <div className="w-full bg-gray-700 rounded-full h-2">
+                              <div
+                                className="bg-green-400 h-2 rounded-full transition-all duration-300"
+                                style={{
+                                  width: `${Math.min(100, Math.max(2, (taskProgress[schedule.id].itemsScraped / Math.max(taskProgress[schedule.id].requestsCount, 1)) * 100))}%`
+                                }}
+                              ></div>
+                            </div>
                           </div>
+
+                          {/* 経過時間 */}
                           <div className="text-center">
-                            <p className="text-gray-400">経過時間</p>
+                            <p className="text-sm text-gray-400">経過時間</p>
                             <p className="text-lg font-bold text-purple-400">
                               {formatElapsedTime(taskProgress[schedule.id].elapsedTime)}
                             </p>
                           </div>
                         </div>
 
-                        {/* プログレスバー */}
+                        {/* 全体プログレス */}
                         {taskProgress[schedule.id].status === 'running' && (
-                          <div className="w-full bg-gray-600 rounded-full h-3 mb-2">
-                            <div className="bg-gradient-to-r from-blue-500 to-green-500 h-3 rounded-full transition-all duration-500 flex items-center justify-center text-xs font-bold text-white"
-                                 style={{
-                                   width: `${Math.min(100, Math.max(5, (() => {
-                                     const items = taskProgress[schedule.id].itemsScraped;
-                                     if (items > 0) {
-                                       // pendingアイテム数を推定
-                                       const pendingItems = Math.max(0, Math.min(
-                                         60 - items, // 最大60アイテムと仮定
-                                         Math.max(taskProgress[schedule.id].requestsCount - items, 10) // リクエスト差分または最低10
-                                       ));
-                                       const totalEstimated = items + pendingItems;
-                                       return totalEstimated > 0 ? (items / totalEstimated) * 100 : 5;
-                                     }
-                                     return taskProgress[schedule.id].elapsedTime > 0 ? Math.min(95, (taskProgress[schedule.id].elapsedTime / 60) * 10) : 5;
-                                   })()))}%`
-                                 }}>
-                              {(() => {
-                                const items = taskProgress[schedule.id].itemsScraped;
-                                if (items > 0) {
-                                  const pendingItems = Math.max(0, Math.min(60 - items, Math.max(taskProgress[schedule.id].requestsCount - items, 10)));
-                                  const totalEstimated = items + pendingItems;
-                                  return totalEstimated > 0 ? `${Math.round((items / totalEstimated) * 100)}%` : '5%';
+                          <div className="mt-2">
+                            <div className="flex justify-between items-center mb-1">
+                              <span className="text-xs text-gray-400">全体進行状況</span>
+                              <span className="text-xs text-purple-400">
+                                {taskProgress[schedule.id].itemsScraped > 0
+                                  ? `${Math.round((taskProgress[schedule.id].itemsScraped / Math.max(taskProgress[schedule.id].requestsCount, taskProgress[schedule.id].itemsScraped)) * 100)}%`
+                                  : '開始中...'
                                 }
-                                return '5%';
-                              })()}
-                                : `${Math.min(95, Math.round((taskProgress[schedule.id].elapsedTime / 60) * 10))}%`
-                              }
+                              </span>
+                            </div>
+                            <div className="w-full bg-gray-700 rounded-full h-2">
+                              <div
+                                className="bg-gradient-to-r from-blue-400 to-green-400 h-2 rounded-full transition-all duration-500"
+                                style={{
+                                  width: `${Math.min(100, Math.max(3, taskProgress[schedule.id].itemsScraped > 0
+                                    ? (taskProgress[schedule.id].itemsScraped / Math.max(taskProgress[schedule.id].requestsCount, taskProgress[schedule.id].itemsScraped)) * 100
+                                    : (taskProgress[schedule.id].elapsedTime / 60) * 10
+                                  ))}%`
+                                }}
+                              ></div>
                             </div>
                           </div>
                         )}
 
-                        {/* 新しいプログレスバーの説明 */}
-                        {taskProgress[schedule.id].status === 'running' && taskProgress[schedule.id].itemsScraped > 0 && (
-                          <div className="text-xs text-gray-600 mt-1">
-                            進行状況 = 現在のアイテム数({taskProgress[schedule.id].itemsScraped}) ÷ 推定総アイテム数
-                            <br />
-                            <span className="text-gray-700">
-                              (リクエスト数: {taskProgress[schedule.id].requestsCount}, 推定残り: {Math.max(0, Math.min(60 - taskProgress[schedule.id].itemsScraped, Math.max(taskProgress[schedule.id].requestsCount - taskProgress[schedule.id].itemsScraped, 10)))})
-                            </span>
-                          </div>
-                        )}
 
-                        {/* エラー表示 */}
-                        {taskProgress[schedule.id].errorsCount > 0 && (
-                          <div className="mt-2 text-xs text-orange-400">
-                            ⚠️ エラー: {taskProgress[schedule.id].errorsCount}件
-                          </div>
-                        )}
                       </div>
                     ) : schedule.latest_task ? (
                       /* 最新完了タスクの表示 */
@@ -748,7 +768,7 @@ export default function SchedulesPage() {
                           </button>
                         </div>
 
-                        <div className="grid grid-cols-3 gap-4 mb-3 text-sm">
+                        <div className="grid grid-cols-2 gap-4 mb-3 text-sm">
                           <div className="text-center">
                             <p className="text-gray-400">リクエスト数</p>
                             <p className="text-lg font-bold text-blue-400">
@@ -759,12 +779,6 @@ export default function SchedulesPage() {
                             <p className="text-gray-400">アイテム数</p>
                             <p className="text-lg font-bold text-green-400">
                               {(schedule.latest_task.items_count || 0).toLocaleString()}
-                            </p>
-                          </div>
-                          <div className="text-center">
-                            <p className="text-gray-400">エラー数</p>
-                            <p className="text-lg font-bold text-red-400">
-                              {(schedule.latest_task.error_count || 0).toLocaleString()}
                             </p>
                           </div>
                         </div>
