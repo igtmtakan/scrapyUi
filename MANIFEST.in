@@ -20,9 +20,30 @@ recursive-include backend *.json
 recursive-include backend *.cfg
 recursive-include backend *.ini
 
+# Include frontend source files
+include frontend/package.json
+include frontend/package-lock.json
+include frontend/next.config.js
+include frontend/next.config.ts
+include frontend/tailwind.config.ts
+include frontend/postcss.config.mjs
+include frontend/tsconfig.json
+include frontend/components.json
+include frontend/eslint.config.mjs
+recursive-include frontend/src *
+recursive-include frontend/public *
+
 # Include frontend build files (if built)
 recursive-include frontend/dist *
 recursive-include frontend/build *
+recursive-include frontend/.next *
+
+# Include Node.js service files
+include nodejs-service/package.json
+include nodejs-service/package-lock.json
+recursive-include nodejs-service/src *
+recursive-include nodejs-service/config *
+recursive-include nodejs-service/tests *
 
 # Include static files
 recursive-include backend/app/static *

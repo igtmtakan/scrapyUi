@@ -583,7 +583,7 @@ def system_health_check():
 @celery_app.task
 def scheduled_spider_run(schedule_id: str):
     """
-    スケジュールされたスパイダー実行
+    スケジュールされたスパイダー実行（重複実行防止付き）
     """
     from ..database import Schedule as DBSchedule
 
@@ -595,6 +595,16 @@ def scheduled_spider_run(schedule_id: str):
 
         if not schedule:
             raise Exception(f"Schedule not found: {schedule_id}")
+
+        # 重複実行チェック: 同じスケジュールで実行中のタスクがあるかチェック
+        running_tasks = db.query(DBTask).filter(
+            DBTask.schedule_id == schedule_id,
+            DBTask.status.in_([TaskStatus.PENDING, TaskStatus.RUNNING])
+        ).count()
+
+        if running_tasks > 0:
+            print(f"⚠️ Schedule {schedule.name} is already running ({running_tasks} tasks). Skipping execution.")
+            return {"task_id": None, "result": {"skipped": True, "reason": "Already running"}}
 
         print(f"🚀 Executing scheduled spider: {schedule.name}")
         print(f"   Project ID: {schedule.project_id}")
@@ -1060,5 +1070,49 @@ def run_spider_with_watchdog_task(self, project_id: str, spider_id: str, setting
             "error_handled": str(e)
         }
 
+    finally:
+        db.close()
+
+@celery_app.task
+def cleanup_stuck_tasks():
+    """
+    スタックしたタスクをクリーンアップ
+    """
+    from datetime import datetime, timedelta
+
+    db = SessionLocal()
+
+    try:
+        # 1時間以上RUNNING状態のタスクを強制終了
+        cutoff_time = datetime.now() - timedelta(hours=1)
+
+        stuck_tasks = db.query(DBTask).filter(
+            DBTask.status == TaskStatus.RUNNING,
+            DBTask.started_at < cutoff_time
+        ).all()
+
+        cleaned_count = 0
+        for task in stuck_tasks:
+            print(f"🧹 Cleaning stuck task: {task.id}")
+            task.status = TaskStatus.FAILED
+            task.finished_at = datetime.now()
+            task.error_count = 1
+            cleaned_count += 1
+
+        db.commit()
+
+        return {
+            "timestamp": datetime.now().isoformat(),
+            "cleaned_tasks": cleaned_count,
+            "status": "completed"
+        }
+
+    except Exception as e:
+        db.rollback()
+        return {
+            "timestamp": datetime.now().isoformat(),
+            "status": "error",
+            "error": str(e)
+        }
     finally:
         db.close()

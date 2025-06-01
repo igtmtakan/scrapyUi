@@ -1019,61 +1019,7 @@ class ApiClient {
     });
   }
 
-  async downloadTaskResults(taskId: string, format: 'json' | 'jsonl' | 'csv' | 'excel' | 'xml' = 'json'): Promise<Blob> {
-    const headers: HeadersInit = {};
 
-    if (this.token) {
-      headers.Authorization = `Bearer ${this.token}`;
-    }
-
-    const response = await fetch(`${this.baseURL}/api/tasks/${taskId}/results/download?format=${format}`, {
-      headers,
-    });
-
-    if (!response.ok) {
-      if (response.status === 401) {
-        // Try to refresh token once
-        if (this.token) {
-          try {
-            await this.refreshToken();
-            // Retry with new token
-            const retryHeaders: HeadersInit = {};
-            if (this.token) {
-              retryHeaders.Authorization = `Bearer ${this.token}`;
-            }
-
-            const retryResponse = await fetch(`${this.baseURL}/api/tasks/${taskId}/results/download?format=${format}`, {
-              headers: retryHeaders,
-            });
-
-            if (!retryResponse.ok) {
-              throw new Error(`HTTP error! status: ${retryResponse.status}`);
-            }
-
-            return retryResponse.blob();
-          } catch (refreshError) {
-            console.error('Token refresh failed:', refreshError);
-            console.warn('401 Unauthorized: Redirecting to login page');
-
-            // トークンをクリア
-            if (typeof window !== 'undefined') {
-              localStorage.removeItem('access_token');
-              localStorage.removeItem('refresh_token');
-
-              // ログインページにリダイレクト
-              window.location.href = '/login';
-            }
-
-            throw new Error('認証が必要です。ログインページにリダイレクトします。');
-          }
-        }
-      }
-
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-
-    return response.blob();
-  }
 
   async getSpiderCode(id: string): Promise<{ code: string }> {
     return this.request<{ code: string }>(`/api/spiders/${id}/code`);

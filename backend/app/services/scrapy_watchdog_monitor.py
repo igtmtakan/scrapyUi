@@ -47,24 +47,51 @@ class JSONLWatchdogHandler(FileSystemEventHandler):
             ).start()
 
     def _handle_file_change(self):
-        """ファイル変更の処理（重複防止のためDB挿入無効化）"""
+        """ファイル変更の処理（DB挿入有効化）"""
         try:
             print(f"📝 ファイル変更を検出しました")
-            print(f"ℹ️ DB挿入はcrawlwithwatchdogコマンドが処理するため、watchdog監視では実行しません")
+            print(f"🔄 watchdog監視でDB挿入を実行します")
 
-            # ファイルサイズのみ更新（DB挿入は行わない）
+            # 新しい行をDB挿入処理
             if self.monitor.jsonl_file_path.exists():
                 current_size = self.monitor.jsonl_file_path.stat().st_size
                 print(f"📊 ファイルサイズ更新: {self.monitor.last_file_size} → {current_size}")
+
+                # 新しい部分のみ読み取り
+                if current_size > self.monitor.last_file_size:
+                    with open(self.monitor.jsonl_file_path, 'r', encoding='utf-8') as f:
+                        f.seek(self.monitor.last_file_size)
+                        new_content = f.read()
+
+                    # 新しい行を処理
+                    new_lines = [line.strip() for line in new_content.split('\n') if line.strip()]
+                    print(f"📝 新しい行を検出: {len(new_lines)}件")
+
+                    if new_lines:
+                        # 直接DB挿入処理
+                        successful_inserts = 0
+                        for line in new_lines:
+                            try:
+                                # JSON解析
+                                item_data = json.loads(line.strip())
+
+                                # 直接DB挿入
+                                insert_result = self.monitor._sync_insert_item_threading(item_data)
+                                if insert_result:
+                                    successful_inserts += 1
+                                    self.monitor.processed_lines += 1
+                                    print(f"✅ ScrapyUI DBインサート成功: {item_data.get('title', 'N/A')[:30]}...")
+
+                            except json.JSONDecodeError as e:
+                                print(f"❌ JSON解析エラー: {e}")
+                            except Exception as e:
+                                print(f"❌ 行処理エラー: {e}")
+
+                        print(f"📊 総処理済みアイテム数: {self.monitor.processed_lines}")
+
                 self.monitor.last_file_size = current_size
 
-                # 行数をカウント
-                with open(self.monitor.jsonl_file_path, 'r', encoding='utf-8') as f:
-                    lines = [line.strip() for line in f.readlines() if line.strip()]
-                    self.monitor.processed_lines = len(lines)
-                    print(f"📊 現在の行数: {len(lines)}行")
-
-                # WebSocket通知のみ送信（DB挿入なし）
+                # WebSocket通知を送信
                 if self.monitor.websocket_callback:
                     try:
                         import requests
@@ -73,8 +100,8 @@ class JSONLWatchdogHandler(FileSystemEventHandler):
                             json={
                                 'type': 'file_update',
                                 'task_id': self.monitor.task_id,
-                                'file_lines': len(lines),
-                                'message': 'ファイル更新検出（DB挿入はcrawlwithwatchdogが処理）'
+                                'file_lines': self.monitor.processed_lines,
+                                'message': 'ファイル更新検出・DB挿入完了'
                             },
                             timeout=5
                         )

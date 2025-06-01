@@ -22,6 +22,10 @@ celery_app.conf.update(
     task_soft_time_limit=25 * 60,  # 25分でソフトタイムアウト
     worker_prefetch_multiplier=1,
     worker_max_tasks_per_child=1000,
+    # 重複実行防止とタイムアウト設定
+    task_acks_late=True,  # タスク完了後にackを送信
+    worker_disable_rate_limits=True,  # レート制限を無効化
+    task_reject_on_worker_lost=True,  # ワーカー停止時にタスクを拒否
 )
 
 # 定期実行タスクの設定
@@ -41,6 +45,11 @@ celery_app.conf.beat_schedule = {
         'task': 'app.tasks.scrapy_tasks.auto_repair_failed_tasks',
         'schedule': crontab(minute='*/2'),
     },
+    # 30分ごとにスタックしたタスクをクリーンアップ
+    'cleanup-stuck-tasks': {
+        'task': 'app.tasks.scrapy_tasks.cleanup_stuck_tasks',
+        'schedule': crontab(minute='*/30'),
+    },
 }
 
 # タスクルーティング
@@ -49,6 +58,7 @@ celery_app.conf.task_routes = {
     'app.tasks.scrapy_tasks.scheduled_spider_run': {'queue': 'scrapy'},  # スケジュール実行もscrapyキューに配置
     'app.tasks.scrapy_tasks.auto_repair_failed_tasks': {'queue': 'maintenance'},
     'app.tasks.scrapy_tasks.cleanup_old_results': {'queue': 'maintenance'},
+    'app.tasks.scrapy_tasks.cleanup_stuck_tasks': {'queue': 'maintenance'},  # スタックタスククリーンアップ
     'app.tasks.scrapy_tasks.system_health_check': {'queue': 'monitoring'},
 }
 

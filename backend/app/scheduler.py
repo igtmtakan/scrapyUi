@@ -18,7 +18,7 @@ class DatabaseScheduler(Scheduler):
     def __init__(self, *args, **kwargs):
         self.db_schedules = {}
         self.last_sync = None
-        self.sync_interval = 60  # 60秒毎にデータベースを同期
+        self.sync_interval = 10  # 10秒毎にデータベースを同期
         super().__init__(*args, **kwargs)
 
     def setup_schedule(self):
@@ -71,10 +71,10 @@ class DatabaseScheduler(Scheduler):
                         # スケジュールエントリを作成
                         entry = ScheduleEntry(
                             name=f"schedule_{schedule.id}",
-                            task="app.tasks.scrapy_tasks.run_spider_task",
+                            task="app.tasks.scrapy_tasks.scheduled_spider_run",
                             schedule=celery_schedule,
-                            args=(str(schedule.project_id), str(schedule.spider_id)),
-                            kwargs={"settings": schedule.settings or {}},
+                            args=(str(schedule.id),),  # スケジュールIDを渡す
+                            kwargs={},
                             options={}
                         )
 
@@ -96,6 +96,11 @@ class DatabaseScheduler(Scheduler):
         finally:
             db.close()
 
+    @property
+    def schedule(self):
+        """現在のスケジュールを取得（プロパティ）"""
+        return self.get_schedule()
+
     def get_schedule(self):
         """現在のスケジュールを取得"""
         # 定期的にデータベースを同期
@@ -103,18 +108,46 @@ class DatabaseScheduler(Scheduler):
             datetime.now() - self.last_sync > timedelta(seconds=self.sync_interval)):
             self.sync_from_database()
 
-        # データベーススケジュールとデフォルトスケジュールを結合
-        schedule = dict(self.db_schedules)
-        schedule.update(self.app.conf.beat_schedule or {})
-
-        return schedule
+        # データベーススケジュールのみを返す（デフォルトスケジュールは除外）
+        return dict(self.db_schedules)
 
     def reserve(self, entry):
-        """スケジュールエントリを予約"""
-        logger.info(f"📅 スケジュール実行予約: {entry.name}")
-        return super().reserve(entry)
+        """スケジュールエントリを予約（重複実行チェック付き）"""
+        try:
+            # スケジュールIDを抽出
+            if entry.name.startswith("schedule_"):
+                schedule_id = entry.name.replace("schedule_", "")
 
-    def apply_async(self, entry, publisher=None, **kwargs):
+                # 重複実行チェック
+                if self._is_schedule_running(schedule_id):
+                    logger.warning(f"⚠️ スケジュール {entry.name} は既に実行中です。スキップします。")
+                    return None
+
+            logger.info(f"📅 スケジュール実行予約: {entry.name}")
+            return super().reserve(entry)
+        except Exception as e:
+            logger.error(f"❌ スケジュール予約エラー: {e}")
+            return None
+
+    def _is_schedule_running(self, schedule_id: str) -> bool:
+        """指定されたスケジュールが実行中かチェック"""
+        try:
+            from app.database import Task as DBTask, TaskStatus, SessionLocal as DB
+            db = DB()
+
+            running_tasks = db.query(DBTask).filter(
+                DBTask.schedule_id == schedule_id,
+                DBTask.status.in_([TaskStatus.PENDING, TaskStatus.RUNNING])
+            ).count()
+
+            db.close()
+            return running_tasks > 0
+
+        except Exception as e:
+            logger.error(f"❌ 重複実行チェックエラー: {e}")
+            return False
+
+    def apply_async(self, entry, producer=None, advance=True, **kwargs):
         """非同期でタスクを実行"""
         logger.info(f"🚀 スケジュールタスク実行: {entry.name}")
-        return super().apply_async(entry, publisher, **kwargs)
+        return super().apply_async(entry, producer=producer, advance=advance, **kwargs)

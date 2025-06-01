@@ -89,6 +89,14 @@ Examples:
     db_subparsers.add_parser("migrate", help="Run database migrations")
     db_subparsers.add_parser("reset", help="Reset database")
 
+    # Node.js service commands
+    nodejs_parser = subparsers.add_parser("nodejs", help="Node.js service management")
+    nodejs_parser.add_argument("--port", type=int, default=3001, help="Port number (default: 3001)")
+    nodejs_parser.add_argument("--env", default="production", help="Environment (development/production)")
+    nodejs_parser.add_argument("--install", action="store_true", help="Install dependencies")
+    nodejs_parser.add_argument("--build", action="store_true", help="Build frontend")
+    nodejs_parser.add_argument("--puppeteer-install", action="store_true", help="Install Puppeteer browser")
+
     args = parser.parse_args()
 
     if not args.command:
@@ -104,13 +112,229 @@ Examples:
         init_project(args)
     elif args.command == "db":
         handle_db_command(args)
+    elif args.command == "nodejs":
+        handle_nodejs_command(args)
+
+def build_frontend():
+    """フロントエンドをビルド"""
+    print("🔨 フロントエンドをビルド中...")
+
+    # プロジェクトルートを取得
+    project_root = Path(__file__).parent.parent.parent
+    frontend_dir = project_root / "frontend"
+
+    if not frontend_dir.exists():
+        print("❌ フロントエンドディレクトリが見つかりません")
+        return False
+
+    try:
+        # npm install
+        print("📦 npm依存関係をインストール中...")
+        subprocess.run(["npm", "install"], cwd=frontend_dir, check=True)
+
+        # npm run build
+        print("🔨 フロントエンドをビルド中...")
+        subprocess.run(["npm", "run", "build"], cwd=frontend_dir, check=True)
+
+        print("✅ フロントエンドビルド完了")
+        return True
+
+    except subprocess.CalledProcessError as e:
+        print(f"❌ フロントエンドビルドエラー: {e}")
+        return False
+    except FileNotFoundError:
+        print("❌ npmが見つかりません。Node.jsをインストールしてください")
+        return False
+
+def init_database():
+    """データベースを初期化"""
+    try:
+        from app.database import init_db
+        init_db()
+        print("✅ データベース初期化完了")
+        return True
+    except Exception as e:
+        print(f"❌ データベース初期化エラー: {e}")
+        return False
+
+def stop_existing_processes(port):
+    """既存のプロセスを停止"""
+    try:
+        # uvicorn processes
+        subprocess.run(["pkill", "-f", "uvicorn.*app.main:app"], capture_output=True)
+        # Next.js dev processes
+        subprocess.run(["pkill", "-f", "next.*dev"], capture_output=True)
+        # Node.js processes
+        subprocess.run(["pkill", "-f", "node.*app.js"], capture_output=True)
+        # Celery processes
+        subprocess.run(["pkill", "-f", "celery.*worker"], capture_output=True)
+        subprocess.run(["pkill", "-f", "celery.*beat"], capture_output=True)
+
+        # Kill processes using specific ports
+        try:
+            subprocess.run(["lsof", "-ti", f":{port}"], capture_output=True, check=True)
+            subprocess.run(["lsof", "-ti", f":{port}", "|", "xargs", "kill", "-9"], shell=True, capture_output=True)
+        except subprocess.CalledProcessError:
+            pass  # No processes using the port
+
+        print("✅ 既存プロセスのクリーンアップ完了")
+    except Exception as e:
+        print(f"⚠️ プロセスクリーンアップ警告: {e}")
+
+def install_nodejs_dependencies():
+    """Node.js依存関係をインストール"""
+    project_root = Path(__file__).parent.parent.parent
+
+    # Node.js service
+    nodejs_dir = project_root / "nodejs-service"
+    if nodejs_dir.exists():
+        try:
+            subprocess.run(["npm", "install"], cwd=nodejs_dir, check=True, capture_output=True)
+            print("✅ Node.jsサービス依存関係インストール完了")
+        except subprocess.CalledProcessError:
+            print("⚠️ Node.jsサービス依存関係インストール失敗")
+
+    # Frontend
+    frontend_dir = project_root / "frontend"
+    if frontend_dir.exists():
+        try:
+            subprocess.run(["npm", "install"], cwd=frontend_dir, check=True, capture_output=True)
+            print("✅ フロントエンド依存関係インストール完了")
+        except subprocess.CalledProcessError:
+            print("⚠️ フロントエンド依存関係インストール失敗")
+
+def start_celery_worker():
+    """Celeryワーカーを起動"""
+    try:
+        project_root = Path(__file__).parent.parent.parent
+        backend_dir = project_root / "backend"
+
+        subprocess.Popen([
+            "python", "-m", "celery", "-A", "app.celery_app", "worker",
+            "--concurrency", "3", "--loglevel", "info"
+        ], cwd=backend_dir)
+        print("✅ Celeryワーカー起動完了")
+    except Exception as e:
+        print(f"⚠️ Celeryワーカー起動警告: {e}")
+
+def start_celery_beat():
+    """Celery Beatスケジューラを起動"""
+    try:
+        project_root = Path(__file__).parent.parent.parent
+        backend_dir = project_root / "backend"
+
+        subprocess.Popen([
+            "python", "-m", "celery", "-A", "app.celery_app", "beat",
+            "--scheduler", "app.scheduler:DatabaseScheduler", "--loglevel", "info"
+        ], cwd=backend_dir)
+        print("✅ Celery Beat起動完了")
+    except Exception as e:
+        print(f"⚠️ Celery Beat起動警告: {e}")
+
+def start_nodejs_service_background():
+    """Node.jsサービスをバックグラウンドで起動"""
+    try:
+        project_root = Path(__file__).parent.parent.parent
+        nodejs_dir = project_root / "nodejs-service"
+
+        if nodejs_dir.exists():
+            subprocess.Popen(["npm", "start"], cwd=nodejs_dir)
+            print("✅ Node.jsサービス起動完了")
+    except Exception as e:
+        print(f"⚠️ Node.jsサービス起動警告: {e}")
+
+def start_frontend_dev_server():
+    """フロントエンド開発サーバーを起動"""
+    try:
+        project_root = Path(__file__).parent.parent.parent
+        frontend_dir = project_root / "frontend"
+
+        if frontend_dir.exists():
+            subprocess.Popen(["npm", "run", "dev", "--", "--port", "4000"], cwd=frontend_dir)
+            print("✅ フロントエンド開発サーバー起動完了")
+    except Exception as e:
+        print(f"⚠️ フロントエンド開発サーバー起動警告: {e}")
+
+def cleanup_processes():
+    """プロセスをクリーンアップ"""
+    try:
+        subprocess.run(["pkill", "-f", "uvicorn.*app.main:app"], capture_output=True)
+        subprocess.run(["pkill", "-f", "next.*dev"], capture_output=True)
+        subprocess.run(["pkill", "-f", "node.*app.js"], capture_output=True)
+        subprocess.run(["pkill", "-f", "celery.*worker"], capture_output=True)
+        subprocess.run(["pkill", "-f", "celery.*beat"], capture_output=True)
+        print("✅ プロセスクリーンアップ完了")
+    except Exception as e:
+        print(f"⚠️ プロセスクリーンアップ警告: {e}")
+
+def start_nodejs_service():
+    """Node.jsサービスを起動"""
+    print("🚀 Node.jsサービスを起動中...")
+
+    # プロジェクトルートを取得
+    project_root = Path(__file__).parent.parent.parent
+    nodejs_dir = project_root / "nodejs-service"
+
+    if not nodejs_dir.exists():
+        print("❌ Node.jsサービスディレクトリが見つかりません")
+        return False
+
+    try:
+        # npm install
+        print("📦 Node.js依存関係をインストール中...")
+        subprocess.run(["npm", "install"], cwd=nodejs_dir, check=True)
+
+        # npm start
+        print("🚀 Node.jsサービス起動中...")
+        subprocess.run(["npm", "start"], cwd=nodejs_dir)
+
+    except subprocess.CalledProcessError as e:
+        print(f"❌ Node.jsサービスエラー: {e}")
+        return False
+    except FileNotFoundError:
+        print("❌ npmが見つかりません。Node.jsをインストールしてください")
+        return False
 
 def start_server(args):
-    """サーバーを起動"""
-    print("🚀 Starting ScrapyUI server...")
-    print(f"   Host: {args.host}")
-    print(f"   Port: {args.port}")
-    print(f"   Reload: {args.reload}")
+    """サーバーを起動（start_servers.shの内容を考慮）"""
+    print("🚀 ScrapyUI サーバーを起動しています...")
+    print(f"📊 バックエンドポート: {args.port}")
+
+    # データベース初期化・マイグレーション
+    print("🔧 データベースを初期化中...")
+    if not init_database():
+        print("❌ データベース初期化に失敗しました")
+        return
+
+    # 既存プロセスの停止
+    print("📋 既存のプロセスを確認中...")
+    stop_existing_processes(args.port)
+
+    # Node.js依存関係の確認・インストール
+    if not args.reload:
+        print("📦 Node.js依存関係を確認中...")
+        install_nodejs_dependencies()
+
+        # フロントエンドビルド
+        print("🔨 フロントエンドをビルド中...")
+        build_frontend()
+
+    # Celeryワーカーを起動
+    print("⚙️ Celeryワーカーを起動中...")
+    start_celery_worker()
+
+    # Celery Beatスケジューラを起動
+    print("📅 Celery Beatスケジューラを起動中...")
+    start_celery_beat()
+
+    # Node.js Puppeteerサービスを起動
+    print("🤖 Node.js Puppeteerサービスを起動中...")
+    start_nodejs_service_background()
+
+    # フロントエンドサーバーを起動（開発モードの場合）
+    if args.reload:
+        print("🎨 フロントエンドサーバーを起動中...")
+        start_frontend_dev_server()
 
     # Import here to avoid circular imports
     import uvicorn
@@ -121,18 +345,28 @@ def start_server(args):
         import time
 
         def open_browser_delayed():
-            time.sleep(2)  # Wait for server to start
-            webbrowser.open(f"http://localhost:{args.port}")
+            time.sleep(5)  # Wait for all services to start
+            if args.reload:
+                webbrowser.open("http://localhost:4000")  # Frontend dev server
+            else:
+                webbrowser.open(f"http://localhost:{args.port}")
 
         threading.Thread(target=open_browser_delayed, daemon=True).start()
 
-    uvicorn.run(
-        "app.main:app",
-        host=args.host,
-        port=args.port,
-        reload=args.reload,
-        reload_excludes=["scrapy_projects/*"] if args.reload else None
-    )
+    print(f"🔧 バックエンドサーバーを起動中 (ポート: {args.port})...")
+
+    try:
+        uvicorn.run(
+            "app.main:app",
+            host=args.host,
+            port=args.port,
+            reload=args.reload,
+            reload_excludes=["scrapy_projects/*"] if args.reload else None
+        )
+    except KeyboardInterrupt:
+        print("\n🛑 サーバーを停止中...")
+        cleanup_processes()
+        print("✅ サーバーが停止されました")
 
 def create_admin(args):
     """管理者ユーザーを作成"""
@@ -505,6 +739,72 @@ def handle_db_command(args):
         print("🔧 Resetting database...")
         # Reset logic here
         print("✅ Database reset!")
+
+def handle_nodejs_command(args):
+    """Node.jsサービスコマンドを処理"""
+    project_root = Path(__file__).parent.parent.parent
+    nodejs_dir = project_root / "nodejs-service"
+    frontend_dir = project_root / "frontend"
+
+    if args.install:
+        print("📦 Node.js依存関係をインストール中...")
+
+        # Node.jsサービスの依存関係をインストール
+        if nodejs_dir.exists():
+            try:
+                subprocess.run(["npm", "install"], cwd=nodejs_dir, check=True)
+                print("✅ Node.jsサービス依存関係のインストール完了")
+            except subprocess.CalledProcessError as e:
+                print(f"❌ Node.jsサービス依存関係のインストール失敗: {e}")
+                return
+
+        # フロントエンドの依存関係をインストール
+        if frontend_dir.exists():
+            try:
+                subprocess.run(["npm", "install"], cwd=frontend_dir, check=True)
+                print("✅ フロントエンド依存関係のインストール完了")
+            except subprocess.CalledProcessError as e:
+                print(f"❌ フロントエンド依存関係のインストール失敗: {e}")
+                return
+
+    if args.build:
+        print("🔨 フロントエンドをビルド中...")
+        if frontend_dir.exists():
+            try:
+                subprocess.run(["npm", "run", "build"], cwd=frontend_dir, check=True)
+                print("✅ フロントエンドビルド完了")
+            except subprocess.CalledProcessError as e:
+                print(f"❌ フロントエンドビルド失敗: {e}")
+                return
+
+    if args.puppeteer_install:
+        print("🔍 Puppeteerブラウザをインストール中...")
+        if nodejs_dir.exists():
+            try:
+                subprocess.run(["npx", "puppeteer", "browsers", "install", "chrome"],
+                             cwd=nodejs_dir, check=True)
+                print("✅ Puppeteerブラウザのインストール完了")
+            except subprocess.CalledProcessError as e:
+                print(f"❌ Puppeteerブラウザのインストール失敗: {e}")
+                return
+
+    # デフォルトでNode.jsサービスを起動
+    if not any([args.install, args.build, args.puppeteer_install]):
+        print("🚀 Node.jsサービスを起動中...")
+        if nodejs_dir.exists():
+            try:
+                # 環境変数を設定
+                env = os.environ.copy()
+                env["PORT"] = str(args.port)
+                env["NODE_ENV"] = args.env
+
+                subprocess.run(["npm", "start"], cwd=nodejs_dir, env=env)
+            except subprocess.CalledProcessError as e:
+                print(f"❌ Node.jsサービス起動失敗: {e}")
+            except KeyboardInterrupt:
+                print("\n🛑 Node.jsサービスを停止しました")
+        else:
+            print("❌ Node.jsサービスディレクトリが見つかりません")
 
 if __name__ == "__main__":
     main()
