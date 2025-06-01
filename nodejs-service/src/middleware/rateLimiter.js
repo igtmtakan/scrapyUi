@@ -9,12 +9,12 @@ const rateLimiter = new RateLimiterMemory({
   blockDuration: 60, // Block for 60 seconds if limit exceeded
 });
 
-// Different limits for different endpoints
+// Different limits for different endpoints (テスト用に緩和)
 const heavyOperationLimiter = new RateLimiterMemory({
   keyGenerator: (req) => req.ip,
-  points: 10, // 10 requests
-  duration: 900, // Per 15 minutes
-  blockDuration: 300, // Block for 5 minutes
+  points: 100, // 100 requests (テスト用に増加)
+  duration: 300, // Per 5 minutes (短縮)
+  blockDuration: 60, // Block for 1 minute (短縮)
 });
 
 const rateLimiterMiddleware = async (req, res, next) => {
