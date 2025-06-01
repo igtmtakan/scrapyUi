@@ -2,7 +2,7 @@ const logger = require('../utils/logger');
 
 const apiKeyAuth = (req, res, next) => {
   // Skip auth for health check and root endpoints
-  if (req.path === '/api/health' || req.path === '/api/docs' || req.path === '/') {
+  if (req.path === '/api/health' || req.path === '/health' || req.path === '/api/docs' || req.path === '/') {
     return next();
   }
 

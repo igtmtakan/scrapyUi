@@ -1,16 +1,16 @@
 # ScrapyUI Database Configuration
 # データベース設定ファイル
 
-# デフォルト設定: SQLite（database/ディレクトリ内）
+# デフォルト設定: SQLite（backend/database/ディレクトリ内）
 default:
   type: "sqlite"
-  database: "/home/igtmtakan/workplace/python/scrapyUI/backend/database/scrapy_ui.db"
+  database: "backend/database/scrapy_ui.db"
   echo: false  # SQLログ出力
 
 # 開発環境設定
 development:
   type: "sqlite"
-  database: "/home/igtmtakan/workplace/python/scrapyUI/backend/database/scrapy_ui.db"
+  database: "backend/database/scrapy_ui.db"
   echo: false
 
 # テスト環境設定
@@ -22,7 +22,7 @@ testing:
 # 本番環境設定（SQLite使用）
 production:
   type: "sqlite"
-  database: "/home/igtmtakan/workplace/python/scrapyUI/backend/database/scrapy_ui.db"
+  database: "backend/database/scrapy_ui.db"
   echo: false
 
 # 本番環境設定例（PostgreSQL）

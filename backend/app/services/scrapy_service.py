@@ -3100,9 +3100,8 @@ project = {project_path}
             finally:
                 db.close()
 
-            # 結果ファイルのパスを構築
-            base_dir = Path("/home/igtmtakan/workplace/python/scrapyUI/scrapy_projects")
-            result_file = base_dir / project_path / f"results_{task_id}.json"
+            # 結果ファイルのパスを構築（相対パス使用）
+            result_file = self.base_projects_dir / project_path / f"results_{task_id}.json"
 
             print(f"📁 Checking result file: {result_file}")
 

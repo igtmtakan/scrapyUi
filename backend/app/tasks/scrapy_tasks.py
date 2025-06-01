@@ -45,7 +45,7 @@ def _safe_websocket_notify(task_id: str, data: dict):
     except Exception as e:
         print(f"📡 WebSocket notification error: {str(e)}")
 
-@celery_app.task(bind=True, soft_time_limit=1800, time_limit=2100)  # 30分のソフトタイムアウト、35分のハードタイムアウト
+@celery_app.task(bind=True, soft_time_limit=3300, time_limit=3600)  # 55分のソフトタイムアウト、60分のハードタイムアウト
 def run_spider_task(self, project_id: str, spider_id: str, settings: dict = None):
     """
     Celeryタスクとしてスパイダーを実行
@@ -856,7 +856,7 @@ def export_results_task(export_request: dict):
     finally:
         db.close()
 
-@celery_app.task(bind=True, soft_time_limit=1800, time_limit=2100)
+@celery_app.task(bind=True, soft_time_limit=3300, time_limit=3600)
 def run_spider_with_watchdog_task(self, project_id: str, spider_id: str, settings: dict = None):
     """
     watchdog監視付きでスパイダーを実行するCeleryタスク

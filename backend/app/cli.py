@@ -97,6 +97,13 @@ Examples:
     nodejs_parser.add_argument("--build", action="store_true", help="Build frontend")
     nodejs_parser.add_argument("--puppeteer-install", action="store_true", help="Install Puppeteer browser")
 
+    # Celery monitoring commands
+    monitor_parser = subparsers.add_parser("monitor", help="Monitor and manage Celery services")
+    monitor_parser.add_argument("--worker", action="store_true", help="Monitor Celery worker")
+    monitor_parser.add_argument("--beat", action="store_true", help="Monitor Celery beat")
+    monitor_parser.add_argument("--auto-restart", action="store_true", help="Enable auto-restart on failure")
+    monitor_parser.add_argument("--check-interval", type=int, default=30, help="Health check interval in seconds")
+
     args = parser.parse_args()
 
     if not args.command:
@@ -114,6 +121,8 @@ Examples:
         handle_db_command(args)
     elif args.command == "nodejs":
         handle_nodejs_command(args)
+    elif args.command == "monitor":
+        handle_monitor_command(args)
 
 def build_frontend():
     """フロントエンドをビルド"""
@@ -204,16 +213,29 @@ def install_nodejs_dependencies():
             print("⚠️ フロントエンド依存関係インストール失敗")
 
 def start_celery_worker():
-    """Celeryワーカーを起動"""
+    """Celeryワーカーを起動（安定性向上）"""
     try:
         project_root = Path(__file__).parent.parent.parent
         backend_dir = project_root / "backend"
 
+        # 改善されたCeleryワーカー設定
         subprocess.Popen([
             "python", "-m", "celery", "-A", "app.celery_app", "worker",
-            "--concurrency", "3", "--loglevel", "info"
+            "--loglevel=info",
+            "--concurrency=2",  # 同時実行数を制限
+            "--queues=scrapy,maintenance,monitoring",
+            "--pool=prefork",
+            "--optimization=fair",
+            "--max-tasks-per-child=200",  # タスク数制限を緩和
+            "--max-memory-per-child=500000",  # 500MB制限（メモリ制限緩和）
+            "--time-limit=3600",  # 60分タイムアウト
+            "--soft-time-limit=3300",  # 55分ソフトタイムアウト
+            "--without-gossip",  # ゴシップを無効化
+            "--without-mingle",  # ミングルを無効化
+            "--without-heartbeat",  # ハートビートを無効化
+            "--prefetch-multiplier=1",  # プリフェッチを1に制限
         ], cwd=backend_dir)
-        print("✅ Celeryワーカー起動完了")
+        print("✅ Celeryワーカー起動完了（安定性向上設定）")
     except Exception as e:
         print(f"⚠️ Celeryワーカー起動警告: {e}")
 
@@ -394,6 +416,7 @@ def create_admin(args):
             hashed_password=PasswordHandler.hash_password(args.password),
             role=UserRole.ADMIN,
             is_active=True,
+            is_superuser=True,  # スーパーユーザー権限を付与
             created_at=datetime.now(timezone.utc)
         )
 
@@ -805,6 +828,57 @@ def handle_nodejs_command(args):
                 print("\n🛑 Node.jsサービスを停止しました")
         else:
             print("❌ Node.jsサービスディレクトリが見つかりません")
+
+def handle_monitor_command(args):
+    """Celery監視コマンドを処理"""
+    project_root = Path(__file__).parent.parent.parent
+    backend_dir = project_root / "backend"
+
+    if args.worker or args.beat or args.auto_restart:
+        print("🔍 Celery監視を開始中...")
+
+        try:
+            # Celery監視スクリプトを実行
+            monitor_script = backend_dir / "celery_monitor.py"
+            if monitor_script.exists():
+                subprocess.run(["python", str(monitor_script)], cwd=backend_dir)
+            else:
+                print("❌ Celery監視スクリプトが見つかりません")
+        except KeyboardInterrupt:
+            print("\n🛑 Celery監視を停止しました")
+        except Exception as e:
+            print(f"❌ Celery監視エラー: {e}")
+    else:
+        # デフォルトでCeleryの状態を表示
+        print("📊 Celeryサービス状態:")
+
+        # Celeryワーカーの状態確認
+        try:
+            result = subprocess.run([
+                "python", "-m", "celery", "-A", "app.celery_app", "inspect", "active"
+            ], cwd=backend_dir, capture_output=True, text=True, timeout=10)
+
+            if result.returncode == 0:
+                print("✅ Celeryワーカー: 実行中")
+                if result.stdout.strip():
+                    print(f"   アクティブタスク: {result.stdout.count('uuid')}")
+            else:
+                print("❌ Celeryワーカー: 停止中または応答なし")
+        except subprocess.TimeoutExpired:
+            print("⚠️ Celeryワーカー: タイムアウト")
+        except Exception as e:
+            print(f"⚠️ Celeryワーカー状態確認エラー: {e}")
+
+        # Redisの状態確認
+        try:
+            result = subprocess.run(["redis-cli", "ping"],
+                                  capture_output=True, text=True, timeout=5)
+            if result.returncode == 0 and "PONG" in result.stdout:
+                print("✅ Redis: 実行中")
+            else:
+                print("❌ Redis: 停止中または応答なし")
+        except Exception as e:
+            print(f"⚠️ Redis状態確認エラー: {e}")
 
 if __name__ == "__main__":
     main()

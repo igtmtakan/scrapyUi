@@ -18,7 +18,9 @@ class TaskStatisticsValidator:
     """タスク統計の検証・修正を行うサービス"""
 
     def __init__(self):
-        self.base_projects_dir = Path("/home/igtmtakan/workplace/python/scrapyUI/scrapy_projects")
+        # ScrapyUIプロジェクトルートからの相対パス
+        project_root = Path(__file__).parent.parent.parent.parent
+        self.base_projects_dir = project_root / "scrapy_projects"
 
     def validate_and_fix_all_tasks(self, hours_back: int = 24) -> dict:
         """指定時間内のタスクを検証・修正"""

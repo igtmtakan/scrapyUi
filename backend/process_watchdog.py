@@ -55,9 +55,11 @@ class ProcessWatchdog:
                 'restart_window': 300  # 5分間
             },
             'celery': {
-                'cmd': ['python', '-m', 'celery', '-A', 'app.celery_app', 'worker', 
-                       '--loglevel=info', '-Q', 'scrapy,maintenance,monitoring', 
-                       '--concurrency=4', '--pool=prefork'],
+                'cmd': ['python', '-m', 'celery', '-A', 'app.celery_app', 'worker',
+                       '--loglevel=info', '-Q', 'scrapy,maintenance,monitoring',
+                       '--concurrency=2', '--pool=prefork',
+                       '--max-tasks-per-child=200', '--max-memory-per-child=500000',
+                       '--time-limit=3600', '--soft-time-limit=3300'],
                 'cwd': str(self.backend_dir),
                 'port': None,
                 'health_url': None,

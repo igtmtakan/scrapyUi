@@ -112,10 +112,9 @@ class DatabaseConfigManager:
                     self.configs[env_name] = self._parse_config(config)
 
         except FileNotFoundError:
-            # デフォルト設定を使用 - database/ディレクトリ内に配置
-            import os
-            backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            db_path = os.path.join(backend_dir, "database", "scrapy_ui.db")
+            # デフォルト設定を使用 - backend/database/ディレクトリ内に配置
+            project_root = Path(__file__).parent.parent.parent.parent
+            db_path = str(project_root / "backend" / "database" / "scrapy_ui.db")
             self.configs['default'] = DatabaseConfig(
                 type=DatabaseType.SQLITE,
                 database=db_path
@@ -127,11 +126,19 @@ class DatabaseConfigManager:
         """設定辞書をDatabaseConfigオブジェクトに変換"""
         db_type = DatabaseType(config['type'])
 
+        # SQLiteの場合、相対パスを絶対パスに変換
+        database_path = config.get('database')
+        if db_type == DatabaseType.SQLITE and database_path and database_path != ":memory:":
+            if not os.path.isabs(database_path):
+                # ScrapyUIプロジェクトルートからの相対パス
+                project_root = Path(__file__).parent.parent.parent.parent
+                database_path = str(project_root / database_path)
+
         return DatabaseConfig(
             type=db_type,
             host=config.get('host'),
             port=config.get('port'),
-            database=config.get('database'),
+            database=database_path,
             username=config.get('username'),
             password=config.get('password'),
             echo=config.get('echo', False),
@@ -162,10 +169,11 @@ class DatabaseConfigManager:
 
         # 環境変数での上書き
         env_database = os.getenv('DATABASE_NAME') or os.getenv('DATABASE_DB')
-        # SQLiteの場合は絶対パスに変換（database/ディレクトリ内）
+        # SQLiteの場合、相対パスを絶対パスに変換
         if env_database and base_config.type == DatabaseType.SQLITE and not os.path.isabs(env_database):
-            backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            env_database = os.path.join(backend_dir, "database", env_database)
+            # ScrapyUIプロジェクトルートからの相対パス
+            project_root = Path(__file__).parent.parent.parent.parent
+            env_database = str(project_root / env_database)
 
         env_overrides = {
             'type': os.getenv('DATABASE_TYPE'),

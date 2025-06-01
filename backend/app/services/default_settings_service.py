@@ -33,11 +33,57 @@ class DefaultSettingsService:
         settings = {
             "spider_defaults": {
                 "feed_settings": {
-                    "format": "jsonl",
+                    "default_format": "jsonl",
                     "encoding": "utf-8",
                     "store_empty": False,
                     "item_export_kwargs": {
                         "ensure_ascii": False
+                    },
+                    "feeds": {
+                        "results.jsonl": {
+                            "format": "jsonl",
+                            "encoding": "utf-8",
+                            "store_empty": False,
+                            "item_export_kwargs": {
+                                "ensure_ascii": False
+                            }
+                        },
+                        "results.json": {
+                            "format": "json",
+                            "encoding": "utf-8",
+                            "store_empty": False,
+                            "item_export_kwargs": {
+                                "ensure_ascii": False
+                            }
+                        },
+                        "results.csv": {
+                            "format": "csv",
+                            "encoding": "utf-8",
+                            "store_empty": False,
+                            "fields_to_export": None,
+                            "csv_kwargs": {
+                                "delimiter": ",",
+                                "quotechar": "\"",
+                                "quoting": "QUOTE_MINIMAL"
+                            }
+                        },
+                        "results.xml": {
+                            "format": "xml",
+                            "encoding": "utf-8",
+                            "store_empty": False,
+                            "root_element": "items",
+                            "item_element": "item"
+                        },
+                        "results.xlsx": {
+                            "format": "xlsx",
+                            "encoding": "utf-8",
+                            "store_empty": False,
+                            "sheet_name": "Results",
+                            "excel_kwargs": {
+                                "index": False,
+                                "header": True
+                            }
+                        }
                     }
                 },
                 "playwright_settings": {
@@ -102,13 +148,16 @@ class DefaultSettingsService:
     
     def get_spider_default_settings(self, spider_type: str = "basic") -> Dict[str, Any]:
         """スパイダーのデフォルト設定を取得"""
+        # デフォルト設定からfeed設定を取得
+        feed_settings = self.default_settings["spider_defaults"]["feed_settings"]
+
         base_settings = {
             'TWISTED_REACTOR': self.default_settings["spider_defaults"]["memory_settings"]["reactor"],
-            'FEED_EXPORT_ENCODING': 'utf-8',
-            'FEEDS': {
+            'FEED_EXPORT_ENCODING': feed_settings["encoding"],
+            'FEEDS': feed_settings.get("feeds", {
                 'results.jsonl': {
                     'format': 'jsonl',
-                    'encoding': 'utf8',
+                    'encoding': 'utf-8',
                     'store_empty': False,
                     'item_export_kwargs': {
                         'ensure_ascii': False
@@ -116,7 +165,7 @@ class DefaultSettingsService:
                 },
                 'results.json': {
                     'format': 'json',
-                    'encoding': 'utf8',
+                    'encoding': 'utf-8',
                     'store_empty': False,
                     'item_export_kwargs': {
                         'ensure_ascii': False
@@ -124,15 +173,20 @@ class DefaultSettingsService:
                 },
                 'results.csv': {
                     'format': 'csv',
-                    'encoding': 'utf8',
+                    'encoding': 'utf-8',
                     'store_empty': False
                 },
                 'results.xml': {
                     'format': 'xml',
-                    'encoding': 'utf8',
+                    'encoding': 'utf-8',
+                    'store_empty': False
+                },
+                'results.xlsx': {
+                    'format': 'xlsx',
+                    'encoding': 'utf-8',
                     'store_empty': False
                 }
-            },
+            }),
             'PLAYWRIGHT_BROWSER_TYPE': self.default_settings["spider_defaults"]["playwright_settings"]["browser_type"],
             'PLAYWRIGHT_LAUNCH_OPTIONS': self.default_settings["spider_defaults"]["playwright_settings"]["launch_options"],
             'PLAYWRIGHT_DEFAULT_NAVIGATION_TIMEOUT': self.default_settings["spider_defaults"]["playwright_settings"]["navigation_timeout"],
@@ -168,16 +222,19 @@ class DefaultSettingsService:
     
     def get_large_data_settings(self) -> Dict[str, Any]:
         """大容量データ処理用設定"""
+        # デフォルト設定からfeed設定を取得
+        feed_settings = self.default_settings["spider_defaults"]["feed_settings"]
+
         return {
             'CONCURRENT_REQUESTS': 2,
             'DOWNLOAD_DELAY': 1.0,
             'AUTOTHROTTLE_ENABLED': True,
             'AUTOTHROTTLE_TARGET_CONCURRENCY': 2.0,
             'MEMUSAGE_LIMIT_MB': self.default_settings["large_data_settings"]["memory_limit_mb"],
-            'FEEDS': {
+            'FEEDS': feed_settings.get("feeds", {
                 'results.jsonl': {
                     'format': 'jsonl',
-                    'encoding': 'utf8',
+                    'encoding': 'utf-8',
                     'store_empty': False,
                     'item_export_kwargs': {
                         'ensure_ascii': False
@@ -185,7 +242,7 @@ class DefaultSettingsService:
                 },
                 'results.json': {
                     'format': 'json',
-                    'encoding': 'utf8',
+                    'encoding': 'utf-8',
                     'store_empty': False,
                     'item_export_kwargs': {
                         'ensure_ascii': False
@@ -193,15 +250,20 @@ class DefaultSettingsService:
                 },
                 'results.csv': {
                     'format': 'csv',
-                    'encoding': 'utf8',
+                    'encoding': 'utf-8',
                     'store_empty': False
                 },
                 'results.xml': {
                     'format': 'xml',
-                    'encoding': 'utf8',
+                    'encoding': 'utf-8',
+                    'store_empty': False
+                },
+                'results.xlsx': {
+                    'format': 'xlsx',
+                    'encoding': 'utf-8',
                     'store_empty': False
                 }
-            }
+            })
         }
     
     def get_mobile_settings(self) -> Dict[str, Any]:

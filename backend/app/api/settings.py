@@ -19,14 +19,16 @@ router = APIRouter()
 # デフォルト設定値
 DEFAULT_GENERAL_SETTINGS = {
     "default_scrapy_version": "2.11.0",
-    "project_directory": "/home/igtmtakan/workplace/python/scrapyUI/scrapy_projects",
+    "project_directory": "scrapy_projects",
     "auto_save": True,
     "dark_mode": False,
     "default_log_level": "INFO",
 }
 
-# 設定ファイルのパス
-SETTINGS_FILE_PATH = "/home/igtmtakan/workplace/python/scrapyUI/backend/config/general_settings.json"
+# 設定ファイルのパス（相対パス）
+from pathlib import Path
+project_root = Path(__file__).parent.parent.parent.parent
+SETTINGS_FILE_PATH = str(project_root / "backend" / "config" / "general_settings.json")
 
 def ensure_settings_directory():
     """設定ディレクトリが存在することを確認"""

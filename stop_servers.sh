@@ -52,6 +52,13 @@ if [ -f .celery_beat.pid ]; then
     rm -f .celery_beat.pid
 fi
 
+if [ -f .celery_monitor.pid ]; then
+    CELERY_MONITOR_PID=$(cat .celery_monitor.pid)
+    echo "🔍 Celery監視プロセス (PID: ${CELERY_MONITOR_PID}) を停止中..."
+    kill ${CELERY_MONITOR_PID} 2>/dev/null || true
+    rm -f .celery_monitor.pid
+fi
+
 # プロセス名で停止
 echo "📋 関連プロセスを停止中..."
 pkill -f "uvicorn.*app.main:app" 2>/dev/null || true
@@ -62,6 +69,7 @@ pkill -f "nodemon.*app.js" 2>/dev/null || true
 pkill -f "celery.*worker" 2>/dev/null || true
 pkill -f "celery.*beat" 2>/dev/null || true
 pkill -f "start_celery_worker.py" 2>/dev/null || true
+pkill -f "celery_monitor.py" 2>/dev/null || true
 
 # ポートを使用しているプロセスを強制停止
 echo "🔧 ポート ${BACKEND_PORT}, ${FRONTEND_PORT}, ${NODEJS_PORT} を使用中のプロセスを停止中..."

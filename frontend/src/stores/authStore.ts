@@ -23,6 +23,10 @@ interface AuthState {
   clearError: () => void;
   clearCacheAndReload: () => Promise<void>;
   checkAuthStatus: () => void;
+
+  // Helper functions
+  isAdmin: () => boolean;
+  isSuperUser: () => boolean;
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -198,6 +202,17 @@ export const useAuthStore = create<AuthState>()(
           isInitialized: false
         });
         await get().initialize();
+      },
+
+      // Helper functions for role checking
+      isAdmin: () => {
+        const { user } = get();
+        return user?.role === 'admin' || user?.is_superuser === true;
+      },
+
+      isSuperUser: () => {
+        const { user } = get();
+        return user?.is_superuser === true;
       },
     }),
     {

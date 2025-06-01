@@ -99,7 +99,9 @@ class ServerManager:
             cmd = [
                 sys.executable, "-m", "celery", "-A", "app.celery_app", "worker",
                 "--loglevel=info", "-Q", "scrapy,maintenance,monitoring",
-                "--concurrency=4", "--pool=prefork"
+                "--concurrency=2", "--pool=prefork",
+                "--max-tasks-per-child=200", "--max-memory-per-child=500000",
+                "--time-limit=3600", "--soft-time-limit=3300"
             ]
 
             self.celery_process = subprocess.Popen(

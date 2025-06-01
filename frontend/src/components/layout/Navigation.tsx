@@ -27,12 +27,12 @@ const navigation = [
   { name: 'プロジェクト', href: '/projects', icon: Database },
   { name: 'タスク', href: '/tasks', icon: Play },
   { name: 'エディター', href: '/editor', icon: Code },
-  { name: 'Node.js統合', href: '/nodejs', icon: Server },
   { name: 'スケジュール', href: '/schedules', icon: Calendar },
   { name: 'モニタリング', href: '/monitoring', icon: BarChart3 },
 ];
 
 const adminNavigation = [
+  { name: 'Node.js統合', href: '/nodejs', icon: Server },
   { name: 'ユーザー管理', href: '/admin', icon: User },
 ];
 
@@ -102,7 +102,7 @@ export default function Navigation() {
               })}
 
               {/* Admin Navigation */}
-              {user?.role === 'admin' && adminNavigation.map((item) => {
+              {(user?.role === 'admin' || user?.is_superuser) && adminNavigation.map((item) => {
                 const isActive = pathname === item.href ||
                   (item.href !== '/' && pathname.startsWith(item.href));
 
@@ -231,7 +231,7 @@ export default function Navigation() {
             })}
 
             {/* Admin Navigation for Mobile */}
-            {user?.role === 'admin' && (
+            {(user?.role === 'admin' || user?.is_superuser) && (
               <>
                 <div className="border-t border-gray-700 my-2"></div>
                 {adminNavigation.map((item) => {

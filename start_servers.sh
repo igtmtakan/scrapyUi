@@ -26,6 +26,7 @@ pkill -f "nodemon.*app.js" 2>/dev/null || true
 pkill -f "celery.*worker" 2>/dev/null || true
 pkill -f "celery.*beat" 2>/dev/null || true
 pkill -f "start_celery_worker.py" 2>/dev/null || true
+pkill -f "celery_monitor.py" 2>/dev/null || true
 
 # ポートが使用中の場合は強制停止
 echo "🔧 ポート ${BACKEND_PORT}, ${FRONTEND_PORT}, ${NODEJS_PORT} をクリアしています..."
@@ -44,19 +45,36 @@ cd ..
 
 sleep 3
 
-# Celeryワーカーを起動
-echo "⚙️ Celeryワーカーを起動中..."
+# Celeryワーカーを起動（安定性向上設定）
+echo "⚙️ Celeryワーカーを起動中（安定性向上設定）..."
 cd backend
-python3 start_celery_worker.py &
+python3 -m celery -A app.celery_app worker \
+    --loglevel=info \
+    --concurrency=2 \
+    --queues=scrapy,maintenance,monitoring \
+    --pool=prefork \
+    --optimization=fair \
+    --max-tasks-per-child=200 \
+    --max-memory-per-child=500000 \
+    --time-limit=3600 \
+    --soft-time-limit=3300 \
+    --without-gossip \
+    --without-mingle \
+    --without-heartbeat \
+    --prefetch-multiplier=1 &
 CELERY_PID=$!
 cd ..
 
 sleep 3
 
-# Celery Beatスケジューラを起動
-echo "📅 Celery Beatスケジューラを起動中..."
+# Celery Beatスケジューラを起動（安定性向上設定）
+echo "📅 Celery Beatスケジューラを起動中（安定性向上設定）..."
 cd backend
-python3 -m celery -A app.celery_app beat --scheduler app.scheduler:DatabaseScheduler --loglevel=info &
+python3 -m celery -A app.celery_app beat \
+    --scheduler app.scheduler:DatabaseScheduler \
+    --loglevel=info \
+    --max-interval=60 \
+    --schedule=celerybeat-schedule.db &
 CELERY_BEAT_PID=$!
 cd ..
 
@@ -80,6 +98,15 @@ cd ..
 
 sleep 5
 
+# Celery監視・自動復旧を起動
+echo "🔍 Celery監視・自動復旧を起動中..."
+cd backend
+python3 celery_monitor.py &
+CELERY_MONITOR_PID=$!
+cd ..
+
+sleep 3
+
 # 起動確認
 echo "✅ サーバー起動状況を確認中..."
 echo "📊 バックエンド (http://localhost:${BACKEND_PORT}):"
@@ -90,6 +117,9 @@ ps aux | grep -E "(celery.*worker|start_celery_worker)" | grep -v grep | head -1
 
 echo "📅 Celery Beatスケジューラ:"
 ps aux | grep -E "celery.*beat" | grep -v grep | head -1 && echo "✅ Celery Beatが動作中" || echo "❌ Celery Beatが動作していません"
+
+echo "🔍 Celery監視システム:"
+ps aux | grep -E "celery_monitor.py" | grep -v grep | head -1 && echo "✅ Celery監視が動作中" || echo "❌ Celery監視が動作していません"
 
 echo "🤖 Node.js Puppeteer (http://localhost:${NODEJS_PORT}):"
 curl -s "http://localhost:${NODEJS_PORT}/api/health" | jq . || echo "❌ Node.jsサービスが応答しません"
@@ -115,9 +145,10 @@ echo $FRONTEND_PID > .frontend.pid
 echo $NODEJS_PID > .nodejs.pid
 echo $CELERY_PID > .celery.pid
 echo $CELERY_BEAT_PID > .celery_beat.pid
+echo $CELERY_MONITOR_PID > .celery_monitor.pid
 
 # 終了シグナルをキャッチしてプロセスを停止
-trap 'echo "🛑 サーバーを停止中..."; kill $BACKEND_PID $FRONTEND_PID $NODEJS_PID $CELERY_PID $CELERY_BEAT_PID 2>/dev/null; rm -f .backend.pid .frontend.pid .nodejs.pid .celery.pid .celery_beat.pid; exit' INT TERM
+trap 'echo "🛑 サーバーを停止中..."; kill $BACKEND_PID $FRONTEND_PID $NODEJS_PID $CELERY_PID $CELERY_BEAT_PID $CELERY_MONITOR_PID 2>/dev/null; rm -f .backend.pid .frontend.pid .nodejs.pid .celery.pid .celery_beat.pid .celery_monitor.pid; exit' INT TERM
 
 # プロセスが終了するまで待機
 wait

@@ -37,14 +37,22 @@ if __name__ == "__main__":
         print("   - Queues: scrapy, maintenance, monitoring")
         print("🔄 Press Ctrl+C to stop the worker")
 
-        # Celeryワーカーを起動
+        # Celeryワーカーを起動（安定性向上設定）
         celery_app.worker_main([
             'worker',
             '--loglevel=info',
             '--concurrency=2',
             '--queues=scrapy,maintenance,monitoring',
             '--pool=prefork',
-            '--optimization=fair'
+            '--optimization=fair',
+            '--max-tasks-per-child=200',  # タスク数制限を緩和
+            '--max-memory-per-child=500000',  # 500MB制限（メモリ制限緩和）
+            '--time-limit=3600',  # 60分タイムアウト
+            '--soft-time-limit=3300',  # 55分ソフトタイムアウト
+            '--without-gossip',  # ゴシップを無効化（パフォーマンス向上）
+            '--without-mingle',  # ミングルを無効化（起動高速化）
+            '--without-heartbeat',  # ハートビートを無効化（ネットワーク負荷軽減）
+            '--prefetch-multiplier=1',  # プリフェッチを1に制限
         ])
 
     except KeyboardInterrupt:

@@ -38,6 +38,7 @@ def create_admin_user():
             hashed_password=PasswordHandler.hash_password("admin123456"),
             role=UserRole.ADMIN,
             is_active=True,
+            is_superuser=True,  # スーパーユーザー権限を付与
             created_at=datetime.now(timezone.utc)
         )
 

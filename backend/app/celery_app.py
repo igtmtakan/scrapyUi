@@ -18,14 +18,41 @@ celery_app.conf.update(
     timezone="Asia/Tokyo",
     enable_utc=True,
     task_track_started=True,
-    task_time_limit=30 * 60,  # 30分でタイムアウト
-    task_soft_time_limit=25 * 60,  # 25分でソフトタイムアウト
+    task_time_limit=60 * 60,  # 60分でタイムアウト（長時間スクレイピング対応）
+    task_soft_time_limit=55 * 60,  # 55分でソフトタイムアウト
     worker_prefetch_multiplier=1,
-    worker_max_tasks_per_child=1000,
+    worker_max_tasks_per_child=200,  # タスク数制限を緩和（安定性向上）
+    worker_max_memory_per_child=500000,  # 500MB制限（メモリ制限を緩和）
     # 重複実行防止とタイムアウト設定
     task_acks_late=True,  # タスク完了後にackを送信
     worker_disable_rate_limits=True,  # レート制限を無効化
     task_reject_on_worker_lost=True,  # ワーカー停止時にタスクを拒否
+    # ワーカー安定性向上
+    worker_pool_restarts=True,  # プールの自動再起動
+    worker_autoscaler='celery.worker.autoscale:Autoscaler',
+    worker_concurrency=2,  # 同時実行数を制限
+    # シグナルハンドリング改善
+    worker_send_task_events=True,
+    task_send_sent_event=True,
+    # エラーハンドリング
+    task_annotations={
+        '*': {
+            'rate_limit': '20/m',  # 1分間に20タスクまで（制限緩和）
+            'time_limit': 3600,    # 60分タイムアウト
+            'soft_time_limit': 3300,  # 55分ソフトタイムアウト
+        }
+    },
+    # Redis接続設定
+    broker_connection_retry_on_startup=True,
+    broker_connection_retry=True,
+    broker_connection_max_retries=10,
+    result_backend_transport_options={
+        'master_name': 'mymaster',
+        'visibility_timeout': 3600,
+        'retry_policy': {
+            'timeout': 5.0
+        }
+    }
 )
 
 # 定期実行タスクの設定

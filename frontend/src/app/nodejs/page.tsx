@@ -16,6 +16,8 @@ import {
   Terminal
 } from 'lucide-react';
 
+import AdminGuard from '@/components/AdminGuard';
+import { useAuthStore } from '@/stores/authStore';
 import NodeJSMonitor from '@/components/nodejs/NodeJSMonitor';
 import SPAScrapingForm from '@/components/nodejs/SPAScrapingForm';
 import PDFGenerator from '@/components/nodejs/PDFGenerator';
@@ -25,6 +27,7 @@ import TerminalComponent from '@/components/nodejs/Terminal';
 
 export default function NodeJSPage() {
   const [activeTab, setActiveTab] = useState('monitor');
+  const { isSuperUser } = useAuthStore();
 
   const features = [
     {
@@ -58,7 +61,8 @@ export default function NodeJSPage() {
   ];
 
   return (
-    <div className="container mx-auto px-4 py-8 space-y-8">
+    <AdminGuard requireSuperUser={false}>
+      <div className="container mx-auto px-4 py-8 space-y-8">
       {/* Header */}
       <div className="text-center space-y-4">
         <div className="flex items-center justify-center gap-3">
@@ -132,20 +136,39 @@ export default function NodeJSPage() {
         </TabsContent>
 
         <TabsContent value="terminal" className="space-y-6">
-          <div className="space-y-4">
-            <div className="text-center">
-              <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">
-                Terminal
-              </h2>
-              <p className="text-gray-600 dark:text-gray-300">
-                Scrapy プロジェクト用のインタラクティブターミナル
-              </p>
-              <p className="text-sm text-blue-600 dark:text-blue-400 mt-2">
-                🚀 scrapy crawlwithwatchdog コマンドでリアルタイム監視付きスクレイピング
-              </p>
+          {isSuperUser() ? (
+            <div className="space-y-4">
+              <div className="text-center">
+                <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">
+                  Terminal
+                </h2>
+                <p className="text-gray-600 dark:text-gray-300">
+                  Scrapy プロジェクト用のインタラクティブターミナル
+                </p>
+                <p className="text-sm text-blue-600 dark:text-blue-400 mt-2">
+                  🚀 scrapy crawlwithwatchdog コマンドでリアルタイム監視付きスクレイピング
+                </p>
+              </div>
+              <TerminalComponent className="max-w-full" />
             </div>
-            <TerminalComponent className="max-w-full" />
-          </div>
+          ) : (
+            <Card className="w-full">
+              <CardContent className="p-8 text-center">
+                <div className="mx-auto w-16 h-16 bg-red-100 dark:bg-red-900/20 rounded-full flex items-center justify-center mb-4">
+                  <Terminal className="w-8 h-8 text-red-600 dark:text-red-400" />
+                </div>
+                <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-2">
+                  スーパーユーザー権限が必要です
+                </h3>
+                <p className="text-gray-600 dark:text-gray-300 mb-4">
+                  ターミナル機能にアクセスするには、スーパーユーザー権限が必要です。
+                </p>
+                <p className="text-sm text-gray-500 dark:text-gray-400">
+                  システム管理者にお問い合わせください。
+                </p>
+              </CardContent>
+            </Card>
+          )}
         </TabsContent>
 
         <TabsContent value="workflows" className="space-y-6">
@@ -291,6 +314,7 @@ export default function NodeJSPage() {
           </div>
         </CardContent>
       </Card>
-    </div>
+      </div>
+    </AdminGuard>
   );
 }
