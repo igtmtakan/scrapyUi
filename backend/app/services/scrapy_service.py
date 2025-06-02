@@ -617,7 +617,7 @@ COMMANDS_MODULE = "{project_name}.commands"
             self.logger.warning(f"Failed to add COMMANDS_MODULE to settings.py: {str(e)}")
 
     def _add_rich_progress_settings(self, project_dir: Path, project_name: str):
-        """settings.pyにRich進捗バー設定を追加"""
+        """settings.pyにRich進捗バー設定を追加（COMMANDS_MODULEと同じパターン）"""
         try:
             settings_file = project_dir / "settings.py"
 
@@ -634,14 +634,22 @@ COMMANDS_MODULE = "{project_name}.commands"
                 self.logger.info(f"Rich progress settings already exist in {settings_file}")
                 return
 
-            # Rich進捗バー設定を追加
-            rich_settings = '''
-# ===== Rich進捗バー設定 =====
-# スパイダーコードを変更せずに美しい進捗バーを表示
-
+            # 1. sys.path.append を追加（import文の後）
+            sys_path_setting = f'''
 # ScrapyUIバックエンドへのパスを追加
 import sys
 sys.path.append('/home/igtmtakan/workplace/python/scrapyUI/backend')
+'''
+
+            # import文の後に追加（COMMANDS_MODULEと同じパターン）
+            if 'NEWSPIDER_MODULE' in content:
+                content = content.replace(
+                    f'NEWSPIDER_MODULE = "{project_name}.spiders"',
+                    f'NEWSPIDER_MODULE = "{project_name}.spiders"{sys_path_setting}'
+                )
+
+            # 2. ADDONS = {} の後にEXTENSIONS設定を追加
+            extensions_setting = '''
 
 # Rich進捗バー拡張機能を有効化
 EXTENSIONS = {
@@ -650,16 +658,40 @@ EXTENSIONS = {
     "scrapy.extensions.logstats.LogStats": 500,
     # Rich進捗バー拡張機能を追加（スパイダーコードを変更せずに進捗バーを表示）
     "app.scrapy_extensions.rich_progress_extension.RichProgressExtension": 400,
-}
+}'''
 
+            if 'ADDONS = {}' in content:
+                content = content.replace(
+                    'ADDONS = {}',
+                    f'ADDONS = {{}}{extensions_setting}'
+                )
+            else:
+                # ADDONSが見つからない場合は、NEWSPIDER_MODULEの後に追加
+                if 'NEWSPIDER_MODULE' in content and 'EXTENSIONS' not in content:
+                    # sys.path.appendが既に追加されている場合を考慮
+                    if 'sys.path.append' in content:
+                        content = content.replace(
+                            'sys.path.append(\'/home/igtmtakan/workplace/python/scrapyUI/backend\')',
+                            f'sys.path.append(\'/home/igtmtakan/workplace/python/scrapyUI/backend\'){extensions_setting}'
+                        )
+                    else:
+                        content = content.replace(
+                            f'NEWSPIDER_MODULE = "{project_name}.spiders"',
+                            f'NEWSPIDER_MODULE = "{project_name}.spiders"{extensions_setting}'
+                        )
+
+            # 3. Rich進捗バー設定をファイル末尾に追加
+            rich_progress_settings = '''
+
+# ===== Rich進捗バー設定 =====
+# スパイダーコードを変更せずに美しい進捗バーを表示
 RICH_PROGRESS_ENABLED = True           # 進捗バーを有効化
 RICH_PROGRESS_SHOW_STATS = True        # 詳細統計を表示
 RICH_PROGRESS_UPDATE_INTERVAL = 0.1    # 更新間隔（秒）
 RICH_PROGRESS_WEBSOCKET = False        # WebSocket通知（オプション）
 '''
 
-            # ファイルの末尾に追加
-            content += rich_settings
+            content += rich_progress_settings
 
             # ファイルに書き戻し
             with open(settings_file, 'w', encoding='utf-8') as f:

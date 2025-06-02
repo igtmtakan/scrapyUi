@@ -602,6 +602,11 @@ FEED_EXPORT_ENCODING = 'utf-8'
 SCRAPYUI_PROJECT_NAME = '{name}'
 SCRAPYUI_TEMPLATE = '{template}'
 
+# カスタムコマンドモジュール
+COMMANDS_MODULE = "{name}.commands"
+
+ADDONS = {{}}
+
 # ===== Rich進捗バー設定 =====
 # スパイダーコードを変更せずに美しい進捗バーを表示
 
