@@ -46,6 +46,16 @@ class DefaultSettingsService:
                 ],
                 "auto_detect": False
             },
+            "auth": {
+                "access_token_expire_minutes": 360,
+                "refresh_token_expire_days": 7,
+                "secret_key_env": "SECRET_KEY",
+                "algorithm": "HS256",
+                "password_hash_schemes": ["bcrypt", "argon2"],
+                "bcrypt_rounds": 12,
+                "session_timeout_minutes": 360,
+                "auto_refresh_threshold_minutes": 30
+            },
             "spider_defaults": {
                 "feed_settings": {
                     "default_format": "jsonl",
@@ -382,6 +392,19 @@ class DefaultSettingsService:
                 "Asia/Seoul"
             ],
             "auto_detect": False
+        })
+
+    def get_auth_settings(self) -> Dict[str, Any]:
+        """認証設定を取得"""
+        return self.default_settings.get("auth", {
+            "access_token_expire_minutes": 360,
+            "refresh_token_expire_days": 7,
+            "secret_key_env": "SECRET_KEY",
+            "algorithm": "HS256",
+            "password_hash_schemes": ["bcrypt", "argon2"],
+            "bcrypt_rounds": 12,
+            "session_timeout_minutes": 360,
+            "auto_refresh_threshold_minutes": 30
         })
     
     def update_settings(self, section: str, new_settings: Dict[str, Any]):

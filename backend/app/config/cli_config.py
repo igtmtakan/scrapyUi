@@ -102,6 +102,19 @@ class CLIConfigManager:
             type=str,
             help='使用するタイムゾーン (例: Asia/Tokyo, UTC, America/New_York)'
         )
+
+        # 認証関連
+        parser.add_argument(
+            '--token-expire-minutes',
+            type=int,
+            help='アクセストークンの有効期限（分）デフォルト: 360分（6時間）'
+        )
+
+        parser.add_argument(
+            '--refresh-token-expire-days',
+            type=int,
+            help='リフレッシュトークンの有効期限（日）デフォルト: 7日'
+        )
         
         # その他
         parser.add_argument(
@@ -145,6 +158,8 @@ class CLIConfigManager:
             'SCRAPY_UI_LOG_LEVEL': 'log_level',
             'SCRAPY_UI_LOG_FILE': 'log_file',
             'SCRAPY_UI_TIMEZONE': 'timezone',
+            'ACCESS_TOKEN_EXPIRE_MINUTES': 'token_expire_minutes',
+            'REFRESH_TOKEN_EXPIRE_DAYS': 'refresh_token_expire_days',
         }
         
         for env_var, arg_name in env_mappings.items():
@@ -172,6 +187,8 @@ class CLIConfigManager:
             'log_level': self.args.log_level,
             'log_file': self.args.log_file,
             'timezone': self.args.timezone,
+            'token_expire_minutes': self.args.token_expire_minutes,
+            'refresh_token_expire_days': self.args.refresh_token_expire_days,
             'check_config': self.args.check_config,
         }
     
@@ -198,6 +215,14 @@ class CLIConfigManager:
             print(f"🌍 タイムゾーン: {config['timezone']}")
         else:
             print(f"🌍 タイムゾーン: auto-detect")
+        if config['token_expire_minutes']:
+            print(f"🔑 アクセストークン有効期限: {config['token_expire_minutes']}分 ({config['token_expire_minutes']/60:.1f}時間)")
+        else:
+            print(f"🔑 アクセストークン有効期限: デフォルト (6時間)")
+        if config['refresh_token_expire_days']:
+            print(f"🔄 リフレッシュトークン有効期限: {config['refresh_token_expire_days']}日")
+        else:
+            print(f"🔄 リフレッシュトークン有効期限: デフォルト (7日)")
 
 # グローバルインスタンス
 cli_config_manager = CLIConfigManager()

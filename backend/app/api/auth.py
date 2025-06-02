@@ -6,7 +6,8 @@ import uuid
 
 from ..database import get_db, User as DBUser, UserSession as DBUserSession
 from ..models.schemas import UserCreate, UserLogin, UserResponse, Token
-from ..auth.jwt_handler import JWTHandler, PasswordHandler, create_tokens
+from ..auth.jwt_handler import JWTHandler, PasswordHandler, create_tokens, ACCESS_TOKEN_EXPIRE_MINUTES, REFRESH_TOKEN_EXPIRE_DAYS
+from ..services.default_settings_service import default_settings_service
 
 router = APIRouter(
     responses={
@@ -447,3 +448,39 @@ async def change_password(
     db.commit()
 
     return {"message": "パスワードが正常に変更されました"}
+
+@router.get(
+    "/settings",
+    summary="認証設定取得",
+    description="現在の認証設定情報を取得します。"
+)
+async def get_auth_settings():
+    """
+    ## 認証設定取得
+
+    現在の認証設定情報を取得します。
+
+    ### レスポンス
+    - **200**: 認証設定情報を返します
+    - **500**: サーバーエラー
+    """
+    try:
+        from ..auth.jwt_handler import ACCESS_TOKEN_EXPIRE_MINUTES, REFRESH_TOKEN_EXPIRE_DAYS
+
+        # 設定ファイルから認証設定を取得
+        auth_settings = default_settings_service.get_auth_settings()
+
+        return {
+            "access_token_expire_minutes": ACCESS_TOKEN_EXPIRE_MINUTES,
+            "refresh_token_expire_days": REFRESH_TOKEN_EXPIRE_DAYS,
+            "access_token_expire_hours": ACCESS_TOKEN_EXPIRE_MINUTES / 60,
+            "session_timeout_minutes": auth_settings.get("session_timeout_minutes", 360),
+            "auto_refresh_threshold_minutes": auth_settings.get("auto_refresh_threshold_minutes", 30),
+            "algorithm": auth_settings.get("algorithm", "HS256"),
+            "password_hash_schemes": auth_settings.get("password_hash_schemes", ["bcrypt", "argon2"])
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"認証設定の取得に失敗: {str(e)}"
+        )

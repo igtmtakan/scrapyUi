@@ -8,11 +8,28 @@ from passlib.context import CryptContext
 # bcryptの警告を抑制
 warnings.filterwarnings("ignore", message=".*bcrypt version.*")
 
+def _get_auth_settings():
+    """認証設定を取得（設定ファイル → 環境変数 → デフォルト値の順）"""
+    try:
+        from ..services.default_settings_service import default_settings_service
+        auth_settings = default_settings_service.get_auth_settings()
+        return auth_settings
+    except ImportError:
+        # 設定サービスが利用できない場合はデフォルト値を使用
+        return {
+            "access_token_expire_minutes": 360,
+            "refresh_token_expire_days": 7,
+            "algorithm": "HS256"
+        }
+
+# 認証設定を取得
+_auth_settings = _get_auth_settings()
+
 # JWT設定
 SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-in-production")
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
-REFRESH_TOKEN_EXPIRE_DAYS = 7
+ALGORITHM = _auth_settings.get("algorithm", "HS256")
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", str(_auth_settings.get("access_token_expire_minutes", 360))))
+REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", str(_auth_settings.get("refresh_token_expire_days", 7))))
 
 # パスワードハッシュ化（bcryptとargon2の両方をサポート）
 pwd_context = CryptContext(
