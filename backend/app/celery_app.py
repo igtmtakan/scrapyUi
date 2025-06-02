@@ -30,7 +30,7 @@ celery_app.conf.update(
     # ワーカー安定性向上
     worker_pool_restarts=True,  # プールの自動再起動
     worker_autoscaler='celery.worker.autoscale:Autoscaler',
-    worker_concurrency=2,  # 同時実行数を制限
+    worker_concurrency=1,  # 同時実行数を1に制限（高負荷対応）
     # シグナルハンドリング改善
     worker_send_task_events=True,
     task_send_sent_event=True,
