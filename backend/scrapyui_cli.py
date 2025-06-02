@@ -58,6 +58,22 @@ def main():
                 print(f"❌ タイムゾーン設定エラー: {e}")
                 sys.exit(1)
 
+        # 認証トークン設定
+        if args.token_expire_minutes or args.refresh_token_expire_days:
+            try:
+                import os
+                if args.token_expire_minutes:
+                    os.environ['ACCESS_TOKEN_EXPIRE_MINUTES'] = str(args.token_expire_minutes)
+                    print(f"\n✅ アクセストークン有効期限を {args.token_expire_minutes}分 ({args.token_expire_minutes/60:.1f}時間) に設定しました")
+
+                if args.refresh_token_expire_days:
+                    os.environ['REFRESH_TOKEN_EXPIRE_DAYS'] = str(args.refresh_token_expire_days)
+                    print(f"✅ リフレッシュトークン有効期限を {args.refresh_token_expire_days}日 に設定しました")
+
+            except Exception as e:
+                print(f"❌ 認証トークン設定エラー: {e}")
+                sys.exit(1)
+
         # データベース設定を確認
         try:
             db_config = get_database_config()
