@@ -9,6 +9,7 @@ import json
 import sqlite3
 import threading
 import time
+import hashlib
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, Any, Optional, Callable, List
@@ -127,6 +128,27 @@ class ScrapyWatchdogMonitor:
 
         # Scrapyプロセス
         self.scrapy_process = None
+
+    def _generate_data_hash_improved(self, item_data: dict) -> str:
+        """item_typeを考慮した改善されたハッシュ生成"""
+        try:
+            # item_typeを含めてハッシュを生成
+            hash_data = {
+                'ranking_position': item_data.get('ranking_position'),
+                'item_type': item_data.get('item_type', 'unknown'),
+                'product_url': item_data.get('product_url'),
+                'source_url': item_data.get('source_url'),
+                'page_number': item_data.get('page_number')
+            }
+
+            # 辞書をソートしてJSON文字列に変換
+            hash_string = json.dumps(hash_data, sort_keys=True, ensure_ascii=False)
+            return hashlib.md5(hash_string.encode('utf-8')).hexdigest()
+        except Exception as e:
+            print(f"⚠️ ハッシュ生成エラー: {e}")
+            # フォールバック：データ全体のハッシュ
+            data_str = json.dumps(item_data, sort_keys=True, ensure_ascii=False)
+            return hashlib.md5(data_str.encode('utf-8')).hexdigest()
 
     async def execute_spider_with_monitoring(self,
                                            settings: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -581,21 +603,8 @@ class ScrapyWatchdogMonitor:
 
                 db = SessionLocal()
                 try:
-                    # データハッシュを生成（重複防止）
-                    import hashlib
-                    data_hash = None
-                    if isinstance(item_data, dict):
-                        product_url = item_data.get('product_url', '')
-                        ranking_position = item_data.get('ranking_position', '')
-
-                        if product_url:
-                            data_hash = hashlib.md5(product_url.encode('utf-8')).hexdigest()
-                        elif ranking_position:
-                            data_hash = hashlib.md5(f"pos_{ranking_position}".encode('utf-8')).hexdigest()
-                        else:
-                            # フォールバック：データ全体のハッシュ
-                            data_str = json.dumps(item_data, sort_keys=True)
-                            data_hash = hashlib.md5(data_str.encode('utf-8')).hexdigest()
+                    # データハッシュを生成（改善版：item_type考慮）
+                    data_hash = self._generate_data_hash_improved(item_data)
 
                     # 重複チェック
                     if data_hash:
@@ -663,21 +672,8 @@ class ScrapyWatchdogMonitor:
 
                 db = SessionLocal()
                 try:
-                    # データハッシュを生成（重複防止）
-                    import hashlib
-                    data_hash = None
-                    if isinstance(item_data, dict):
-                        product_url = item_data.get('product_url', '')
-                        ranking_position = item_data.get('ranking_position', '')
-
-                        if product_url:
-                            data_hash = hashlib.md5(product_url.encode('utf-8')).hexdigest()
-                        elif ranking_position:
-                            data_hash = hashlib.md5(f"pos_{ranking_position}".encode('utf-8')).hexdigest()
-                        else:
-                            # フォールバック：データ全体のハッシュ
-                            data_str = json.dumps(item_data, sort_keys=True)
-                            data_hash = hashlib.md5(data_str.encode('utf-8')).hexdigest()
+                    # データハッシュを生成（改善版：item_type考慮）
+                    data_hash = self._generate_data_hash_improved(item_data)
 
                     # 重複チェック
                     if data_hash:
@@ -756,11 +752,8 @@ class ScrapyWatchdogMonitor:
                     print(f"⚠️ JSON解析エラー: {e}")
                     return False
 
-                # データハッシュ生成（重複防止）
-                data_hash = None
-                if isinstance(item_data, dict):
-                    data_str = json.dumps(item_data, sort_keys=True)
-                    data_hash = hashlib.md5(data_str.encode('utf-8')).hexdigest()
+                # データハッシュ生成（改善版：item_type考慮）
+                data_hash = self._generate_data_hash_improved(item_data)
 
                 db = SessionLocal()
                 try:
@@ -833,11 +826,8 @@ class ScrapyWatchdogMonitor:
                     print(f"⚠️ JSON解析エラー: {e}")
                     return False
 
-                # データハッシュ生成（重複防止）
-                data_hash = None
-                if isinstance(item_data, dict):
-                    data_str = json.dumps(item_data, sort_keys=True)
-                    data_hash = hashlib.md5(data_str.encode('utf-8')).hexdigest()
+                # データハッシュ生成（改善版：item_type考慮）
+                data_hash = self._generate_data_hash_improved(item_data)
 
                 db = SessionLocal()
                 try:
@@ -939,28 +929,9 @@ class ScrapyWatchdogMonitor:
                             print(f"⚠️ 既存ハッシュ取得エラー: {e}")
 
                         for item_data in batch:
-                            # データハッシュを生成（改善版）
-                            import hashlib
-                            data_hash = None
-                            if isinstance(item_data, dict):
-                                product_url = item_data.get('product_url', '')
-                                ranking_position = item_data.get('ranking_position', '')
-                                page_number = item_data.get('page_number', '')
-
-                                # より確実なハッシュ生成
-                                if product_url and product_url.strip():
-                                    data_hash = hashlib.md5(product_url.strip().encode('utf-8')).hexdigest()
-                                    print(f"🔍 URL-based hash: {data_hash[:8]}... for URL: {product_url[:50]}...")
-                                elif ranking_position and str(ranking_position).strip():
-                                    # ページ番号も含めてより一意性を高める
-                                    hash_key = f"pos_{ranking_position}_page_{page_number}"
-                                    data_hash = hashlib.md5(hash_key.encode('utf-8')).hexdigest()
-                                    print(f"🔍 Position-based hash: {data_hash[:8]}... for key: {hash_key}")
-                                else:
-                                    # フォールバック：データ全体のハッシュ
-                                    data_str = json.dumps(item_data, sort_keys=True, ensure_ascii=False)
-                                    data_hash = hashlib.md5(data_str.encode('utf-8')).hexdigest()
-                                    print(f"🔍 Full-data hash: {data_hash[:8]}... for data length: {len(data_str)}")
+                            # データハッシュを生成（改善版：item_type考慮）
+                            data_hash = self._generate_data_hash_improved(item_data)
+                            print(f"🔍 Generated hash: {data_hash[:8]}... for item_type: {item_data.get('item_type', 'unknown')}")
 
                             if not data_hash:
                                 print(f"⚠️ ハッシュ生成失敗: {item_data}")
@@ -1020,20 +991,8 @@ class ScrapyWatchdogMonitor:
                         # バッチが失敗した場合は個別に処理（重複防止付き）
                         for item_data in batch:
                             try:
-                                # データハッシュを生成
-                                import hashlib
-                                data_hash = None
-                                if isinstance(item_data, dict):
-                                    product_url = item_data.get('product_url', '')
-                                    ranking_position = item_data.get('ranking_position', '')
-
-                                    if product_url:
-                                        data_hash = hashlib.md5(product_url.encode('utf-8')).hexdigest()
-                                    elif ranking_position:
-                                        data_hash = hashlib.md5(f"pos_{ranking_position}".encode('utf-8')).hexdigest()
-                                    else:
-                                        data_str = json.dumps(item_data, sort_keys=True)
-                                        data_hash = hashlib.md5(data_str.encode('utf-8')).hexdigest()
+                                # データハッシュを生成（改善版：item_type考慮）
+                                data_hash = self._generate_data_hash_improved(item_data)
 
                                 # 重複チェック
                                 if data_hash:
@@ -1136,28 +1095,9 @@ class ScrapyWatchdogMonitor:
                             print(f"⚠️ 既存ハッシュ取得エラー: {e}")
 
                         for item_data in batch:
-                            # データハッシュを生成（改善版）
-                            import hashlib
-                            data_hash = None
-                            if isinstance(item_data, dict):
-                                product_url = item_data.get('product_url', '')
-                                ranking_position = item_data.get('ranking_position', '')
-                                page_number = item_data.get('page_number', '')
-
-                                # より確実なハッシュ生成
-                                if product_url and product_url.strip():
-                                    data_hash = hashlib.md5(product_url.strip().encode('utf-8')).hexdigest()
-                                    print(f"🔍 URL-based hash: {data_hash[:8]}... for URL: {product_url[:50]}...")
-                                elif ranking_position and str(ranking_position).strip():
-                                    # ページ番号も含めてより一意性を高める
-                                    hash_key = f"pos_{ranking_position}_page_{page_number}"
-                                    data_hash = hashlib.md5(hash_key.encode('utf-8')).hexdigest()
-                                    print(f"🔍 Position-based hash: {data_hash[:8]}... for key: {hash_key}")
-                                else:
-                                    # フォールバック：データ全体のハッシュ
-                                    data_str = json.dumps(item_data, sort_keys=True, ensure_ascii=False)
-                                    data_hash = hashlib.md5(data_str.encode('utf-8')).hexdigest()
-                                    print(f"🔍 Full-data hash: {data_hash[:8]}... for data length: {len(data_str)}")
+                            # データハッシュを生成（改善版：item_type考慮）
+                            data_hash = self._generate_data_hash_improved(item_data)
+                            print(f"🔍 Generated hash: {data_hash[:8]}... for item_type: {item_data.get('item_type', 'unknown')}")
 
                             if not data_hash:
                                 print(f"⚠️ ハッシュ生成失敗: {item_data}")
@@ -1203,20 +1143,8 @@ class ScrapyWatchdogMonitor:
                         # バッチが失敗した場合は個別に処理（重複防止付き）
                         for item_data in batch:
                             try:
-                                # データハッシュを生成
-                                import hashlib
-                                data_hash = None
-                                if isinstance(item_data, dict):
-                                    product_url = item_data.get('product_url', '')
-                                    ranking_position = item_data.get('ranking_position', '')
-
-                                    if product_url:
-                                        data_hash = hashlib.md5(product_url.encode('utf-8')).hexdigest()
-                                    elif ranking_position:
-                                        data_hash = hashlib.md5(f"pos_{ranking_position}".encode('utf-8')).hexdigest()
-                                    else:
-                                        data_str = json.dumps(item_data, sort_keys=True)
-                                        data_hash = hashlib.md5(data_str.encode('utf-8')).hexdigest()
+                                # データハッシュを生成（改善版：item_type考慮）
+                                data_hash = self._generate_data_hash_improved(item_data)
 
                                 # 重複チェック
                                 if data_hash:

@@ -72,23 +72,111 @@ export function AuthProvider({ children }: AuthProviderProps) {
     initAuth()
   }, [])
 
-  const login = async (email: string, password: string) => {
+  const login = async (email: string, password: string, retryCount = 0) => {
+    const maxRetries = 3
+    const retryDelay = 1000 * (retryCount + 1) // 1秒、2秒、3秒
+
     try {
+      console.log('🔐 Login attempt:', {
+        email,
+        url: '/api/auth/login',
+        attempt: retryCount + 1,
+        maxRetries: maxRetries + 1
+      })
+
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 10000) // 10秒タイムアウト
+
       const response = await fetch('/api/auth/login', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ email, password }),
+        signal: controller.signal,
       })
 
-      if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.detail || 'Login failed')
+      clearTimeout(timeoutId)
+
+      console.log('📡 Login response:', {
+        status: response.status,
+        statusText: response.statusText,
+        headers: Object.fromEntries(response.headers.entries()),
+        url: response.url,
+        attempt: retryCount + 1
+      })
+
+      // レスポンスが空の場合の処理
+      if (response.status === 200 && response.headers.get('content-length') === '0') {
+        console.warn('⚠️ Empty response received, retrying...')
+        if (retryCount < maxRetries) {
+          await new Promise(resolve => setTimeout(resolve, retryDelay))
+          return login(email, password, retryCount + 1)
+        }
+        throw new Error('Server returned empty response after multiple attempts')
       }
 
-      const data = await response.json()
-      
+      if (!response.ok) {
+        let errorData: any = {}
+        try {
+          const responseText = await response.text()
+          if (responseText.trim()) {
+            errorData = JSON.parse(responseText)
+          }
+        } catch (parseError) {
+          console.warn('Failed to parse error response:', parseError)
+        }
+
+        console.error('❌ Login failed:', errorData)
+
+        // 5xx エラーの場合はリトライ
+        if (response.status >= 500 && retryCount < maxRetries) {
+          console.log(`🔄 Server error (${response.status}), retrying in ${retryDelay}ms...`)
+          await new Promise(resolve => setTimeout(resolve, retryDelay))
+          return login(email, password, retryCount + 1)
+        }
+
+        throw new Error(errorData.detail || `Login failed: ${response.status} ${response.statusText}`)
+      }
+
+      const responseText = await response.text()
+      if (!responseText.trim()) {
+        console.warn('⚠️ Empty response body, retrying...')
+        if (retryCount < maxRetries) {
+          await new Promise(resolve => setTimeout(resolve, retryDelay))
+          return login(email, password, retryCount + 1)
+        }
+        throw new Error('Server returned empty response body after multiple attempts')
+      }
+
+      let data: any
+      try {
+        data = JSON.parse(responseText)
+      } catch (parseError) {
+        console.error('❌ Failed to parse login response:', parseError)
+        if (retryCount < maxRetries) {
+          await new Promise(resolve => setTimeout(resolve, retryDelay))
+          return login(email, password, retryCount + 1)
+        }
+        throw new Error('Invalid response format from server')
+      }
+
+      console.log('✅ Login success:', {
+        hasAccessToken: !!data.access_token,
+        hasRefreshToken: !!data.refresh_token,
+        tokenType: data.token_type,
+        attempt: retryCount + 1
+      })
+
+      if (!data.access_token || !data.refresh_token) {
+        console.error('❌ Missing tokens in response:', data)
+        if (retryCount < maxRetries) {
+          await new Promise(resolve => setTimeout(resolve, retryDelay))
+          return login(email, password, retryCount + 1)
+        }
+        throw new Error('Invalid login response: missing tokens')
+      }
+
       // トークンを保存
       setToken(data.access_token)
       localStorage.setItem('access_token', data.access_token)
@@ -97,7 +185,25 @@ export function AuthProvider({ children }: AuthProviderProps) {
       // ユーザー情報を取得
       await getCurrentUser(data.access_token)
     } catch (error) {
-      console.error('Login error:', error)
+      if (error.name === 'AbortError') {
+        console.error('❌ Login timeout')
+        if (retryCount < maxRetries) {
+          console.log(`🔄 Timeout, retrying in ${retryDelay}ms...`)
+          await new Promise(resolve => setTimeout(resolve, retryDelay))
+          return login(email, password, retryCount + 1)
+        }
+        throw new Error('Login request timed out after multiple attempts')
+      }
+
+      console.error('❌ Login error:', error)
+
+      // ネットワークエラーの場合はリトライ
+      if (error.message.includes('fetch') && retryCount < maxRetries) {
+        console.log(`🔄 Network error, retrying in ${retryDelay}ms...`)
+        await new Promise(resolve => setTimeout(resolve, retryDelay))
+        return login(email, password, retryCount + 1)
+      }
+
       throw error
     }
   }
@@ -158,18 +264,39 @@ export function AuthProvider({ children }: AuthProviderProps) {
   }
 
   const getCurrentUser = async (accessToken: string) => {
-    const response = await fetch('/api/auth/me', {
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-      },
-    })
+    try {
+      console.log('👤 Getting current user with token:', accessToken ? 'present' : 'missing')
 
-    if (!response.ok) {
-      throw new Error('Failed to get user info')
+      const response = await fetch('/api/auth/me', {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+        },
+      })
+
+      console.log('📡 User info response:', {
+        status: response.status,
+        statusText: response.statusText,
+        url: response.url
+      })
+
+      if (!response.ok) {
+        const errorData = await response.text()
+        console.error('❌ Failed to get user info:', errorData)
+        throw new Error('Failed to get user info')
+      }
+
+      const userData = await response.json()
+      console.log('✅ User data received:', {
+        id: userData.id,
+        email: userData.email,
+        username: userData.username,
+        role: userData.role
+      })
+      setUser(userData)
+    } catch (error) {
+      console.error('❌ getCurrentUser error:', error)
+      throw error
     }
-
-    const userData = await response.json()
-    setUser(userData)
   }
 
   const updateUser = (userData: Partial<User>) => {
@@ -194,6 +321,25 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
     return () => clearInterval(refreshInterval)
   }, [token, isAuthenticated])
+
+  // システムヘルスチェック
+  useEffect(() => {
+    const healthCheckInterval = setInterval(async () => {
+      try {
+        const response = await fetch('/api/auth/health')
+        if (!response.ok) {
+          console.warn('⚠️ System health check failed:', response.status)
+        } else {
+          const healthData = await response.json()
+          console.log('✅ System health check passed:', healthData.status)
+        }
+      } catch (error) {
+        console.warn('⚠️ Health check error:', error)
+      }
+    }, 5 * 60 * 1000) // 5分ごと
+
+    return () => clearInterval(healthCheckInterval)
+  }, [])
 
   const value: AuthContextType = {
     user,

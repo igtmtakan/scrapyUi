@@ -512,6 +512,27 @@ class ApiClient {
     return response.text() as unknown as T;
   }
 
+  // Health check
+  async healthCheck(): Promise<any> {
+    try {
+      const response = await fetch('/api/auth/health', {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`Health check failed: ${response.status}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('❌ Health check failed:', error);
+      throw error;
+    }
+  }
+
   // Authentication
   async login(email: string, password: string): Promise<LoginResponse> {
     const response = await this.request<LoginResponse>('/api/auth/login', {

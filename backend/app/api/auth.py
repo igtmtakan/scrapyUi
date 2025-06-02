@@ -6,7 +6,7 @@ import uuid
 
 from ..database import get_db, User as DBUser, UserSession as DBUserSession
 from ..models.schemas import UserCreate, UserLogin, UserResponse, Token
-from ..auth.jwt_handler import JWTHandler, PasswordHandler, create_tokens, ACCESS_TOKEN_EXPIRE_MINUTES, REFRESH_TOKEN_EXPIRE_DAYS
+from ..auth.jwt_handler import JWTHandler, PasswordHandler, create_tokens
 from ..services.default_settings_service import default_settings_service
 
 router = APIRouter(
@@ -20,6 +20,45 @@ router = APIRouter(
 )
 
 security = HTTPBearer()
+
+@router.get(
+    "/health",
+    summary="認証システムヘルスチェック",
+    description="認証システムの状態を確認します。"
+)
+async def health_check(db: Session = Depends(get_db)):
+    """
+    ## 認証システムヘルスチェック
+
+    認証システムとデータベース接続の状態を確認します。
+
+    ### レスポンス
+    - **200**: システムが正常に動作している場合
+    - **500**: システムに問題がある場合
+    """
+    try:
+        # データベース接続テスト
+        db.execute("SELECT 1")
+
+        # 認証設定の確認
+        auth_settings = default_settings_service.get_auth_settings()
+
+        return {
+            "status": "healthy",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "database": "connected",
+            "auth_settings": {
+                "algorithm": auth_settings.get("algorithm", "HS256"),
+                "access_token_expire_minutes": auth_settings.get("access_token_expire_minutes", 360),
+                "refresh_token_expire_days": auth_settings.get("refresh_token_expire_days", 7)
+            }
+        }
+    except Exception as e:
+        print(f"❌ Health check failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"System health check failed: {str(e)}"
+        )
 
 @router.post(
     "/register",
@@ -107,40 +146,98 @@ async def login(
     - **500**: サーバーエラー
     """
 
-    # ユーザー検索
-    user = db.query(DBUser).filter(DBUser.email == user_login.email).first()
-    if not user or not PasswordHandler.verify_password(user_login.password, user.hashed_password):
+    try:
+        # リクエスト情報をログに記録
+        client_ip = request.client.host if request.client else "unknown"
+        user_agent = request.headers.get("user-agent", "unknown")
+
+        print(f"🔐 Login attempt: email={user_login.email}, ip={client_ip}")
+
+        # ユーザー検索
+        user = db.query(DBUser).filter(DBUser.email == user_login.email).first()
+        if not user:
+            print(f"❌ Login failed: User not found for email={user_login.email}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Incorrect email or password"
+            )
+
+        # パスワード検証
+        if not PasswordHandler.verify_password(user_login.password, user.hashed_password):
+            print(f"❌ Login failed: Invalid password for email={user_login.email}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Incorrect email or password"
+            )
+
+        # アカウント状態確認
+        if not user.is_active:
+            print(f"❌ Login failed: Inactive account for email={user_login.email}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User account is disabled"
+            )
+
+        print(f"✅ User authenticated: id={user.id}, email={user.email}")
+
+        # トークン生成
+        try:
+            tokens = create_tokens({"id": user.id, "email": user.email})
+            print(f"✅ Tokens generated for user: {user.id}")
+        except Exception as token_error:
+            print(f"❌ Token generation failed: {token_error}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to generate authentication tokens"
+            )
+
+        # セッション作成
+        try:
+            session = DBUserSession(
+                id=str(uuid.uuid4()),
+                user_id=user.id,
+                refresh_token=tokens["refresh_token"],
+                expires_at=datetime.now(timezone.utc) + timedelta(days=7),
+                user_agent=user_agent,
+                ip_address=client_ip
+            )
+
+            db.add(session)
+
+            # 最終ログイン時刻を更新
+            user.last_login = datetime.now(timezone.utc)
+            db.commit()
+
+            print(f"✅ Session created for user: {user.id}")
+        except Exception as session_error:
+            print(f"❌ Session creation failed: {session_error}")
+            db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to create user session"
+            )
+
+        print(f"✅ Login successful: user={user.id}, email={user.email}")
+        return tokens
+
+    except HTTPException:
+        # HTTPExceptionは再発生
+        raise
+    except Exception as e:
+        print(f"❌ Unexpected login error: {e}")
+        import traceback
+        print(f"❌ Traceback: {traceback.format_exc()}")
+
+        # データベースロールバック
+        try:
+            db.rollback()
+        except:
+            pass
+
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error during login"
         )
-
-    if not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User account is disabled"
-        )
-
-    # トークン生成
-    tokens = create_tokens({"id": user.id, "email": user.email})
-
-    # セッション作成
-    session = DBUserSession(
-        id=str(uuid.uuid4()),
-        user_id=user.id,
-        refresh_token=tokens["refresh_token"],
-        expires_at=datetime.now(timezone.utc) + timedelta(days=7),
-        user_agent=request.headers.get("user-agent"),
-        ip_address=request.client.host if request.client else None
-    )
-
-    db.add(session)
-
-    # 最終ログイン時刻を更新
-    user.last_login = datetime.now(timezone.utc)
-    db.commit()
-
-    return tokens
 
 @router.post(
     "/refresh",

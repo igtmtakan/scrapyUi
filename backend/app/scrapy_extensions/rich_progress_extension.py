@@ -129,12 +129,12 @@ class RichProgressExtension:
         # 最終統計ファイルを保存
         self._save_stats()
 
-        # 完了通知（watchdogと共存）
+        # 完了通知とバルクインサート発動
         if reason == 'finished' and hasattr(spider, 'task_id'):
             spider.logger.info(f"🎯 Spider completed successfully with Rich progress tracking for task {spider.task_id}")
 
-            # watchdogが既にDB保存を行っているため、Rich progressでは追加のDB保存は行わない
-            spider.logger.info(f"📊 Rich progress tracking completed - watchdog handles DB operations")
+            # Rich progress完了通知でバルクインサートを発動
+            self._trigger_bulk_insert_on_completion(spider)
 
         if self.live:
             self.live.stop()
@@ -145,8 +145,232 @@ class RichProgressExtension:
         # 最終統計を表示
         self._show_final_stats(spider, reason)
 
-        spider.logger.info(f"🎨 Rich進捗バー終了: {spider.name} (理由: {reason})")
-        spider.logger.info(f"📊 最終統計ファイル保存: {self.stats_file}")
+    def _trigger_bulk_insert_on_completion(self, spider):
+        """Rich progress完了通知でバルクインサートを発動"""
+        try:
+            task_id = getattr(spider, 'task_id', None)
+            if not task_id:
+                spider.logger.warning("🔍 Task ID not found - skipping bulk insert")
+                return
+
+            spider.logger.info(f"🚀 Rich progress completion triggered - starting bulk insert for task {task_id}")
+
+            # プロジェクトパスを取得
+            project_path = getattr(spider, 'project_path', None)
+            if not project_path:
+                # 現在のディレクトリから推測
+                import os
+                project_path = os.getcwd()
+
+            spider.logger.info(f"📁 Project path: {project_path}")
+
+            # JSONLファイルパスを構築
+            from pathlib import Path
+            jsonl_file_path = Path(project_path) / f"results_{task_id}.jsonl"
+
+            if not jsonl_file_path.exists():
+                spider.logger.warning(f"📄 JSONL file not found: {jsonl_file_path}")
+                return
+
+            spider.logger.info(f"📄 Found JSONL file: {jsonl_file_path}")
+
+            # ファイルサイズと行数を確認
+            file_size = jsonl_file_path.stat().st_size
+            with open(jsonl_file_path, 'r', encoding='utf-8') as f:
+                lines = [line.strip() for line in f if line.strip()]
+
+            spider.logger.info(f"📊 File size: {file_size} bytes, Lines: {len(lines)}")
+
+            if len(lines) == 0:
+                spider.logger.warning("📄 No data lines found in JSONL file")
+                return
+
+            # バルクインサート実行
+            self._execute_bulk_insert(task_id, lines, spider)
+
+        except Exception as e:
+            spider.logger.error(f"❌ Bulk insert trigger error: {e}")
+            import traceback
+            spider.logger.error(f"❌ Traceback: {traceback.format_exc()}")
+
+    def _execute_bulk_insert(self, task_id: str, lines: list, spider):
+        """バルクインサートを実行"""
+        try:
+            spider.logger.info(f"🔄 Starting bulk insert for {len(lines)} lines")
+
+            # ScrapyWatchdogMonitorのバルクインサート機能を使用
+            from ..services.scrapy_watchdog_monitor import ScrapyWatchdogMonitor
+
+            # 一時的なモニターインスタンスを作成（バルクインサート専用）
+            monitor = ScrapyWatchdogMonitor(
+                task_id=task_id,
+                project_path=getattr(spider, 'project_path', os.getcwd()),
+                spider_name=spider.name
+            )
+
+            # バルクインサート実行
+            successful_inserts = monitor._bulk_insert_items_threading(lines)
+
+            spider.logger.info(f"✅ Bulk insert completed: {successful_inserts}/{len(lines)} items inserted")
+
+            # 重複クリーンアップを実行
+            cleanup_result = self._cleanup_duplicate_records(task_id, spider)
+
+            # WebSocket通知を送信
+            self._send_completion_websocket_notification(task_id, successful_inserts, spider, cleanup_result)
+
+        except Exception as e:
+            spider.logger.error(f"❌ Bulk insert execution error: {e}")
+            import traceback
+            spider.logger.error(f"❌ Traceback: {traceback.format_exc()}")
+
+    def _cleanup_duplicate_records(self, task_id: str, spider):
+        """重複レコードのクリーンアップを実行"""
+        try:
+            spider.logger.info(f"🧹 Starting duplicate cleanup for task {task_id}")
+
+            from ..database import get_db, Result as DBResult
+            from sqlalchemy import func
+
+            # データベース接続
+            db_gen = get_db()
+            db = next(db_gen)
+
+            try:
+                # クリーンアップ前の件数を確認
+                before_count = db.query(DBResult).filter(DBResult.task_id == task_id).count()
+                spider.logger.info(f"📊 Before cleanup: {before_count} records")
+
+                # 重複レコードを特定（data_hashが同じものを検索）
+                duplicate_subquery = (
+                    db.query(DBResult.data_hash)
+                    .filter(DBResult.task_id == task_id)
+                    .group_by(DBResult.data_hash)
+                    .having(func.count(DBResult.data_hash) > 1)
+                    .subquery()
+                )
+
+                # 重複グループごとに最新のレコード以外を削除
+                duplicates_to_delete = []
+                duplicate_hashes = db.query(duplicate_subquery.c.data_hash).all()
+
+                spider.logger.info(f"🔍 Found {len(duplicate_hashes)} duplicate hash groups")
+
+                for (hash_value,) in duplicate_hashes:
+                    # 同じハッシュを持つレコードを取得（作成日時順）
+                    duplicate_records = (
+                        db.query(DBResult)
+                        .filter(DBResult.task_id == task_id)
+                        .filter(DBResult.data_hash == hash_value)
+                        .order_by(DBResult.created_at.desc())
+                        .all()
+                    )
+
+                    # 最新のレコード以外を削除対象に追加
+                    if len(duplicate_records) > 1:
+                        records_to_delete = duplicate_records[1:]  # 最新以外
+                        duplicates_to_delete.extend(records_to_delete)
+
+                        spider.logger.info(f"🗑️ Hash {hash_value[:8]}...: keeping 1, deleting {len(records_to_delete)} duplicates")
+
+                # 重複レコードを削除
+                deleted_count = 0
+                if duplicates_to_delete:
+                    for record in duplicates_to_delete:
+                        db.delete(record)
+                        deleted_count += 1
+
+                    db.commit()
+                    spider.logger.info(f"✅ Deleted {deleted_count} duplicate records")
+                else:
+                    spider.logger.info(f"✅ No duplicate records found to delete")
+
+                # クリーンアップ後の件数を確認
+                after_count = db.query(DBResult).filter(DBResult.task_id == task_id).count()
+                spider.logger.info(f"📊 After cleanup: {after_count} records")
+
+                # 結果をまとめる
+                cleanup_result = {
+                    'before_count': before_count,
+                    'after_count': after_count,
+                    'deleted_count': deleted_count,
+                    'duplicate_groups': len(duplicate_hashes)
+                }
+
+                spider.logger.info(f"🧹 Cleanup completed: {before_count} → {after_count} (-{deleted_count})")
+
+                return cleanup_result
+
+            finally:
+                db.close()
+
+        except Exception as e:
+            spider.logger.error(f"❌ Duplicate cleanup error: {e}")
+            import traceback
+            spider.logger.error(f"❌ Traceback: {traceback.format_exc()}")
+            return {
+                'before_count': 0,
+                'after_count': 0,
+                'deleted_count': 0,
+                'duplicate_groups': 0,
+                'error': str(e)
+            }
+
+    def _send_completion_websocket_notification(self, task_id: str, items_inserted: int, spider, cleanup_result=None):
+        """完了通知のWebSocket送信"""
+        try:
+            # WebSocket通知データを作成
+            completion_data = {
+                'taskId': task_id,
+                'status': 'completed',
+                'itemsScraped': items_inserted,
+                'requestsCount': self.stats['requests_count'],
+                'errorCount': self.stats['errors_count'],
+                'elapsedTime': int(self.stats.get('finish_time', time.time()) - self.stats.get('start_time', time.time())),
+                'progressPercentage': 100.0,
+                'message': f'Rich progress completed - {items_inserted} items bulk inserted',
+                'bulkInsertCompleted': True
+            }
+
+            # クリーンアップ結果を追加
+            if cleanup_result:
+                completion_data.update({
+                    'cleanupCompleted': True,
+                    'cleanupResult': cleanup_result,
+                    'finalItemCount': cleanup_result.get('after_count', items_inserted),
+                    'duplicatesRemoved': cleanup_result.get('deleted_count', 0)
+                })
+
+                # メッセージを更新
+                deleted_count = cleanup_result.get('deleted_count', 0)
+                if deleted_count > 0:
+                    completion_data['message'] = f'Rich progress completed - {items_inserted} items inserted, {deleted_count} duplicates removed'
+                else:
+                    completion_data['message'] = f'Rich progress completed - {items_inserted} items inserted, no duplicates found'
+
+            spider.logger.info(f"📡 Sending completion WebSocket notification: {completion_data}")
+
+            # WebSocket送信（非同期）
+            import asyncio
+            from ..api.websocket_progress import broadcast_rich_progress_update
+
+            try:
+                # 非同期でWebSocket送信
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    asyncio.create_task(
+                        broadcast_rich_progress_update(task_id, completion_data)
+                    )
+                else:
+                    loop.run_until_complete(
+                        broadcast_rich_progress_update(task_id, completion_data)
+                    )
+                spider.logger.info("📡 Completion WebSocket notification sent successfully")
+            except Exception as ws_error:
+                spider.logger.warning(f"📡 WebSocket notification failed: {ws_error}")
+
+        except Exception as e:
+            spider.logger.error(f"❌ Completion notification error: {e}")
     
     def request_scheduled(self, request: Request, spider: Spider):
         """リクエスト送信時の処理"""
