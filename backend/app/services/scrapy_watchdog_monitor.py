@@ -68,25 +68,9 @@ class JSONLWatchdogHandler(FileSystemEventHandler):
                     print(f"📝 新しい行を検出: {len(new_lines)}件")
 
                     if new_lines:
-                        # 直接DB挿入処理
-                        successful_inserts = 0
-                        for line in new_lines:
-                            try:
-                                # JSON解析
-                                item_data = json.loads(line.strip())
-
-                                # 直接DB挿入
-                                insert_result = self.monitor._sync_insert_item_threading(item_data)
-                                if insert_result:
-                                    successful_inserts += 1
-                                    self.monitor.processed_lines += 1
-                                    print(f"✅ ScrapyUI DBインサート成功: {item_data.get('title', 'N/A')[:30]}...")
-
-                            except json.JSONDecodeError as e:
-                                print(f"❌ JSON解析エラー: {e}")
-                            except Exception as e:
-                                print(f"❌ 行処理エラー: {e}")
-
+                        # バルクDB挿入処理
+                        successful_inserts = self.monitor._bulk_insert_items_threading(new_lines)
+                        self.monitor.processed_lines += successful_inserts
                         print(f"📊 総処理済みアイテム数: {self.monitor.processed_lines}")
 
                 self.monitor.last_file_size = current_size
@@ -194,6 +178,11 @@ class ScrapyWatchdogMonitor:
 
     async def _start_watchdog_monitoring(self):
         """watchdog監視を開始"""
+        # watchdog無効化チェック
+        if self._is_watchdog_disabled():
+            print(f"🛑 Watchdog monitoring is disabled for task {self.task_id}")
+            return
+
         if not WATCHDOG_AVAILABLE:
             raise Exception("watchdogライブラリが利用できません")
 
@@ -212,6 +201,38 @@ class ScrapyWatchdogMonitor:
 
         print(f"🔍 watchdog監視開始: {watch_directory}")
         print(f"📄 監視対象ファイル: {self.jsonl_file_path}")
+
+    def _is_watchdog_disabled(self):
+        """watchdog監視が無効化されているかチェック"""
+        import os
+
+        # 環境変数チェック
+        if os.environ.get('SCRAPY_WATCHDOG_DISABLED') == 'true':
+            return True
+
+        if os.environ.get(f'SCRAPY_WATCHDOG_DISABLED_{self.task_id}') == 'true':
+            return True
+
+        # プロジェクト設定チェック
+        try:
+            project_dir = Path(self.project_path)
+            settings_file = project_dir / 'settings.py'
+
+            if settings_file.exists():
+                with open(settings_file, 'r', encoding='utf-8') as f:
+                    content = f.read()
+
+                # 設定値をチェック
+                if 'WATCHDOG_MONITORING_ENABLED = False' in content:
+                    return True
+
+                if 'SCRAPY_WATCHDOG_DISABLED = True' in content:
+                    return True
+
+        except Exception:
+            pass
+
+        return False
 
     def _stop_watchdog_monitoring(self):
         """watchdog監視を停止"""
@@ -399,30 +420,11 @@ class ScrapyWatchdogMonitor:
                 successful_inserts = 0
                 print(f"🔍 直接DB挿入処理開始: {len(new_lines)}件の新しい行")
 
-                for i, line in enumerate(new_lines):
-                    print(f"🔍 処理中 {i+1}/{len(new_lines)}: {line[:50]}...")
-                    try:
-                        # JSON解析
-                        item_data = json.loads(line.strip())
-                        print(f"🔍 JSON解析成功: {item_data.get('title', 'N/A')[:30]}...")
-
-                        # 直接DB挿入（threading版）
-                        print(f"🔍 DB挿入開始...")
-                        insert_result = self._sync_insert_item_threading(item_data)
-                        if insert_result:
-                            successful_inserts += 1
-                            print(f"✅ DB挿入成功: {successful_inserts}件目")
-                        else:
-                            print(f"❌ DB挿入失敗: {successful_inserts}件目")
-
-                        self.processed_lines += 1
-
-                    except json.JSONDecodeError as e:
-                        print(f"❌ JSON解析エラー: {e} - Line: {line[:100]}...")
-                    except Exception as e:
-                        print(f"❌ 行処理エラー: {e}")
-                        import traceback
-                        print(f"❌ 行処理エラー詳細: {traceback.format_exc()}")
+                # バルクDB挿入処理
+                print(f"🔍 バルクDB挿入開始: {len(new_lines)}件")
+                successful_inserts = self._bulk_insert_items_threading(new_lines)
+                self.processed_lines += successful_inserts
+                print(f"✅ バルクDB挿入完了: {successful_inserts}/{len(new_lines)}件")
 
                 print(f"✅ 直接DB挿入完了: {successful_inserts}/{len(new_lines)}件")
 
@@ -489,30 +491,11 @@ class ScrapyWatchdogMonitor:
                 successful_inserts = 0
                 print(f"🔍 直接DB挿入処理開始: {len(new_lines)}件の新しい行")
 
-                for i, line in enumerate(new_lines):
-                    print(f"🔍 処理中 {i+1}/{len(new_lines)}: {line[:50]}...")
-                    try:
-                        # JSON解析
-                        item_data = json.loads(line.strip())
-                        print(f"🔍 JSON解析成功: {item_data.get('title', 'N/A')[:30]}...")
-
-                        # 直接DB挿入
-                        print(f"🔍 DB挿入開始...")
-                        insert_result = self._sync_insert_item(item_data)
-                        if insert_result:
-                            successful_inserts += 1
-                            print(f"✅ DB挿入成功: {successful_inserts}件目")
-                        else:
-                            print(f"❌ DB挿入失敗: {successful_inserts}件目")
-
-                        self.processed_lines += 1
-
-                    except json.JSONDecodeError as e:
-                        print(f"❌ JSON解析エラー: {e} - Line: {line[:100]}...")
-                    except Exception as e:
-                        print(f"❌ 行処理エラー: {e}")
-                        import traceback
-                        print(f"❌ 行処理エラー詳細: {traceback.format_exc()}")
+                # バルクDB挿入処理
+                print(f"🔍 バルクDB挿入開始: {len(new_lines)}件")
+                successful_inserts = self._bulk_insert_items(new_lines)
+                self.processed_lines += successful_inserts
+                print(f"✅ バルクDB挿入完了: {successful_inserts}/{len(new_lines)}件")
 
                 print(f"✅ 直接DB挿入完了: {successful_inserts}/{len(new_lines)}件")
 
@@ -562,27 +545,21 @@ class ScrapyWatchdogMonitor:
             if remaining_lines > 0:
                 print(f"📝 残りの行を処理: {remaining_lines}件")
 
-                # 未処理の行を同期的に処理
-                successful_inserts = 0
+                # 未処理の行をバルク処理
+                remaining_lines_data = []
                 for i in range(self.processed_lines, total_lines):
                     if i < len(all_lines):
                         line = all_lines[i].strip()
                         if line:
-                            try:
-                                # JSON解析
-                                item_data = json.loads(line)
+                            remaining_lines_data.append(line)
 
-                                # 同期的にDBインサート
-                                self._sync_insert_item(item_data)
-                                successful_inserts += 1
-                                self.processed_lines += 1
-
-                            except json.JSONDecodeError as e:
-                                print(f"❌ JSON解析エラー: {e} - Line: {line[:100]}...")
-                            except Exception as e:
-                                print(f"❌ 行処理エラー: {e}")
-
-                print(f"✅ 残り行DB挿入完了: {successful_inserts}/{remaining_lines}件")
+                # バルクDB挿入
+                if remaining_lines_data:
+                    successful_inserts = self._bulk_insert_items(remaining_lines_data)
+                    self.processed_lines += successful_inserts
+                    print(f"✅ 残り行バルクDB挿入完了: {successful_inserts}/{len(remaining_lines_data)}件")
+                else:
+                    successful_inserts = 0
 
             print(f"✅ 最終処理完了: 総処理行数 {self.processed_lines}")
 
@@ -604,12 +581,39 @@ class ScrapyWatchdogMonitor:
 
                 db = SessionLocal()
                 try:
+                    # データハッシュを生成（重複防止）
+                    import hashlib
+                    data_hash = None
+                    if isinstance(item_data, dict):
+                        product_url = item_data.get('product_url', '')
+                        ranking_position = item_data.get('ranking_position', '')
+
+                        if product_url:
+                            data_hash = hashlib.md5(product_url.encode('utf-8')).hexdigest()
+                        elif ranking_position:
+                            data_hash = hashlib.md5(f"pos_{ranking_position}".encode('utf-8')).hexdigest()
+                        else:
+                            # フォールバック：データ全体のハッシュ
+                            data_str = json.dumps(item_data, sort_keys=True)
+                            data_hash = hashlib.md5(data_str.encode('utf-8')).hexdigest()
+
+                    # 重複チェック
+                    if data_hash:
+                        existing = db.query(Result).filter(
+                            Result.task_id == self.task_id,
+                            Result.data_hash == data_hash
+                        ).first()
+                        if existing:
+                            print(f"⚠️ 重複データをスキップ: {data_hash}")
+                            return True  # 重複は成功とみなす
+
                     # resultsテーブルにインサート
                     result_id = str(uuid.uuid4())
                     db_result = Result(
                         id=result_id,
                         task_id=self.task_id,
                         data=item_data,
+                        data_hash=data_hash,  # ハッシュ値を追加
                         item_acquired_datetime=datetime.now(),
                         created_at=datetime.now()
                     )
@@ -659,12 +663,39 @@ class ScrapyWatchdogMonitor:
 
                 db = SessionLocal()
                 try:
+                    # データハッシュを生成（重複防止）
+                    import hashlib
+                    data_hash = None
+                    if isinstance(item_data, dict):
+                        product_url = item_data.get('product_url', '')
+                        ranking_position = item_data.get('ranking_position', '')
+
+                        if product_url:
+                            data_hash = hashlib.md5(product_url.encode('utf-8')).hexdigest()
+                        elif ranking_position:
+                            data_hash = hashlib.md5(f"pos_{ranking_position}".encode('utf-8')).hexdigest()
+                        else:
+                            # フォールバック：データ全体のハッシュ
+                            data_str = json.dumps(item_data, sort_keys=True)
+                            data_hash = hashlib.md5(data_str.encode('utf-8')).hexdigest()
+
+                    # 重複チェック
+                    if data_hash:
+                        existing = db.query(Result).filter(
+                            Result.task_id == self.task_id,
+                            Result.data_hash == data_hash
+                        ).first()
+                        if existing:
+                            print(f"⚠️ 重複データをスキップ: {data_hash}")
+                            return True  # 重複は成功とみなす
+
                     # resultsテーブルにインサート
                     result_id = str(uuid.uuid4())
                     db_result = Result(
                         id=result_id,
                         task_id=self.task_id,
                         data=item_data,
+                        data_hash=data_hash,  # ハッシュ値を追加
                         item_acquired_datetime=datetime.now(),
                         created_at=datetime.now()
                     )
@@ -702,6 +733,540 @@ class ScrapyWatchdogMonitor:
 
         return False
 
+    def _realtime_insert_item_threading(self, line: str) -> bool:
+        """リアルタイムDB挿入（threading版・1件ずつ処理）"""
+        if not line.strip():
+            return False
+
+        max_retries = 3
+        retry_count = 0
+
+        while retry_count < max_retries:
+            try:
+                from ..database import SessionLocal, Result
+                import json
+                import uuid
+                import hashlib
+                from datetime import datetime
+
+                # JSON解析
+                try:
+                    item_data = json.loads(line)
+                except json.JSONDecodeError as e:
+                    print(f"⚠️ JSON解析エラー: {e}")
+                    return False
+
+                # データハッシュ生成（重複防止）
+                data_hash = None
+                if isinstance(item_data, dict):
+                    data_str = json.dumps(item_data, sort_keys=True)
+                    data_hash = hashlib.md5(data_str.encode('utf-8')).hexdigest()
+
+                db = SessionLocal()
+                try:
+                    # 重複チェック
+                    if data_hash:
+                        existing = db.query(Result).filter(
+                            Result.task_id == self.task_id,
+                            Result.data_hash == data_hash
+                        ).first()
+
+                        if existing:
+                            print(f"⚠️ 重複データをスキップ: {data_hash[:8]}...")
+                            return False
+
+                    # 新しいレコードを作成
+                    result_id = str(uuid.uuid4())
+                    new_result = Result(
+                        id=result_id,
+                        task_id=self.task_id,
+                        data=item_data,
+                        data_hash=data_hash,
+                        item_acquired_datetime=datetime.now(),
+                        created_at=datetime.now()
+                    )
+
+                    db.add(new_result)
+                    db.commit()
+
+                    print(f"✅ リアルタイムDB挿入成功: {result_id[:8]}...")
+                    return True
+
+                except Exception as e:
+                    db.rollback()
+                    print(f"❌ リアルタイムDB挿入エラー: {e}")
+                    raise
+                finally:
+                    db.close()
+
+            except Exception as e:
+                retry_count += 1
+                if retry_count >= max_retries:
+                    print(f"❌ リアルタイムDB挿入最終失敗: {e}")
+                    return False
+                else:
+                    import time
+                    time.sleep(0.1 * retry_count)
+
+        return False
+
+    def _realtime_insert_item(self, line: str) -> bool:
+        """リアルタイムDB挿入（通常版・1件ずつ処理）"""
+        if not line.strip():
+            return False
+
+        max_retries = 3
+        retry_count = 0
+
+        while retry_count < max_retries:
+            try:
+                from ..database import SessionLocal, Result
+                import json
+                import uuid
+                import hashlib
+                from datetime import datetime
+
+                # JSON解析
+                try:
+                    item_data = json.loads(line)
+                except json.JSONDecodeError as e:
+                    print(f"⚠️ JSON解析エラー: {e}")
+                    return False
+
+                # データハッシュ生成（重複防止）
+                data_hash = None
+                if isinstance(item_data, dict):
+                    data_str = json.dumps(item_data, sort_keys=True)
+                    data_hash = hashlib.md5(data_str.encode('utf-8')).hexdigest()
+
+                db = SessionLocal()
+                try:
+                    # 重複チェック
+                    if data_hash:
+                        existing = db.query(Result).filter(
+                            Result.task_id == self.task_id,
+                            Result.data_hash == data_hash
+                        ).first()
+
+                        if existing:
+                            print(f"⚠️ 重複データをスキップ: {data_hash[:8]}...")
+                            return False
+
+                    # 新しいレコードを作成
+                    result_id = str(uuid.uuid4())
+                    new_result = Result(
+                        id=result_id,
+                        task_id=self.task_id,
+                        data=item_data,
+                        data_hash=data_hash,
+                        item_acquired_datetime=datetime.now(),
+                        created_at=datetime.now()
+                    )
+
+                    db.add(new_result)
+                    db.commit()
+
+                    print(f"✅ リアルタイムDB挿入成功: {result_id[:8]}...")
+                    return True
+
+                except Exception as e:
+                    db.rollback()
+                    print(f"❌ リアルタイムDB挿入エラー: {e}")
+                    raise
+                finally:
+                    db.close()
+
+            except Exception as e:
+                retry_count += 1
+                if retry_count >= max_retries:
+                    print(f"❌ リアルタイムDB挿入最終失敗: {e}")
+                    return False
+                else:
+                    import time
+                    time.sleep(0.1 * retry_count)
+
+        return False
+
+    def _bulk_insert_items_threading(self, lines: List[str]) -> int:
+        """バルクDB挿入（threading版）"""
+        if not lines:
+            return 0
+
+        max_retries = 3
+        retry_count = 0
+        batch_size = 100  # バッチサイズ
+
+        while retry_count < max_retries:
+            try:
+                from ..database import SessionLocal, Result
+
+                # JSON解析とデータ準備
+                items_data = []
+                for line in lines:
+                    try:
+                        item_data = json.loads(line.strip())
+                        items_data.append(item_data)
+                    except json.JSONDecodeError as e:
+                        print(f"❌ JSON解析エラー: {e} - Line: {line[:50]}...")
+                        continue
+
+                if not items_data:
+                    print("❌ 有効なJSONデータがありません")
+                    return 0
+
+                successful_inserts = 0
+
+                # バッチごとに処理
+                for i in range(0, len(items_data), batch_size):
+                    batch = items_data[i:i + batch_size]
+
+                    db = SessionLocal()
+                    try:
+                        # バルクインサート用のデータを準備（重複防止機能付き）
+                        bulk_data = []
+                        seen_hashes = set()
+
+                        # 既存のハッシュ値を取得（重複防止）
+                        existing_hashes = set()
+                        try:
+                            existing_results = db.query(Result.data_hash).filter(
+                                Result.task_id == self.task_id,
+                                Result.data_hash.isnot(None)
+                            ).all()
+                            existing_hashes = {r.data_hash for r in existing_results}
+                            print(f"🔍 既存ハッシュ数: {len(existing_hashes)}")
+                        except Exception as e:
+                            print(f"⚠️ 既存ハッシュ取得エラー: {e}")
+
+                        for item_data in batch:
+                            # データハッシュを生成（改善版）
+                            import hashlib
+                            data_hash = None
+                            if isinstance(item_data, dict):
+                                product_url = item_data.get('product_url', '')
+                                ranking_position = item_data.get('ranking_position', '')
+                                page_number = item_data.get('page_number', '')
+
+                                # より確実なハッシュ生成
+                                if product_url and product_url.strip():
+                                    data_hash = hashlib.md5(product_url.strip().encode('utf-8')).hexdigest()
+                                    print(f"🔍 URL-based hash: {data_hash[:8]}... for URL: {product_url[:50]}...")
+                                elif ranking_position and str(ranking_position).strip():
+                                    # ページ番号も含めてより一意性を高める
+                                    hash_key = f"pos_{ranking_position}_page_{page_number}"
+                                    data_hash = hashlib.md5(hash_key.encode('utf-8')).hexdigest()
+                                    print(f"🔍 Position-based hash: {data_hash[:8]}... for key: {hash_key}")
+                                else:
+                                    # フォールバック：データ全体のハッシュ
+                                    data_str = json.dumps(item_data, sort_keys=True, ensure_ascii=False)
+                                    data_hash = hashlib.md5(data_str.encode('utf-8')).hexdigest()
+                                    print(f"🔍 Full-data hash: {data_hash[:8]}... for data length: {len(data_str)}")
+
+                            if not data_hash:
+                                print(f"⚠️ ハッシュ生成失敗: {item_data}")
+                                continue
+
+                            # 重複チェック
+                            if data_hash and (data_hash in existing_hashes or data_hash in seen_hashes):
+                                print(f"⚠️ 重複データをスキップ: {data_hash}")
+                                continue
+
+                            if data_hash:
+                                seen_hashes.add(data_hash)
+
+                            result_id = str(uuid.uuid4())
+                            bulk_item = {
+                                'id': result_id,
+                                'task_id': self.task_id,
+                                'data': item_data,
+                                'data_hash': data_hash,  # ハッシュ値を追加
+                                'item_acquired_datetime': datetime.now(),
+                                'created_at': datetime.now()
+                            }
+                            bulk_data.append(bulk_item)
+                            print(f"🔍 バルクアイテム追加: ID={result_id[:8]}..., hash={data_hash[:8] if data_hash else 'None'}...")
+
+                        # 個別インサート実行（data_hashを確実に保存）
+                        if bulk_data:
+                            print(f"🔍 個別インサート実行: {len(bulk_data)}件 (ハッシュ付き)")
+
+                            for item in bulk_data:
+                                try:
+                                    db_result = Result(
+                                        id=item['id'],
+                                        task_id=item['task_id'],
+                                        data=item['data'],
+                                        data_hash=item['data_hash'],
+                                        item_acquired_datetime=item['item_acquired_datetime'],
+                                        created_at=item['created_at']
+                                    )
+                                    db.add(db_result)
+                                    print(f"🔍 個別追加: ID={item['id'][:8]}..., hash={item['data_hash'][:8] if item['data_hash'] else 'None'}...")
+                                except Exception as e:
+                                    print(f"❌ 個別インサートエラー: {e}")
+                                    continue
+
+                            db.commit()
+                            print(f"✅ 個別インサート完了: {len(bulk_data)}件")
+                        else:
+                            print("⚠️ バルクデータが空のためスキップ")
+
+                        successful_inserts += len(batch)
+                        print(f"✅ バルクDBインサート成功: {len(batch)}件 (累計: {successful_inserts}/{len(items_data)}) - Thread: {threading.current_thread().name}")
+
+                    except Exception as e:
+                        db.rollback()
+                        print(f"❌ バルクDBインサートエラー (バッチ {i//batch_size + 1}): {e}")
+                        # バッチが失敗した場合は個別に処理（重複防止付き）
+                        for item_data in batch:
+                            try:
+                                # データハッシュを生成
+                                import hashlib
+                                data_hash = None
+                                if isinstance(item_data, dict):
+                                    product_url = item_data.get('product_url', '')
+                                    ranking_position = item_data.get('ranking_position', '')
+
+                                    if product_url:
+                                        data_hash = hashlib.md5(product_url.encode('utf-8')).hexdigest()
+                                    elif ranking_position:
+                                        data_hash = hashlib.md5(f"pos_{ranking_position}".encode('utf-8')).hexdigest()
+                                    else:
+                                        data_str = json.dumps(item_data, sort_keys=True)
+                                        data_hash = hashlib.md5(data_str.encode('utf-8')).hexdigest()
+
+                                # 重複チェック
+                                if data_hash:
+                                    existing = db.query(Result).filter(
+                                        Result.task_id == self.task_id,
+                                        Result.data_hash == data_hash
+                                    ).first()
+                                    if existing:
+                                        print(f"⚠️ 個別処理で重複データをスキップ: {data_hash}")
+                                        successful_inserts += 1  # 重複は成功とみなす
+                                        continue
+
+                                result_id = str(uuid.uuid4())
+                                db_result = Result(
+                                    id=result_id,
+                                    task_id=self.task_id,
+                                    data=item_data,
+                                    data_hash=data_hash,  # ハッシュ値を追加
+                                    item_acquired_datetime=datetime.now(),
+                                    created_at=datetime.now()
+                                )
+                                db.add(db_result)
+                                db.commit()
+                                successful_inserts += 1
+                            except Exception as individual_error:
+                                db.rollback()
+                                print(f"❌ 個別インサートエラー: {individual_error}")
+                    finally:
+                        db.close()
+
+                # タスク統計を更新
+                if successful_inserts > 0:
+                    self._update_task_statistics_threading()
+
+                print(f"✅ バルクDBインサート完了: {successful_inserts}/{len(items_data)}件 - Thread: {threading.current_thread().name}")
+                return successful_inserts
+
+            except Exception as e:
+                retry_count += 1
+                print(f"❌ バルクDBインサートエラー (試行 {retry_count}/{max_retries}): {e}")
+
+                if retry_count >= max_retries:
+                    print(f"❌ バルクDBインサート最終失敗: {e}")
+                    return 0
+                else:
+                    import time
+                    time.sleep(0.1 * retry_count)
+
+        return 0
+
+    def _bulk_insert_items(self, lines: List[str]) -> int:
+        """バルクDB挿入（通常版）"""
+        if not lines:
+            return 0
+
+        max_retries = 3
+        retry_count = 0
+        batch_size = 100  # バッチサイズ
+
+        while retry_count < max_retries:
+            try:
+                from ..database import SessionLocal, Result
+
+                # JSON解析とデータ準備
+                items_data = []
+                for line in lines:
+                    try:
+                        item_data = json.loads(line.strip())
+                        items_data.append(item_data)
+                    except json.JSONDecodeError as e:
+                        print(f"❌ JSON解析エラー: {e} - Line: {line[:50]}...")
+                        continue
+
+                if not items_data:
+                    print("❌ 有効なJSONデータがありません")
+                    return 0
+
+                successful_inserts = 0
+
+                # バッチごとに処理
+                for i in range(0, len(items_data), batch_size):
+                    batch = items_data[i:i + batch_size]
+
+                    db = SessionLocal()
+                    try:
+                        # バルクインサート用のデータを準備（重複防止機能付き）
+                        bulk_data = []
+                        seen_hashes = set()
+
+                        # 既存のハッシュ値を取得（重複防止）
+                        existing_hashes = set()
+                        try:
+                            existing_results = db.query(Result.data_hash).filter(
+                                Result.task_id == self.task_id,
+                                Result.data_hash.isnot(None)
+                            ).all()
+                            existing_hashes = {r.data_hash for r in existing_results}
+                            print(f"🔍 既存ハッシュ数: {len(existing_hashes)}")
+                        except Exception as e:
+                            print(f"⚠️ 既存ハッシュ取得エラー: {e}")
+
+                        for item_data in batch:
+                            # データハッシュを生成（改善版）
+                            import hashlib
+                            data_hash = None
+                            if isinstance(item_data, dict):
+                                product_url = item_data.get('product_url', '')
+                                ranking_position = item_data.get('ranking_position', '')
+                                page_number = item_data.get('page_number', '')
+
+                                # より確実なハッシュ生成
+                                if product_url and product_url.strip():
+                                    data_hash = hashlib.md5(product_url.strip().encode('utf-8')).hexdigest()
+                                    print(f"🔍 URL-based hash: {data_hash[:8]}... for URL: {product_url[:50]}...")
+                                elif ranking_position and str(ranking_position).strip():
+                                    # ページ番号も含めてより一意性を高める
+                                    hash_key = f"pos_{ranking_position}_page_{page_number}"
+                                    data_hash = hashlib.md5(hash_key.encode('utf-8')).hexdigest()
+                                    print(f"🔍 Position-based hash: {data_hash[:8]}... for key: {hash_key}")
+                                else:
+                                    # フォールバック：データ全体のハッシュ
+                                    data_str = json.dumps(item_data, sort_keys=True, ensure_ascii=False)
+                                    data_hash = hashlib.md5(data_str.encode('utf-8')).hexdigest()
+                                    print(f"🔍 Full-data hash: {data_hash[:8]}... for data length: {len(data_str)}")
+
+                            if not data_hash:
+                                print(f"⚠️ ハッシュ生成失敗: {item_data}")
+                                continue
+
+                            # 重複チェック
+                            if data_hash and (data_hash in existing_hashes or data_hash in seen_hashes):
+                                print(f"⚠️ 重複データをスキップ: {data_hash}")
+                                continue
+
+                            if data_hash:
+                                seen_hashes.add(data_hash)
+
+                            result_id = str(uuid.uuid4())
+                            bulk_data.append({
+                                'id': result_id,
+                                'task_id': self.task_id,
+                                'data': item_data,
+                                'data_hash': data_hash,  # ハッシュ値を追加
+                                'item_acquired_datetime': datetime.now(),
+                                'created_at': datetime.now()
+                            })
+
+                        # バルクインサート実行（data_hashを含む）
+                        if bulk_data:
+                            print(f"🔍 バルクインサート実行: {len(bulk_data)}件 (ハッシュ付き)")
+                            # デバッグ: 最初のデータのハッシュを確認
+                            if bulk_data:
+                                first_hash = bulk_data[0].get('data_hash', 'None')
+                                print(f"🔍 サンプルハッシュ: {first_hash}")
+
+                            db.bulk_insert_mappings(Result, bulk_data)
+                            db.commit()
+                        else:
+                            print("⚠️ バルクデータが空のためスキップ")
+
+                        successful_inserts += len(batch)
+                        print(f"✅ バルクDBインサート成功: {len(batch)}件 (累計: {successful_inserts}/{len(items_data)})")
+
+                    except Exception as e:
+                        db.rollback()
+                        print(f"❌ バルクDBインサートエラー (バッチ {i//batch_size + 1}): {e}")
+                        # バッチが失敗した場合は個別に処理（重複防止付き）
+                        for item_data in batch:
+                            try:
+                                # データハッシュを生成
+                                import hashlib
+                                data_hash = None
+                                if isinstance(item_data, dict):
+                                    product_url = item_data.get('product_url', '')
+                                    ranking_position = item_data.get('ranking_position', '')
+
+                                    if product_url:
+                                        data_hash = hashlib.md5(product_url.encode('utf-8')).hexdigest()
+                                    elif ranking_position:
+                                        data_hash = hashlib.md5(f"pos_{ranking_position}".encode('utf-8')).hexdigest()
+                                    else:
+                                        data_str = json.dumps(item_data, sort_keys=True)
+                                        data_hash = hashlib.md5(data_str.encode('utf-8')).hexdigest()
+
+                                # 重複チェック
+                                if data_hash:
+                                    existing = db.query(Result).filter(
+                                        Result.task_id == self.task_id,
+                                        Result.data_hash == data_hash
+                                    ).first()
+                                    if existing:
+                                        print(f"⚠️ 個別処理で重複データをスキップ: {data_hash}")
+                                        successful_inserts += 1  # 重複は成功とみなす
+                                        continue
+
+                                result_id = str(uuid.uuid4())
+                                db_result = Result(
+                                    id=result_id,
+                                    task_id=self.task_id,
+                                    data=item_data,
+                                    data_hash=data_hash,  # ハッシュ値を追加
+                                    item_acquired_datetime=datetime.now(),
+                                    created_at=datetime.now()
+                                )
+                                db.add(db_result)
+                                db.commit()
+                                successful_inserts += 1
+                            except Exception as individual_error:
+                                db.rollback()
+                                print(f"❌ 個別インサートエラー: {individual_error}")
+                    finally:
+                        db.close()
+
+                # タスク統計を更新
+                if successful_inserts > 0:
+                    self._update_task_statistics_safe()
+
+                print(f"✅ バルクDBインサート完了: {successful_inserts}/{len(items_data)}件")
+                return successful_inserts
+
+            except Exception as e:
+                retry_count += 1
+                print(f"❌ バルクDBインサートエラー (試行 {retry_count}/{max_retries}): {e}")
+
+                if retry_count >= max_retries:
+                    print(f"❌ バルクDBインサート最終失敗: {e}")
+                    return 0
+                else:
+                    import time
+                    time.sleep(0.1 * retry_count)
+
+        return 0
+
     def _update_task_statistics(self, db):
         """タスク統計を更新"""
         try:
@@ -713,8 +1278,21 @@ class ScrapyWatchdogMonitor:
                 # 結果数を取得
                 result_count = db.query(Result).filter(Result.task_id == self.task_id).count()
 
-                # タスク統計を更新
+                # タスク統計を更新（リクエスト数の正常化）
                 task.items_count = result_count
+
+                # リクエスト数の正常化（異常に大きい値を防止）
+                estimated_normal_requests = result_count + 20  # アイテム数 + 初期リクエスト数
+                current_requests = task.requests_count or 0
+
+                if current_requests <= estimated_normal_requests * 2:
+                    # 現在値が正常範囲内の場合はそのまま
+                    pass
+                else:
+                    # 異常に大きい場合は推定値に修正
+                    task.requests_count = estimated_normal_requests
+                    print(f"⚠️ Watchdog: Abnormal request count detected for task {self.task_id}, corrected to {estimated_normal_requests}")
+
                 task.updated_at = datetime.now()
 
                 db.commit()
@@ -738,8 +1316,13 @@ class ScrapyWatchdogMonitor:
                     # 結果数を取得
                     result_count = db.query(Result).filter(Result.task_id == self.task_id).count()
 
-                    # タスク統計を更新
-                    task.items_count = result_count
+                    # タスク統計を更新（重複防止：最大値のみ更新）
+                    task.items_count = max(result_count, task.items_count or 0)
+
+                    # リクエスト数は推定値と現在値の最大値
+                    estimated_requests = result_count + 15
+                    task.requests_count = max(estimated_requests, task.requests_count or 0)
+
                     task.updated_at = datetime.now()
 
                     db.commit()
@@ -767,8 +1350,13 @@ class ScrapyWatchdogMonitor:
                     # 結果数を取得
                     result_count = db.query(Result).filter(Result.task_id == self.task_id).count()
 
-                    # タスク統計を更新
-                    task.items_count = result_count
+                    # タスク統計を更新（重複防止：最大値のみ更新）
+                    task.items_count = max(result_count, task.items_count or 0)
+
+                    # リクエスト数は推定値と現在値の最大値
+                    estimated_requests = result_count + 15
+                    task.requests_count = max(estimated_requests, task.requests_count or 0)
+
                     task.updated_at = datetime.now()
 
                     db.commit()

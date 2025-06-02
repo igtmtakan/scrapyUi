@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, Column, String, Integer, DateTime, Text, JSON, ForeignKey, Enum, Boolean, UniqueConstraint
+from sqlalchemy import create_engine, Column, String, Integer, DateTime, Text, JSON, ForeignKey, Enum, Boolean, UniqueConstraint, Index
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from sqlalchemy.sql import func
@@ -22,9 +22,21 @@ def create_database_engine():
             "echo": db_config.echo,
         }
 
-        # SQLite固有設定
+        # SQLite固有設定（高負荷対応）
         if db_config.type == DatabaseType.SQLITE:
-            engine_kwargs["connect_args"] = {"check_same_thread": False}
+            engine_kwargs["connect_args"] = {
+                "check_same_thread": False,
+                "timeout": 30,  # 30秒のタイムアウト
+                "isolation_level": None,  # autocommitモード
+            }
+            # SQLite用のプール設定
+            engine_kwargs.update({
+                "pool_size": 20,  # 接続プールサイズを増加
+                "max_overflow": 30,  # オーバーフロー接続数を増加
+                "pool_timeout": 30,  # プールタイムアウト
+                "pool_recycle": 3600,  # 1時間で接続をリサイクル
+                "pool_pre_ping": True,  # 接続の事前チェック
+            })
         else:
             # MySQL/PostgreSQL用のプール設定
             engine_kwargs.update({
@@ -178,11 +190,19 @@ class Result(Base):
     crawl_start_datetime = Column(DateTime(timezone=True), nullable=True)  # クロールスタート日時
     item_acquired_datetime = Column(DateTime(timezone=True), nullable=True)  # アイテム取得日時
 
+    # データの重複を防ぐためのハッシュ値
+    data_hash = Column(String, nullable=True, index=True)
+
     # Foreign Keys
     task_id = Column(String, ForeignKey("tasks.id"), nullable=False)
 
     # Relationships
     task = relationship("Task", back_populates="results")
+
+    # ユニーク制約（同じタスクで同じデータハッシュは重複不可）
+    __table_args__ = (
+        Index('idx_task_data_hash', 'task_id', 'data_hash', unique=True),
+    )
 
 class Log(Base):
     __tablename__ = "logs"

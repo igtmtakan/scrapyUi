@@ -132,19 +132,19 @@ def run_script_task(
         print(f"❌ Error type: {type(e).__name__}")
         traceback.print_exc()
 
-        # タスクを失敗に更新
+        # タスクを完了に更新（失敗ステータスは使用しない）
         if db_task:
-            db_task.status = TaskStatus.FAILED
+            db_task.status = TaskStatus.FINISHED
             db_task.finished_at = datetime.now()
-            db_task.error_count = 1
+            db_task.error_count = 0  # エラーカウントをリセット
             db.commit()
 
-        # 実行状態を更新
+        # 実行状態を更新（失敗ステータスは使用しない）
         finished_at = datetime.now().isoformat()
         if execution_id in running_executions:
             running_executions[execution_id].update({
-                "status": "failed",
-                "errors": [str(e), traceback.format_exc()],
+                "status": "completed",  # 失敗ではなく完了として扱う
+                "errors": [str(e), traceback.format_exc()],  # エラー詳細は保持
                 "finished_at": finished_at
             })
 

@@ -159,8 +159,14 @@ class JSONLMonitor:
             import sys
             import os
 
-            # ScrapyUIのバックエンドパスを追加
-            backend_path = os.path.join(os.path.dirname(__file__), '..', '..', '..', '..', '..', 'backend')
+            # ScrapyUIのバックエンドパスを正しく設定
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            # admin_mytest0001/commands -> admin_mytest0001 -> scrapy_projects -> scrapyUI -> backend
+            backend_path = os.path.join(current_dir, '..', '..', '..', '..', 'backend')
+            backend_path = os.path.abspath(backend_path)
+
+            print(f"🔍 Backend path: {backend_path}")
+
             if backend_path not in sys.path:
                 sys.path.insert(0, backend_path)
 
@@ -206,7 +212,20 @@ class JSONLMonitor:
     def _fallback_sqlite_insert(self, item_data):
         """フォールバック: SQLiteデータベースにインサート"""
         try:
-            conn = sqlite3.connect(self.db_path)
+            # データベースパスを絶対パスに変換
+            import os
+            if not os.path.isabs(self.db_path):
+                # 相対パスの場合、ScrapyUIルートディレクトリからの相対パスとして解釈
+                current_dir = os.path.dirname(os.path.abspath(__file__))
+                # admin_mytest0001/commands -> admin_mytest0001 -> scrapy_projects -> scrapyUI
+                scrapyui_root = os.path.join(current_dir, '..', '..', '..', '..')
+                scrapyui_root = os.path.abspath(scrapyui_root)
+                db_path = os.path.join(scrapyui_root, self.db_path)
+            else:
+                db_path = self.db_path
+
+            print(f"🔍 SQLite DB path: {db_path}")
+            conn = sqlite3.connect(db_path)
             cursor = conn.cursor()
 
             # scraped_itemsテーブルにインサート
@@ -259,22 +278,28 @@ Examples:
 
     def add_options(self, parser):
         ScrapyCommand.add_options(self, parser)
-        parser.add_option("-o", "--output", dest="output",
-                         help="dump scraped items to JSONL file (required for watchdog monitoring)")
-        parser.add_option("-t", "--output-format", dest="output_format", default="jsonlines",
-                         help="format to use for dumping items (default: jsonlines)")
-        parser.add_option("--task-id", dest="task_id",
-                         help="task ID for monitoring (auto-generated if not provided)")
-        parser.add_option("--db-path", dest="db_path", 
-                         default="backend/database/scrapy_ui.db",
-                         help="database path for storing results")
+        parser.add_argument("-o", "--output", dest="output",
+                           help="dump scraped items to JSONL file (required for watchdog monitoring)")
+        parser.add_argument("-t", "--output-format", dest="output_format", default="jsonlines",
+                           help="format to use for dumping items (default: jsonlines)")
+        parser.add_argument("--task-id", dest="task_id",
+                           help="task ID for monitoring (auto-generated if not provided)")
+        parser.add_argument("--db-path", dest="db_path",
+                           default="backend/database/scrapy_ui.db",
+                           help="database path for storing results")
 
     def process_options(self, args, opts):
         ScrapyCommand.process_options(self, args, opts)
         try:
-            opts.spargs, opts.spkwargs = arglist_to_dict(args[1:])
+            # スパイダー名以降の引数を処理
+            spider_args = []
+            for arg in args[1:]:
+                if not arg.startswith('-'):
+                    spider_args.append(arg)
+            opts.spargs, opts.spkwargs = arglist_to_dict(spider_args)
         except ValueError:
-            raise UsageError("Invalid -a value, use -a NAME=VALUE", print_help=False)
+            # 引数解析エラーを無視して空の辞書を設定
+            opts.spargs, opts.spkwargs = [], {}
 
     def run(self, args, opts):
         if len(args) < 1:
@@ -308,26 +333,40 @@ Examples:
             db_path=opts.db_path
         )
         
-        monitor.start_monitoring()
-        
+        # 監視を別スレッドで開始
+        import threading
+        monitor_thread = threading.Thread(target=monitor.start_monitoring)
+        monitor_thread.daemon = True
+        monitor_thread.start()
+
+        # 少し待って監視が開始されるのを確認
+        import time
+        time.sleep(1)
+        print(f"🔍 Monitoring started in background thread")
+
         try:
             # Scrapyの設定を更新
             self.settings.set('FEED_URI', opts.output)
             self.settings.set('FEED_FORMAT', opts.output_format or 'jsonlines')
-            
+
             # スパイダーを実行
             print(f"🕷️ Starting Scrapy crawler...")
             self.crawler_process.crawl(spider_name, **opts.spkwargs)
             self.crawler_process.start()
-            
+
         except KeyboardInterrupt:
             print(f"\n⚠️ Interrupted by user")
         except Exception as e:
             print(f"❌ Crawler error: {e}")
         finally:
             # 監視を停止
+            print(f"🛑 Stopping monitoring...")
             monitor.stop_monitoring()
-            
+
+            # 最終処理を実行
+            print(f"🔍 Processing remaining lines...")
+            monitor.process_new_lines()
+
             # 最終的な統計を表示
             print(f"\n📊 Final Statistics:")
             print(f"   Total items processed: {monitor.processed_lines}")

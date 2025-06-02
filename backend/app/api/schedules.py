@@ -100,15 +100,47 @@ async def get_schedules(
         # 最新タスクの情報を含める
         latest_task_dict = None
         if latest_task:
+            # Rich progressと同じ方法で全統計情報を取得
+            from ..services.scrapy_service import ScrapyPlaywrightService
+            scrapy_service = ScrapyPlaywrightService()
+
+            # Scrapyの統計ファイルから全パラメータを取得
+            full_stats = scrapy_service._get_scrapy_full_stats(latest_task.id, latest_task.project_id)
+
+            # 基本統計情報（優先順位：Scrapy統計 > データベース値 > 0）
+            final_items = full_stats.get('items_count', 0) if full_stats else (latest_task.items_count or 0)
+            final_requests = full_stats.get('requests_count', 0) if full_stats else (latest_task.requests_count or 0)
+            final_responses = full_stats.get('responses_count', 0) if full_stats else 0
+            final_errors = full_stats.get('errors_count', 0) if full_stats else (latest_task.error_count or 0)
+
+            # Rich progress統計情報に基づくステータス再判定
+            original_status = latest_task.status.value if hasattr(latest_task.status, 'value') else latest_task.status
+            corrected_status = original_status
+
+            # 失敗と判定されているタスクでも、アイテムが取得できていれば成功に修正
+            if original_status == 'FAILED' and final_items > 0:
+                corrected_status = 'FINISHED'
+                print(f"🔧 Schedule status correction: Task {latest_task.id[:8]}... FAILED → FINISHED (items: {final_items})")
+
+            # キャンセルされたタスクでも、アイテムが取得できていれば成功に修正
+            elif original_status == 'CANCELLED' and final_items > 0:
+                corrected_status = 'FINISHED'
+                print(f"🔧 Schedule status correction: Task {latest_task.id[:8]}... CANCELLED → FINISHED (items: {final_items})")
+
             latest_task_dict = {
                 "id": latest_task.id,
-                "status": latest_task.status,
-                "items_count": latest_task.items_count,
-                "requests_count": latest_task.requests_count,
-                "error_count": latest_task.error_count,
+                "status": corrected_status,
+                "original_status": original_status,
+                "status_corrected": (corrected_status != original_status),
+                "items_count": final_items,
+                "requests_count": final_requests,
+                "responses_count": final_responses,
+                "error_count": final_errors,
                 "started_at": latest_task.started_at,
                 "finished_at": latest_task.finished_at,
-                "created_at": latest_task.created_at
+                "created_at": latest_task.created_at,
+                "rich_stats": full_stats,
+                "scrapy_stats_used": bool(full_stats)
             }
 
         schedule_dict = {
@@ -422,13 +454,13 @@ async def update_schedule(
     "/{schedule_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="スケジュール削除",
-    description="指定されたスケジュールを削除します。"
+    description="指定されたスケジュールを削除します。関連する待機タスクも削除されます。"
 )
 async def delete_schedule(schedule_id: str, db: Session = Depends(get_db)):
     """
     ## スケジュール削除
 
-    指定されたスケジュールを削除します。
+    指定されたスケジュールを削除します。関連する待機タスクも削除されます。
 
     ### パラメータ
     - **schedule_id**: 削除するスケジュールのID
@@ -445,8 +477,38 @@ async def delete_schedule(schedule_id: str, db: Session = Depends(get_db)):
             detail="Schedule not found"
         )
 
-    db.delete(db_schedule)
-    db.commit()
+    try:
+        # スケジュールに関連する待機中タスクを削除
+        related_pending_tasks = db.query(DBTask).filter(
+            DBTask.project_id == db_schedule.project_id,
+            DBTask.spider_id == db_schedule.spider_id,
+            DBTask.status == TaskStatus.PENDING
+        ).all()
+
+        deleted_tasks_count = 0
+        if related_pending_tasks:
+            print(f"🗑️ Deleting {len(related_pending_tasks)} pending tasks related to schedule {db_schedule.name}")
+            for task in related_pending_tasks:
+                print(f"  - Deleting pending task: {task.id[:8]}... (created: {task.created_at})")
+                db.delete(task)
+                deleted_tasks_count += 1
+
+        # スケジュール自体を削除
+        print(f"🗑️ Deleting schedule: {db_schedule.name} (ID: {db_schedule.id})")
+        db.delete(db_schedule)
+
+        # 変更をコミット
+        db.commit()
+
+        print(f"✅ Successfully deleted schedule and {deleted_tasks_count} related pending tasks")
+
+    except Exception as e:
+        print(f"⚠️ Error deleting schedule and related tasks: {str(e)}")
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete schedule and related tasks: {str(e)}"
+        )
 
     return None
 
@@ -563,6 +625,127 @@ async def toggle_schedule(schedule_id: str, db: Session = Depends(get_db)):
         "schedule_id": schedule_id,
         "is_active": db_schedule.is_active
     }
+
+@router.get(
+    "/pending-tasks/count",
+    summary="待機タスク数取得",
+    description="現在待機中のタスク数を取得します。"
+)
+async def get_pending_tasks_count(db: Session = Depends(get_db)):
+    """待機中のタスク数を取得"""
+    try:
+        pending_count = db.query(DBTask).filter(DBTask.status == TaskStatus.PENDING).count()
+
+        # 古いタスク（24時間以上前）の数も取得
+        from datetime import datetime, timedelta
+        cutoff_time = datetime.now() - timedelta(hours=24)
+        old_pending_count = db.query(DBTask).filter(
+            DBTask.status == TaskStatus.PENDING,
+            DBTask.created_at < cutoff_time
+        ).count()
+
+        return {
+            "total_pending": pending_count,
+            "old_pending": old_pending_count,
+            "recent_pending": pending_count - old_pending_count
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get pending tasks count: {str(e)}"
+        )
+
+@router.post(
+    "/pending-tasks/reset",
+    summary="待機タスクリセット",
+    description="古い待機タスクと孤立タスクをキャンセルします。"
+)
+async def reset_pending_tasks(
+    hours_back: int = 24,
+    cleanup_orphaned: bool = True,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_active_user)
+):
+    """古い待機タスクと孤立タスクをキャンセル"""
+    try:
+        from datetime import datetime, timedelta
+
+        # 管理者権限チェック
+        is_admin = (current_user.role == UserRole.ADMIN or
+                    current_user.role == "ADMIN" or
+                    current_user.role == "admin")
+
+        if not is_admin:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Admin privileges required"
+            )
+
+        cancelled_count = 0
+        orphaned_count = 0
+
+        # 1. 指定時間以上前の待機中タスクを取得
+        cutoff_time = datetime.now() - timedelta(hours=hours_back)
+        old_pending_tasks = db.query(DBTask).filter(
+            DBTask.status == TaskStatus.PENDING,
+            DBTask.created_at < cutoff_time
+        ).all()
+
+        print(f"🗑️ Cancelling {len(old_pending_tasks)} old pending tasks (older than {hours_back} hours)")
+        for task in old_pending_tasks:
+            print(f"  - Cancelling old task: {task.id[:8]}... (created: {task.created_at})")
+            task.status = TaskStatus.CANCELLED
+            task.finished_at = datetime.now()
+            cancelled_count += 1
+
+        # 2. 孤立した待機タスクのクリーンアップ（オプション）
+        if cleanup_orphaned:
+            # 関連するスケジュールが存在しない待機タスクを取得
+            all_pending_tasks = db.query(DBTask).filter(DBTask.status == TaskStatus.PENDING).all()
+
+            for task in all_pending_tasks:
+                # 対応するスケジュールが存在するかチェック
+                related_schedule = db.query(DBSchedule).filter(
+                    DBSchedule.project_id == task.project_id,
+                    DBSchedule.spider_id == task.spider_id
+                ).first()
+
+                if not related_schedule:
+                    print(f"🗑️ Cancelling orphaned task: {task.id[:8]}... (no related schedule)")
+                    task.status = TaskStatus.CANCELLED
+                    task.finished_at = datetime.now()
+                    orphaned_count += 1
+
+        db.commit()
+
+        # 残りの待機タスク数を取得
+        remaining_pending = db.query(DBTask).filter(DBTask.status == TaskStatus.PENDING).count()
+
+        message_parts = []
+        if cancelled_count > 0:
+            message_parts.append(f"{cancelled_count} old pending tasks")
+        if orphaned_count > 0:
+            message_parts.append(f"{orphaned_count} orphaned tasks")
+
+        message = f"Successfully cancelled {' and '.join(message_parts) if message_parts else 'no tasks'}"
+
+        return {
+            "message": message,
+            "cancelled_count": cancelled_count,
+            "orphaned_count": orphaned_count,
+            "total_cancelled": cancelled_count + orphaned_count,
+            "remaining_pending": remaining_pending,
+            "hours_back": hours_back,
+            "cleanup_orphaned": cleanup_orphaned
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to reset pending tasks: {str(e)}"
+        )
 
 @router.get(
     "/scheduler/status",

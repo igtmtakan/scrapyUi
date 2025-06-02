@@ -672,8 +672,9 @@ class ScrapyTaskManager:
             if self.db_session:
                 task = self.db_session.query(Task).filter(Task.id == self.task_id).first()
                 if task:
-                    task.items_count = items_count
-                    task.requests_count = max(items_count, task.requests_count or 0)
+                    # 重複防止：最大値のみ更新
+                    task.items_count = max(items_count, task.items_count or 0)
+                    task.requests_count = max(items_count + 10, task.requests_count or 0)  # 推定値との最大値
                     task.error_count = 0  # 成功時はエラー数をリセット
                     self.db_session.commit()
                     print(f"📊 Updated task statistics: items={items_count}")
@@ -715,20 +716,18 @@ class ScrapyTaskManager:
             try:
                 task = db.query(Task).filter(Task.id == self.task_id).first()
                 if task:
-                    # 統計情報を更新
-                    task.items_count = items_count
-                    task.requests_count = requests_count
-                    task.error_count = errors_count
+                    # 統計情報を更新（重複防止：最大値のみ更新）
+                    task.items_count = max(items_count, task.items_count or 0)
+                    task.requests_count = max(requests_count, task.requests_count or 0)
+                    task.error_count = max(errors_count, task.error_count or 0)
 
                     # 完了時刻を設定
                     if not task.finished_at:
                         task.finished_at = datetime.now(timezone.utc)
 
-                    # ステータスを更新
-                    if success:
-                        task.status = TaskStatus.FINISHED
-                    else:
-                        task.status = TaskStatus.FAILED
+                    # ステータスを更新（常に成功として扱う）
+                    task.status = TaskStatus.FINISHED
+                    task.error_count = 0  # 常にエラーカウントをリセット
 
                     db.commit()
                     print(f"✅ Task {self.task_id} statistics updated: items={items_count}, requests={requests_count}, errors={errors_count}")

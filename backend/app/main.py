@@ -21,7 +21,7 @@ from .middleware.error_middleware import (
     PerformanceLoggingMiddleware
 )
 
-from .api import projects, spiders, tasks, results, schedules, notifications, auth, proxies, ai, admin, script_runner, project_files, performance, system, database_config, settings, timezone
+from .api import projects, spiders, tasks, results, schedules, notifications, auth, proxies, ai, admin, script_runner, project_files, performance, system, database_config, settings, timezone, websocket_progress
 # from .api import shell, extensions  # 一時的に無効化
 from .api.routes import nodejs_integration
 # from .api import settings
@@ -454,6 +454,9 @@ async def websocket_terminal(websocket: WebSocket):
 
 # WebSocketエンドポイント（一般的なパターンは後に登録）
 app.include_router(websocket_endpoints.router, prefix="/ws")
+
+# Rich進捗バー用WebSocketエンドポイント
+app.include_router(websocket_progress.router, prefix="")
 
 # リアルタイム進捗監視WebSocketエンドポイント
 from .services.realtime_websocket_manager import realtime_websocket_manager

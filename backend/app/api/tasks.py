@@ -158,10 +158,105 @@ async def get_tasks(
         task_dict['project'] = project
         task_dict['spider'] = spider
         task_dict['spider_name'] = spider.name  # フロントエンド互換性のため追加
-        task_dict['items_scraped'] = task.items_count or 0  # フロントエンド互換性のため追加
-        task_dict['errors_count'] = task.error_count or 0  # フロントエンド互換性のため追加
+
+        # Rich progressと同じ方法で全統計情報を取得
+        from ..services.scrapy_service import ScrapyPlaywrightService
+        scrapy_service = ScrapyPlaywrightService()
+
+        # Scrapyの統計ファイルから全パラメータを取得
+        full_stats = scrapy_service._get_scrapy_full_stats(task.id, task.project_id)
+
+        # 基本統計情報（優先順位：Scrapy統計 > データベース値 > 0）
+        final_items = full_stats.get('items_count', 0) if full_stats else (task.items_count or 0)
+        final_requests = full_stats.get('requests_count', 0) if full_stats else (task.requests_count or 0)
+        final_responses = full_stats.get('responses_count', 0) if full_stats else 0
+        final_errors = full_stats.get('errors_count', 0) if full_stats else (task.error_count or 0)
+
+        # 基本フィールド
+        task_dict['items_scraped'] = final_items  # フロントエンド互換性
+        task_dict['items_count'] = final_items    # データベースフィールド
+        task_dict['requests_count'] = final_requests
+        task_dict['responses_count'] = final_responses
+        task_dict['errors_count'] = final_errors
         task_dict['results_count'] = len(task.results) if task.results else 0
         task_dict['logs_count'] = len(task.logs) if task.logs else 0
+
+        # Rich progress全統計情報
+        if full_stats:
+            task_dict['rich_stats'] = {
+                # 基本カウンター
+                'items_count': full_stats.get('items_count', 0),
+                'requests_count': full_stats.get('requests_count', 0),
+                'responses_count': full_stats.get('responses_count', 0),
+                'errors_count': full_stats.get('errors_count', 0),
+
+                # 時間情報
+                'start_time': full_stats.get('start_time'),
+                'finish_time': full_stats.get('finish_time'),
+                'elapsed_time_seconds': full_stats.get('elapsed_time_seconds', 0),
+
+                # 速度メトリクス
+                'items_per_second': full_stats.get('items_per_second', 0),
+                'requests_per_second': full_stats.get('requests_per_second', 0),
+                'items_per_minute': full_stats.get('items_per_minute', 0),
+
+                # 成功率・エラー率
+                'success_rate': full_stats.get('success_rate', 0),
+                'error_rate': full_stats.get('error_rate', 0),
+
+                # 詳細統計
+                'downloader_request_bytes': full_stats.get('downloader_request_bytes', 0),
+                'downloader_response_bytes': full_stats.get('downloader_response_bytes', 0),
+                'downloader_response_status_count_200': full_stats.get('downloader_response_status_count_200', 0),
+                'downloader_response_status_count_404': full_stats.get('downloader_response_status_count_404', 0),
+                'downloader_response_status_count_500': full_stats.get('downloader_response_status_count_500', 0),
+
+                # メモリ・パフォーマンス
+                'memusage_startup': full_stats.get('memusage_startup', 0),
+                'memusage_max': full_stats.get('memusage_max', 0),
+
+                # ログレベル統計
+                'log_count_debug': full_stats.get('log_count_debug', 0),
+                'log_count_info': full_stats.get('log_count_info', 0),
+                'log_count_warning': full_stats.get('log_count_warning', 0),
+                'log_count_error': full_stats.get('log_count_error', 0),
+                'log_count_critical': full_stats.get('log_count_critical', 0),
+
+                # スケジューラー統計
+                'scheduler_enqueued': full_stats.get('scheduler_enqueued', 0),
+                'scheduler_dequeued': full_stats.get('scheduler_dequeued', 0),
+
+                # 重複フィルター
+                'dupefilter_filtered': full_stats.get('dupefilter_filtered', 0),
+
+                # ファイル統計
+                'file_count': full_stats.get('file_count', 0),
+                'file_status_count_downloaded': full_stats.get('file_status_count_downloaded', 0)
+            }
+        else:
+            task_dict['rich_stats'] = None
+
+        # Rich progressと同じ統計情報が使用されているかのフラグ
+        task_dict['scrapy_stats_used'] = bool(full_stats)
+
+        # Rich progress統計情報に基づくステータス再判定
+        original_status = task.status.value if hasattr(task.status, 'value') else task.status
+        corrected_status = original_status
+
+        # 失敗と判定されているタスクでも、アイテムが取得できていれば成功に修正
+        if original_status == 'FAILED' and final_items > 0:
+            corrected_status = 'FINISHED'
+            print(f"🔧 Status correction: Task {task.id[:8]}... FAILED → FINISHED (items: {final_items})")
+
+        # キャンセルされたタスクでも、アイテムが取得できていれば成功に修正
+        elif original_status == 'CANCELLED' and final_items > 0:
+            corrected_status = 'FINISHED'
+            print(f"🔧 Status correction: Task {task.id[:8]}... CANCELLED → FINISHED (items: {final_items})")
+
+        # 修正されたステータスを設定
+        task_dict['status'] = corrected_status
+        task_dict['original_status'] = original_status  # 元のステータスも保持
+        task_dict['status_corrected'] = (corrected_status != original_status)
 
         tasks_with_details.append(task_dict)
 
@@ -248,10 +343,105 @@ async def get_task(
     task_dict['project'] = project
     task_dict['spider'] = spider
     task_dict['spider_name'] = spider.name  # フロントエンド互換性のため追加
-    task_dict['items_scraped'] = task.items_count or 0  # フロントエンド互換性のため追加
-    task_dict['errors_count'] = task.error_count or 0  # フロントエンド互換性のため追加
+
+    # Rich progressと同じ方法で全統計情報を取得
+    from ..services.scrapy_service import ScrapyPlaywrightService
+    scrapy_service = ScrapyPlaywrightService()
+
+    # Scrapyの統計ファイルから全パラメータを取得
+    full_stats = scrapy_service._get_scrapy_full_stats(task.id, task.project_id)
+
+    # 基本統計情報（優先順位：Scrapy統計 > データベース値 > 0）
+    final_items = full_stats.get('items_count', 0) if full_stats else (task.items_count or 0)
+    final_requests = full_stats.get('requests_count', 0) if full_stats else (task.requests_count or 0)
+    final_responses = full_stats.get('responses_count', 0) if full_stats else 0
+    final_errors = full_stats.get('errors_count', 0) if full_stats else (task.error_count or 0)
+
+    # 基本フィールド
+    task_dict['items_scraped'] = final_items  # フロントエンド互換性
+    task_dict['items_count'] = final_items    # データベースフィールド
+    task_dict['requests_count'] = final_requests
+    task_dict['responses_count'] = final_responses
+    task_dict['errors_count'] = final_errors
     task_dict['results_count'] = len(task.results) if task.results else 0
     task_dict['logs_count'] = len(task.logs) if task.logs else 0
+
+    # Rich progress全統計情報
+    if full_stats:
+        task_dict['rich_stats'] = {
+            # 基本カウンター
+            'items_count': full_stats.get('items_count', 0),
+            'requests_count': full_stats.get('requests_count', 0),
+            'responses_count': full_stats.get('responses_count', 0),
+            'errors_count': full_stats.get('errors_count', 0),
+
+            # 時間情報
+            'start_time': full_stats.get('start_time'),
+            'finish_time': full_stats.get('finish_time'),
+            'elapsed_time_seconds': full_stats.get('elapsed_time_seconds', 0),
+
+            # 速度メトリクス
+            'items_per_second': full_stats.get('items_per_second', 0),
+            'requests_per_second': full_stats.get('requests_per_second', 0),
+            'items_per_minute': full_stats.get('items_per_minute', 0),
+
+            # 成功率・エラー率
+            'success_rate': full_stats.get('success_rate', 0),
+            'error_rate': full_stats.get('error_rate', 0),
+
+            # 詳細統計
+            'downloader_request_bytes': full_stats.get('downloader_request_bytes', 0),
+            'downloader_response_bytes': full_stats.get('downloader_response_bytes', 0),
+            'downloader_response_status_count_200': full_stats.get('downloader_response_status_count_200', 0),
+            'downloader_response_status_count_404': full_stats.get('downloader_response_status_count_404', 0),
+            'downloader_response_status_count_500': full_stats.get('downloader_response_status_count_500', 0),
+
+            # メモリ・パフォーマンス
+            'memusage_startup': full_stats.get('memusage_startup', 0),
+            'memusage_max': full_stats.get('memusage_max', 0),
+
+            # ログレベル統計
+            'log_count_debug': full_stats.get('log_count_debug', 0),
+            'log_count_info': full_stats.get('log_count_info', 0),
+            'log_count_warning': full_stats.get('log_count_warning', 0),
+            'log_count_error': full_stats.get('log_count_error', 0),
+            'log_count_critical': full_stats.get('log_count_critical', 0),
+
+            # スケジューラー統計
+            'scheduler_enqueued': full_stats.get('scheduler_enqueued', 0),
+            'scheduler_dequeued': full_stats.get('scheduler_dequeued', 0),
+
+            # 重複フィルター
+            'dupefilter_filtered': full_stats.get('dupefilter_filtered', 0),
+
+            # ファイル統計
+            'file_count': full_stats.get('file_count', 0),
+            'file_status_count_downloaded': full_stats.get('file_status_count_downloaded', 0)
+        }
+    else:
+        task_dict['rich_stats'] = None
+
+    # Rich progressと同じ統計情報が使用されているかのフラグ
+    task_dict['scrapy_stats_used'] = bool(full_stats)
+
+    # Rich progress統計情報に基づくステータス再判定
+    original_status = task.status.value if hasattr(task.status, 'value') else task.status
+    corrected_status = original_status
+
+    # 失敗と判定されているタスクでも、アイテムが取得できていれば成功に修正
+    if original_status == 'FAILED' and final_items > 0:
+        corrected_status = 'FINISHED'
+        print(f"🔧 Status correction: Task {task.id[:8]}... FAILED → FINISHED (items: {final_items})")
+
+    # キャンセルされたタスクでも、アイテムが取得できていれば成功に修正
+    elif original_status == 'CANCELLED' and final_items > 0:
+        corrected_status = 'FINISHED'
+        print(f"🔧 Status correction: Task {task.id[:8]}... CANCELLED → FINISHED (items: {final_items})")
+
+    # 修正されたステータスを設定
+    task_dict['status'] = corrected_status
+    task_dict['original_status'] = original_status  # 元のステータスも保持
+    task_dict['status_corrected'] = (corrected_status != original_status)
 
     return task_dict
 
@@ -1734,6 +1924,109 @@ async def download_task_results_file(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error downloading result file: {str(e)}"
+        )
+
+@router.post(
+    "/{task_id}/results/cleanup-duplicates",
+    summary="重複データクリーンアップ",
+    description="タスクの重複データを削除し、統計情報を修正します。"
+)
+async def cleanup_task_duplicates(
+    task_id: str,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_active_user)
+):
+    """
+    ## 重複データクリーンアップ
+
+    指定されたタスクの重複データを削除し、統計情報を修正します。
+
+    ### パラメータ
+    - **task_id**: クリーンアップするタスクのID
+
+    ### レスポンス
+    - **200**: クリーンアップ結果
+    - **404**: タスクが見つからない場合
+    - **500**: サーバーエラー
+    """
+    # 管理者権限チェック
+    is_admin = (current_user.role == UserRole.ADMIN or
+                current_user.role == "ADMIN" or
+                current_user.role == "admin")
+
+    if not is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin privileges required"
+        )
+
+    # タスクの存在確認
+    task = db.query(DBTask).filter(DBTask.id == task_id).first()
+    if not task:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found"
+        )
+
+    try:
+        import json
+        from collections import defaultdict
+
+        print(f"🧹 Starting duplicate cleanup for task {task_id[:8]}...")
+
+        # 現在の結果レコードを取得
+        results = db.query(DBResult).filter(DBResult.task_id == task_id).all()
+        original_count = len(results)
+
+        print(f"📊 Original records: {original_count}")
+
+        # データの重複を検出
+        data_groups = defaultdict(list)
+        for result in results:
+            if result.data:
+                # データをJSON文字列として正規化
+                data_key = json.dumps(result.data, sort_keys=True)
+                data_groups[data_key].append(result)
+
+        # 重複データを削除（最初のレコードを残す）
+        deleted_count = 0
+        kept_records = []
+
+        for data_key, group in data_groups.items():
+            if len(group) > 1:
+                # 最初のレコードを保持、残りを削除
+                kept_records.append(group[0])
+                for duplicate in group[1:]:
+                    print(f"🗑️ Deleting duplicate record: {duplicate.id}")
+                    db.delete(duplicate)
+                    deleted_count += 1
+            else:
+                kept_records.append(group[0])
+
+        # タスクの統計情報を更新
+        final_count = len(kept_records)
+        task.items_count = final_count
+
+        print(f"📈 Updated task items_count: {original_count} → {final_count}")
+
+        # 変更をコミット
+        db.commit()
+
+        return {
+            "task_id": task_id,
+            "original_count": original_count,
+            "final_count": final_count,
+            "deleted_count": deleted_count,
+            "duplicate_groups": len([g for g in data_groups.values() if len(g) > 1]),
+            "message": f"Successfully cleaned up {deleted_count} duplicate records"
+        }
+
+    except Exception as e:
+        db.rollback()
+        print(f"❌ Cleanup failed: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to cleanup duplicates: {str(e)}"
         )
 
 @router.post(
