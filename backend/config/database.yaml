@@ -1,6 +1,11 @@
 # ScrapyUI Database Configuration
 # データベース設定ファイル
 
+# 使用するデータベース環境を指定
+# コマンドライン: scrapyui -c database.yaml --database development
+# 環境変数: SCRAPY_UI_DATABASE=development
+usedatabase: default
+
 # デフォルト設定: SQLite（backend/database/ディレクトリ内）
 default:
   type: "sqlite"
@@ -49,6 +54,19 @@ mysql_example:
   echo: false
   pool_size: 10
   max_overflow: 20
+
+# MySQL本番設定（使用する場合はdefaultセクションを置き換え）
+mysql_production:
+  type: "mysql"
+  host: "localhost"
+  port: 3306
+  database: "scrapy_ui_prod"
+  username: "scrapy_user"
+  password: "your_secure_password"
+  charset: "utf8mb4"
+  echo: false
+  pool_size: 15
+  max_overflow: 30
 
 # PostgreSQL設定例
 postgresql_example:

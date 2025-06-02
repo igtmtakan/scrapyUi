@@ -94,6 +94,7 @@ class DatabaseConfigManager:
     def __init__(self, config_file: Optional[str] = None):
         self.config_file = config_file or self._get_default_config_file()
         self.configs: Dict[str, DatabaseConfig] = {}
+        self.default_database = "default"  # デフォルトで使用するデータベース環境
         self.load_config()
 
     def _get_default_config_file(self) -> str:
@@ -106,6 +107,10 @@ class DatabaseConfigManager:
         try:
             with open(self.config_file, 'r', encoding='utf-8') as f:
                 config_data = yaml.safe_load(f)
+
+            # usedatabase設定を読み込み
+            if 'usedatabase' in config_data:
+                self.default_database = config_data['usedatabase']
 
             for env_name, config in config_data.items():
                 if isinstance(config, dict) and 'type' in config:
@@ -246,5 +251,29 @@ class DatabaseConfigManager:
 db_config_manager = DatabaseConfigManager()
 
 def get_database_config(environment: Optional[str] = None) -> DatabaseConfig:
-    """データベース設定を取得する便利関数"""
+    """データベース設定を取得
+
+    Args:
+        environment: 使用する環境名。Noneの場合は以下の優先順位で決定:
+                    1. 環境変数 SCRAPY_UI_DATABASE
+                    2. コマンドライン引数 --database
+                    3. database.yamlのusedatabase設定
+                    4. "default"
+    """
+    if environment is None:
+        # 環境変数から取得
+        environment = os.getenv('SCRAPY_UI_DATABASE')
+
+        # コマンドライン引数から取得（後で実装）
+        if environment is None:
+            environment = getattr(get_database_config, '_cli_database', None)
+
+        # database.yamlのusedatabase設定から取得
+        if environment is None:
+            environment = db_config_manager.default_database
+
+        # 最終的なフォールバック
+        if environment is None:
+            environment = "default"
+
     return db_config_manager.get_config(environment)
