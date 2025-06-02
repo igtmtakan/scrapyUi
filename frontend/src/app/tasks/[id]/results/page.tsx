@@ -152,7 +152,7 @@ export default function TaskResultsPage() {
     }
   };
 
-  const handleFileDownload = async (format: 'jsonl' | 'json' | 'csv' | 'excel' | 'xml') => {
+  const handleFileDownload = async (format: 'jsonl') => {
     try {
       setIsDownloading(format);
 
@@ -272,26 +272,17 @@ export default function TaskResultsPage() {
                 ファイルエクスポート（Scrapyファイルから）
               </h4>
               <p className="text-xs text-gray-400 mb-2">
-                💡 Scrapyが生成した各種形式のファイルを直接ダウンロードします
+                💡 Scrapyが生成したJSONLファイルを直接ダウンロードします
               </p>
               <div className="flex flex-wrap gap-2">
-                {[
-                  { format: 'jsonl', name: 'JSONL', color: 'bg-green-600 hover:bg-green-700', description: 'JSON Lines形式でダウンロード' },
-                  { format: 'json', name: 'JSON', color: 'bg-blue-600 hover:bg-blue-700', description: '標準JSON形式でダウンロード' },
-                  { format: 'csv', name: 'CSV', color: 'bg-yellow-600 hover:bg-yellow-700', description: 'CSV形式でダウンロード' },
-                  { format: 'excel', name: 'EXCEL', color: 'bg-orange-600 hover:bg-orange-700', description: 'Excel形式でダウンロード（動的生成）' },
-                  { format: 'xml', name: 'XML', color: 'bg-purple-600 hover:bg-purple-700', description: 'XML形式でダウンロード' }
-                ].map((format) => (
-                  <button
-                    key={`file-${format.format}`}
-                    onClick={() => handleFileDownload(format.format as any)}
-                    disabled={isDownloading === format.format}
-                    className={`px-3 py-2 text-white text-sm rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors ${format.color}`}
-                    title={format.description}
-                  >
-                    {isDownloading === format.format ? '...' : format.name}
-                  </button>
-                ))}
+                <button
+                  onClick={() => handleFileDownload('jsonl')}
+                  disabled={isDownloading === 'jsonl'}
+                  className="px-3 py-2 text-white text-sm rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors bg-green-600 hover:bg-green-700"
+                  title="JSON Lines形式でダウンロード"
+                >
+                  {isDownloading === 'jsonl' ? '...' : 'JSONL'}
+                </button>
               </div>
             </div>
 

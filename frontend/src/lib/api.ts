@@ -1292,7 +1292,7 @@ class ApiClient {
     return response.blob();
   }
 
-  async downloadTaskResultsFile(taskId: string, format: 'jsonl' | 'json' | 'csv' | 'excel' | 'xml' = 'jsonl'): Promise<Blob> {
+  async downloadTaskResultsFile(taskId: string, format: 'jsonl' = 'jsonl'): Promise<Blob> {
     const headers: HeadersInit = {};
 
     if (this.token) {

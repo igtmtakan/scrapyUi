@@ -152,10 +152,16 @@ Results are displayed in:
 ### Export Formats
 
 Export data in multiple formats:
+
+#### DBエクスポート（データベースから）
+- **📄 JSONL**: JSON Lines format (recommended)
 - **📄 JSON**: Machine-readable format
 - **📊 CSV**: Spreadsheet compatible
 - **📈 Excel**: Advanced spreadsheet format
 - **🔖 XML**: Structured markup format
+
+#### ファイルエクスポート（Scrapyファイルから）
+- **📄 JSONL**: Direct download of Scrapy-generated JSONL files
 
 ### Download Results
 

@@ -124,12 +124,8 @@ class JSONLMonitor:
             new_lines = [line.strip() for line in new_content.split('\n') if line.strip()]
             
             if new_lines:
-                print(f"📝 新しい行を検出: {len(new_lines)}件")
-                
-                for line in new_lines:
-                    self._process_single_line(line)
-                    self.processed_lines += 1
-                
+                print(f"📝 新しい行を検出: {len(new_lines)}件（バルクインサートで処理予定）")
+                self.processed_lines += len(new_lines)
                 print(f"📊 総処理済みアイテム数: {self.processed_lines}")
             
             # ファイルサイズを更新
@@ -138,119 +134,7 @@ class JSONLMonitor:
         except Exception as e:
             print(f"❌ 新しい行処理エラー: {e}")
     
-    def _process_single_line(self, json_line):
-        """単一の行を処理してDBにインサート"""
-        try:
-            # JSON解析
-            item_data = json.loads(json_line)
-            
-            # DBにインサート
-            self._insert_item_to_db(item_data)
-            
-        except json.JSONDecodeError as e:
-            print(f"❌ JSON解析エラー: {e} - Line: {json_line[:100]}...")
-        except Exception as e:
-            print(f"❌ 行処理エラー: {e}")
-    
-    def _insert_item_to_db(self, item_data):
-        """アイテムをScrapyUIデータベースにインサート"""
-        try:
-            # ScrapyUIのデータベース設定を使用
-            import sys
-            import os
-
-            # ScrapyUIのバックエンドパスを正しく設定
-            current_dir = os.path.dirname(os.path.abspath(__file__))
-            # admin_mytest0001/commands -> admin_mytest0001 -> scrapy_projects -> scrapyUI -> backend
-            backend_path = os.path.join(current_dir, '..', '..', '..', '..', 'backend')
-            backend_path = os.path.abspath(backend_path)
-
-            print(f"🔍 Backend path: {backend_path}")
-
-            if backend_path not in sys.path:
-                sys.path.insert(0, backend_path)
-
-            # ScrapyUIのデータベースモジュールをインポート
-            from app.database import SessionLocal, Result
-
-            # データベースセッションを作成
-            db = SessionLocal()
-
-            try:
-                # resultsテーブルにインサート（ScrapyUI形式）
-                result_id = str(uuid.uuid4())
-                db_result = Result(
-                    id=result_id,
-                    task_id=self.task_id,
-                    data=item_data,
-                    item_acquired_datetime=datetime.now(),
-                    created_at=datetime.now()
-                )
-
-                db.add(db_result)
-                db.commit()
-
-                print(f"✅ ScrapyUI DBインサート成功: {result_id}")
-
-            except Exception as e:
-                db.rollback()
-                print(f"❌ ScrapyUI DBインサートエラー: {e}")
-                # フォールバック: SQLiteに保存
-                self._fallback_sqlite_insert(item_data)
-            finally:
-                db.close()
-
-        except ImportError as e:
-            print(f"⚠️ ScrapyUIデータベースモジュールが見つかりません: {e}")
-            # フォールバック: SQLiteに保存
-            self._fallback_sqlite_insert(item_data)
-        except Exception as e:
-            print(f"❌ DBインサートエラー: {e}")
-            # フォールバック: SQLiteに保存
-            self._fallback_sqlite_insert(item_data)
-
-    def _fallback_sqlite_insert(self, item_data):
-        """フォールバック: SQLiteデータベースにインサート"""
-        try:
-            # データベースパスを絶対パスに変換
-            import os
-            if not os.path.isabs(self.db_path):
-                # 相対パスの場合、ScrapyUIルートディレクトリからの相対パスとして解釈
-                current_dir = os.path.dirname(os.path.abspath(__file__))
-                # admin_mytest0001/commands -> admin_mytest0001 -> scrapy_projects -> scrapyUI
-                scrapyui_root = os.path.join(current_dir, '..', '..', '..', '..')
-                scrapyui_root = os.path.abspath(scrapyui_root)
-                db_path = os.path.join(scrapyui_root, self.db_path)
-            else:
-                db_path = self.db_path
-
-            print(f"🔍 SQLite DB path: {db_path}")
-            conn = sqlite3.connect(db_path)
-            cursor = conn.cursor()
-
-            # scraped_itemsテーブルにインサート
-            item_id = str(uuid.uuid4())
-            cursor.execute("""
-                INSERT INTO scraped_items
-                (id, task_id, project_id, spider_name, data, scraped_at, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (
-                item_id,
-                self.task_id,
-                "command_project",  # コマンド実行時はプロジェクトIDを固定
-                self.spider_name,
-                json.dumps(item_data, ensure_ascii=False),
-                datetime.now().isoformat(),
-                datetime.now().isoformat()
-            ))
-
-            conn.commit()
-            conn.close()
-
-            print(f"✅ SQLite DBインサート成功: {item_id}")
-
-        except Exception as e:
-            print(f"❌ SQLite DBインサートエラー: {e}")
+    # 個別インサート処理は削除 - バルクインサートのみ使用
 
 
 class Command(ScrapyCommand):

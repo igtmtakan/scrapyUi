@@ -130,16 +130,49 @@ class ScrapyWatchdogMonitor:
         self.scrapy_process = None
 
     def _generate_data_hash_improved(self, item_data: dict) -> str:
-        """item_typeを考慮した改善されたハッシュ生成"""
+        """item_typeを考慮した改善されたハッシュ生成（全フィールド対応）"""
         try:
-            # item_typeを含めてハッシュを生成
-            hash_data = {
-                'ranking_position': item_data.get('ranking_position'),
-                'item_type': item_data.get('item_type', 'unknown'),
-                'product_url': item_data.get('product_url'),
-                'source_url': item_data.get('source_url'),
-                'page_number': item_data.get('page_number')
-            }
+            # item_typeに応じて適切なフィールドを選択
+            item_type = item_data.get('item_type', 'unknown')
+
+            if item_type == 'ranking_product':
+                # ランキング商品の場合
+                hash_data = {
+                    'item_type': item_type,
+                    'ranking_position': item_data.get('ranking_position'),
+                    'page_number': item_data.get('page_number'),
+                    'title': item_data.get('title'),
+                    'product_url': item_data.get('product_url'),
+                    'source_url': item_data.get('source_url')
+                }
+            elif item_type == 'ranking_product_detail':
+                # 商品詳細の場合
+                hash_data = {
+                    'item_type': item_type,
+                    'title': item_data.get('title'),
+                    'product_url': item_data.get('product_url'),
+                    'description': item_data.get('description'),
+                    'detail_scraped_at': item_data.get('detail_scraped_at')
+                }
+            elif item_type == 'test_product':
+                # テスト商品の場合
+                hash_data = {
+                    'item_type': item_type,
+                    'title': item_data.get('title'),
+                    'price': item_data.get('price'),
+                    'test_id': item_data.get('test_id')
+                }
+            elif item_type == 'test_product_detail':
+                # テスト商品詳細の場合
+                hash_data = {
+                    'item_type': item_type,
+                    'title': item_data.get('title'),
+                    'description': item_data.get('description'),
+                    'test_id': item_data.get('test_id')
+                }
+            else:
+                # その他の場合は全データを使用
+                hash_data = item_data.copy()
 
             # 辞書をソートしてJSON文字列に変換
             hash_string = json.dumps(hash_data, sort_keys=True, ensure_ascii=False)
@@ -912,54 +945,31 @@ class ScrapyWatchdogMonitor:
 
                     db = SessionLocal()
                     try:
-                        # バルクインサート用のデータを準備（重複防止機能付き）
+                        # バルクインサート用のデータを準備（重複チェックなし - Rich progressで後処理）
                         bulk_data = []
-                        seen_hashes = set()
-
-                        # 既存のハッシュ値を取得（重複防止）
-                        existing_hashes = set()
-                        try:
-                            existing_results = db.query(Result.data_hash).filter(
-                                Result.task_id == self.task_id,
-                                Result.data_hash.isnot(None)
-                            ).all()
-                            existing_hashes = {r.data_hash for r in existing_results}
-                            print(f"🔍 既存ハッシュ数: {len(existing_hashes)}")
-                        except Exception as e:
-                            print(f"⚠️ 既存ハッシュ取得エラー: {e}")
 
                         for item_data in batch:
                             # データハッシュを生成（改善版：item_type考慮）
                             data_hash = self._generate_data_hash_improved(item_data)
-                            print(f"🔍 Generated hash: {data_hash[:8]}... for item_type: {item_data.get('item_type', 'unknown')}")
 
                             if not data_hash:
                                 print(f"⚠️ ハッシュ生成失敗: {item_data}")
                                 continue
-
-                            # 重複チェック
-                            if data_hash and (data_hash in existing_hashes or data_hash in seen_hashes):
-                                print(f"⚠️ 重複データをスキップ: {data_hash}")
-                                continue
-
-                            if data_hash:
-                                seen_hashes.add(data_hash)
 
                             result_id = str(uuid.uuid4())
                             bulk_item = {
                                 'id': result_id,
                                 'task_id': self.task_id,
                                 'data': item_data,
-                                'data_hash': data_hash,  # ハッシュ値を追加
+                                'data_hash': data_hash,
                                 'item_acquired_datetime': datetime.now(),
                                 'created_at': datetime.now()
                             }
                             bulk_data.append(bulk_item)
-                            print(f"🔍 バルクアイテム追加: ID={result_id[:8]}..., hash={data_hash[:8] if data_hash else 'None'}...")
 
-                        # 個別インサート実行（data_hashを確実に保存）
+                        # 高速バルクインサート実行（重複チェックなし）
                         if bulk_data:
-                            print(f"🔍 個別インサート実行: {len(bulk_data)}件 (ハッシュ付き)")
+                            print(f"🚀 高速バルクインサート実行: {len(bulk_data)}件")
 
                             for item in bulk_data:
                                 try:
@@ -972,13 +982,12 @@ class ScrapyWatchdogMonitor:
                                         created_at=item['created_at']
                                     )
                                     db.add(db_result)
-                                    print(f"🔍 個別追加: ID={item['id'][:8]}..., hash={item['data_hash'][:8] if item['data_hash'] else 'None'}...")
                                 except Exception as e:
-                                    print(f"❌ 個別インサートエラー: {e}")
+                                    print(f"❌ インサートエラー: {e}")
                                     continue
 
                             db.commit()
-                            print(f"✅ 個別インサート完了: {len(bulk_data)}件")
+                            print(f"✅ 高速バルクインサート完了: {len(bulk_data)}件")
                         else:
                             print("⚠️ バルクデータが空のためスキップ")
 
@@ -988,29 +997,18 @@ class ScrapyWatchdogMonitor:
                     except Exception as e:
                         db.rollback()
                         print(f"❌ バルクDBインサートエラー (バッチ {i//batch_size + 1}): {e}")
-                        # バッチが失敗した場合は個別に処理（重複防止付き）
+                        # バッチが失敗した場合は個別に処理（重複チェックなし）
                         for item_data in batch:
                             try:
                                 # データハッシュを生成（改善版：item_type考慮）
                                 data_hash = self._generate_data_hash_improved(item_data)
-
-                                # 重複チェック
-                                if data_hash:
-                                    existing = db.query(Result).filter(
-                                        Result.task_id == self.task_id,
-                                        Result.data_hash == data_hash
-                                    ).first()
-                                    if existing:
-                                        print(f"⚠️ 個別処理で重複データをスキップ: {data_hash}")
-                                        successful_inserts += 1  # 重複は成功とみなす
-                                        continue
 
                                 result_id = str(uuid.uuid4())
                                 db_result = Result(
                                     id=result_id,
                                     task_id=self.task_id,
                                     data=item_data,
-                                    data_hash=data_hash,  # ハッシュ値を追加
+                                    data_hash=data_hash,
                                     item_acquired_datetime=datetime.now(),
                                     created_at=datetime.now()
                                 )
@@ -1078,56 +1076,30 @@ class ScrapyWatchdogMonitor:
 
                     db = SessionLocal()
                     try:
-                        # バルクインサート用のデータを準備（重複防止機能付き）
+                        # バルクインサート用のデータを準備（重複チェックなし - Rich progressで後処理）
                         bulk_data = []
-                        seen_hashes = set()
-
-                        # 既存のハッシュ値を取得（重複防止）
-                        existing_hashes = set()
-                        try:
-                            existing_results = db.query(Result.data_hash).filter(
-                                Result.task_id == self.task_id,
-                                Result.data_hash.isnot(None)
-                            ).all()
-                            existing_hashes = {r.data_hash for r in existing_results}
-                            print(f"🔍 既存ハッシュ数: {len(existing_hashes)}")
-                        except Exception as e:
-                            print(f"⚠️ 既存ハッシュ取得エラー: {e}")
 
                         for item_data in batch:
                             # データハッシュを生成（改善版：item_type考慮）
                             data_hash = self._generate_data_hash_improved(item_data)
-                            print(f"🔍 Generated hash: {data_hash[:8]}... for item_type: {item_data.get('item_type', 'unknown')}")
 
                             if not data_hash:
                                 print(f"⚠️ ハッシュ生成失敗: {item_data}")
                                 continue
-
-                            # 重複チェック
-                            if data_hash and (data_hash in existing_hashes or data_hash in seen_hashes):
-                                print(f"⚠️ 重複データをスキップ: {data_hash}")
-                                continue
-
-                            if data_hash:
-                                seen_hashes.add(data_hash)
 
                             result_id = str(uuid.uuid4())
                             bulk_data.append({
                                 'id': result_id,
                                 'task_id': self.task_id,
                                 'data': item_data,
-                                'data_hash': data_hash,  # ハッシュ値を追加
+                                'data_hash': data_hash,
                                 'item_acquired_datetime': datetime.now(),
                                 'created_at': datetime.now()
                             })
 
-                        # バルクインサート実行（data_hashを含む）
+                        # 高速バルクインサート実行（重複チェックなし）
                         if bulk_data:
-                            print(f"🔍 バルクインサート実行: {len(bulk_data)}件 (ハッシュ付き)")
-                            # デバッグ: 最初のデータのハッシュを確認
-                            if bulk_data:
-                                first_hash = bulk_data[0].get('data_hash', 'None')
-                                print(f"🔍 サンプルハッシュ: {first_hash}")
+                            print(f"🚀 高速バルクインサート実行: {len(bulk_data)}件")
 
                             db.bulk_insert_mappings(Result, bulk_data)
                             db.commit()
@@ -1140,29 +1112,18 @@ class ScrapyWatchdogMonitor:
                     except Exception as e:
                         db.rollback()
                         print(f"❌ バルクDBインサートエラー (バッチ {i//batch_size + 1}): {e}")
-                        # バッチが失敗した場合は個別に処理（重複防止付き）
+                        # バッチが失敗した場合は個別に処理（重複チェックなし）
                         for item_data in batch:
                             try:
                                 # データハッシュを生成（改善版：item_type考慮）
                                 data_hash = self._generate_data_hash_improved(item_data)
-
-                                # 重複チェック
-                                if data_hash:
-                                    existing = db.query(Result).filter(
-                                        Result.task_id == self.task_id,
-                                        Result.data_hash == data_hash
-                                    ).first()
-                                    if existing:
-                                        print(f"⚠️ 個別処理で重複データをスキップ: {data_hash}")
-                                        successful_inserts += 1  # 重複は成功とみなす
-                                        continue
 
                                 result_id = str(uuid.uuid4())
                                 db_result = Result(
                                     id=result_id,
                                     task_id=self.task_id,
                                     data=item_data,
-                                    data_hash=data_hash,  # ハッシュ値を追加
+                                    data_hash=data_hash,
                                     item_acquired_datetime=datetime.now(),
                                     created_at=datetime.now()
                                 )
