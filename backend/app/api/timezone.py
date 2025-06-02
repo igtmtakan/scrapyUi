@@ -12,8 +12,8 @@ import pytz
 
 from ..services.timezone_service import timezone_service
 from ..services.default_settings_service import default_settings_service
-from ..auth.dependencies import get_current_user
-from ..models.user import User
+from .auth import get_current_active_user
+from ..database import User as DBUser
 
 router = APIRouter(prefix="/api/timezone", tags=["timezone"])
 
@@ -73,7 +73,7 @@ async def get_common_timezones():
 @router.post("/set")
 async def set_timezone(
     request: TimezoneUpdateRequest,
-    current_user: User = Depends(get_current_user)
+    current_user: DBUser = Depends(get_current_active_user)
 ):
     """タイムゾーンを設定（管理者のみ）"""
     if not current_user.is_admin:
@@ -184,7 +184,7 @@ async def get_timezone_settings():
 @router.put("/settings")
 async def update_timezone_settings(
     settings: Dict[str, Any],
-    current_user: User = Depends(get_current_user)
+    current_user: DBUser = Depends(get_current_active_user)
 ):
     """タイムゾーン設定を更新（管理者のみ）"""
     if not current_user.is_admin:
