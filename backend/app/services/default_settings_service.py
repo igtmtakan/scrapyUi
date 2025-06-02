@@ -230,7 +230,20 @@ class DefaultSettingsService:
             'MEMUSAGE_ENABLED': self.default_settings["spider_defaults"]["memory_settings"]["memusage_enabled"],
             'MEMUSAGE_LIMIT_MB': self.default_settings["spider_defaults"]["memory_settings"]["memusage_limit_mb"],
             'MEMUSAGE_WARNING_MB': self.default_settings["spider_defaults"]["memory_settings"]["memusage_warning_mb"],
-            'USER_AGENT': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            'USER_AGENT': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            # Rich進捗バー拡張機能
+            'EXTENSIONS': {
+                'scrapy.extensions.telnet.TelnetConsole': None,
+                'scrapy.extensions.corestats.CoreStats': 500,
+                'scrapy.extensions.memusage.MemoryUsage': 500,
+                'scrapy.extensions.logstats.LogStats': 500,
+                'app.scrapy_extensions.rich_progress_extension.RichProgressExtension': 400,
+            },
+            # Rich進捗バー設定
+            'RICH_PROGRESS_ENABLED': True,
+            'RICH_PROGRESS_SHOW_STATS': True,
+            'RICH_PROGRESS_UPDATE_INTERVAL': 0.1,
+            'RICH_PROGRESS_WEBSOCKET': False
         }
         
         # スパイダータイプ別の設定

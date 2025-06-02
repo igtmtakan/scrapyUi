@@ -141,6 +141,9 @@ class ScrapyPlaywrightService:
             # settings.pyにCOMMANDS_MODULEを追加
             self._add_commands_module_to_settings(project_dir / project_name, project_name)
 
+            # Rich進捗バー設定を追加
+            self._add_rich_progress_settings(project_dir / project_name, project_name)
+
 
 
             # scrapy.cfgファイルを検証・修正（プロジェクトパスを使用）
@@ -612,6 +615,60 @@ COMMANDS_MODULE = "{project_name}.commands"
 
         except Exception as e:
             self.logger.warning(f"Failed to add COMMANDS_MODULE to settings.py: {str(e)}")
+
+    def _add_rich_progress_settings(self, project_dir: Path, project_name: str):
+        """settings.pyにRich進捗バー設定を追加"""
+        try:
+            settings_file = project_dir / "settings.py"
+
+            if not settings_file.exists():
+                self.logger.warning(f"Settings file not found: {settings_file}")
+                return
+
+            # 既存の内容を読み込み
+            with open(settings_file, 'r', encoding='utf-8') as f:
+                content = f.read()
+
+            # 既にRich進捗バー設定が含まれているかチェック
+            if "RICH_PROGRESS_ENABLED" in content or "RichProgressExtension" in content:
+                self.logger.info(f"Rich progress settings already exist in {settings_file}")
+                return
+
+            # Rich進捗バー設定を追加
+            rich_settings = '''
+# ===== Rich進捗バー設定 =====
+# スパイダーコードを変更せずに美しい進捗バーを表示
+
+# ScrapyUIバックエンドへのパスを追加
+import sys
+sys.path.append('/home/igtmtakan/workplace/python/scrapyUI/backend')
+
+# Rich進捗バー拡張機能を有効化
+EXTENSIONS = {
+    "scrapy.extensions.telnet.TelnetConsole": None,
+    "scrapy.extensions.corestats.CoreStats": 500,
+    "scrapy.extensions.logstats.LogStats": 500,
+    # Rich進捗バー拡張機能を追加（スパイダーコードを変更せずに進捗バーを表示）
+    "app.scrapy_extensions.rich_progress_extension.RichProgressExtension": 400,
+}
+
+RICH_PROGRESS_ENABLED = True           # 進捗バーを有効化
+RICH_PROGRESS_SHOW_STATS = True        # 詳細統計を表示
+RICH_PROGRESS_UPDATE_INTERVAL = 0.1    # 更新間隔（秒）
+RICH_PROGRESS_WEBSOCKET = False        # WebSocket通知（オプション）
+'''
+
+            # ファイルの末尾に追加
+            content += rich_settings
+
+            # ファイルに書き戻し
+            with open(settings_file, 'w', encoding='utf-8') as f:
+                f.write(content)
+
+            self.logger.info(f"Added Rich progress settings to {settings_file}")
+
+        except Exception as e:
+            self.logger.warning(f"Failed to add Rich progress settings to settings.py: {str(e)}")
 
     def _sync_commands_to_database(self, project_id: str, project_name: str, user_id: str, project_package_dir: Path):
         """commandsディレクトリのファイルをデータベースに同期"""

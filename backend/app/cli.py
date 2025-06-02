@@ -601,6 +601,27 @@ FEED_EXPORT_ENCODING = 'utf-8'
 # ScrapyUI specific settings
 SCRAPYUI_PROJECT_NAME = '{name}'
 SCRAPYUI_TEMPLATE = '{template}'
+
+# ===== Rich進捗バー設定 =====
+# スパイダーコードを変更せずに美しい進捗バーを表示
+
+# ScrapyUIバックエンドへのパスを追加
+import sys
+sys.path.append('/home/igtmtakan/workplace/python/scrapyUI/backend')
+
+# Rich進捗バー拡張機能を有効化
+EXTENSIONS = {{
+    "scrapy.extensions.telnet.TelnetConsole": None,
+    "scrapy.extensions.corestats.CoreStats": 500,
+    "scrapy.extensions.logstats.LogStats": 500,
+    # Rich進捗バー拡張機能を追加（スパイダーコードを変更せずに進捗バーを表示）
+    "app.scrapy_extensions.rich_progress_extension.RichProgressExtension": 400,
+}}
+
+RICH_PROGRESS_ENABLED = True           # 進捗バーを有効化
+RICH_PROGRESS_SHOW_STATS = True        # 詳細統計を表示
+RICH_PROGRESS_UPDATE_INTERVAL = 0.1    # 更新間隔（秒）
+RICH_PROGRESS_WEBSOCKET = False        # WebSocket通知（オプション）
 """
 
     (project_dir / "settings.py").write_text(settings_py)
