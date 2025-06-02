@@ -31,6 +31,21 @@ class DefaultSettingsService:
     def _create_default_settings(self) -> Dict[str, Any]:
         """デフォルト設定を作成"""
         settings = {
+            "timezone": {
+                "default": "Asia/Tokyo",
+                "display_format": "%Y-%m-%d %H:%M:%S %Z",
+                "available_timezones": [
+                    "Asia/Tokyo",
+                    "UTC",
+                    "America/New_York",
+                    "America/Los_Angeles",
+                    "Europe/London",
+                    "Europe/Paris",
+                    "Asia/Shanghai",
+                    "Asia/Seoul"
+                ],
+                "auto_detect": False
+            },
             "spider_defaults": {
                 "feed_settings": {
                     "default_format": "jsonl",
@@ -350,6 +365,24 @@ class DefaultSettingsService:
     def get_export_settings(self) -> Dict[str, Any]:
         """エクスポート設定を取得"""
         return self.default_settings["export_settings"]
+
+    def get_timezone_settings(self) -> Dict[str, Any]:
+        """タイムゾーン設定を取得"""
+        return self.default_settings.get("timezone", {
+            "default": "Asia/Tokyo",
+            "display_format": "%Y-%m-%d %H:%M:%S %Z",
+            "available_timezones": [
+                "Asia/Tokyo",
+                "UTC",
+                "America/New_York",
+                "America/Los_Angeles",
+                "Europe/London",
+                "Europe/Paris",
+                "Asia/Shanghai",
+                "Asia/Seoul"
+            ],
+            "auto_detect": False
+        })
     
     def update_settings(self, section: str, new_settings: Dict[str, Any]):
         """設定を更新"""

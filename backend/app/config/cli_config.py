@@ -89,11 +89,18 @@ class CLIConfigManager:
             default='INFO',
             help='ログレベル (デフォルト: INFO)'
         )
-        
+
         parser.add_argument(
             '--log-file',
             type=str,
             help='ログファイルのパス'
+        )
+
+        # タイムゾーン関連
+        parser.add_argument(
+            '--timezone', '--tz',
+            type=str,
+            help='使用するタイムゾーン (例: Asia/Tokyo, UTC, America/New_York)'
         )
         
         # その他
@@ -137,6 +144,7 @@ class CLIConfigManager:
             'SCRAPY_UI_DEBUG': 'debug',
             'SCRAPY_UI_LOG_LEVEL': 'log_level',
             'SCRAPY_UI_LOG_FILE': 'log_file',
+            'SCRAPY_UI_TIMEZONE': 'timezone',
         }
         
         for env_var, arg_name in env_mappings.items():
@@ -163,6 +171,7 @@ class CLIConfigManager:
             'reload': self.args.reload,
             'log_level': self.args.log_level,
             'log_file': self.args.log_file,
+            'timezone': self.args.timezone,
             'check_config': self.args.check_config,
         }
     
@@ -185,6 +194,10 @@ class CLIConfigManager:
         print(f"📝 ログレベル: {config['log_level']}")
         if config['log_file']:
             print(f"📄 ログファイル: {config['log_file']}")
+        if config['timezone']:
+            print(f"🌍 タイムゾーン: {config['timezone']}")
+        else:
+            print(f"🌍 タイムゾーン: auto-detect")
 
 # グローバルインスタンス
 cli_config_manager = CLIConfigManager()

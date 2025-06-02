@@ -43,7 +43,21 @@ def main():
         
         # 設定サマリーを表示
         cli_config_manager.print_config_summary()
-        
+
+        # タイムゾーン設定
+        if args.timezone:
+            try:
+                from app.services.timezone_service import timezone_service
+                success = timezone_service.set_timezone(args.timezone)
+                if success:
+                    print(f"\n✅ タイムゾーンを {args.timezone} に設定しました")
+                else:
+                    print(f"❌ タイムゾーンの設定に失敗: {args.timezone}")
+                    sys.exit(1)
+            except Exception as e:
+                print(f"❌ タイムゾーン設定エラー: {e}")
+                sys.exit(1)
+
         # データベース設定を確認
         try:
             db_config = get_database_config()
