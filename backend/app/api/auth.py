@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from datetime import datetime, timedelta, timezone
 import uuid
 
-from ..database import get_db, User as DBUser, UserSession as DBUserSession
+from ..database import get_db, User as DBUser, UserSession as DBUserSession, UserRole
 from ..models.schemas import UserCreate, UserLogin, UserResponse, Token
 from ..auth.jwt_handler import JWTHandler, PasswordHandler, create_tokens
 from ..services.default_settings_service import default_settings_service
@@ -155,6 +155,49 @@ async def login(
 
         # ユーザー検索
         user = db.query(DBUser).filter(DBUser.email == user_login.email).first()
+
+        # 管理者ユーザーが存在しない場合は自動作成
+        if not user and user_login.email == "admin@scrapyui.com":
+            print("🔧 Creating admin user automatically...")
+            admin_user = DBUser(
+                id=str(uuid.uuid4()),
+                email="admin@scrapyui.com",
+                username="admin",
+                full_name="Administrator",
+                hashed_password=PasswordHandler.hash_password("admin123456"),
+                is_active=True,
+                is_superuser=True,
+                role=UserRole.ADMIN,
+                timezone="Asia/Tokyo",
+                preferences={}
+            )
+            db.add(admin_user)
+            db.commit()
+            db.refresh(admin_user)
+            user = admin_user
+            print("✅ Admin user created successfully")
+
+        # デモユーザーが存在しない場合は自動作成
+        if not user and user_login.email == "demo@example.com":
+            print("🔧 Creating demo user automatically...")
+            demo_user = DBUser(
+                id=str(uuid.uuid4()),
+                email="demo@example.com",
+                username="demo",
+                full_name="Demo User",
+                hashed_password=PasswordHandler.hash_password("demo12345"),
+                is_active=True,
+                is_superuser=False,
+                role=UserRole.USER,
+                timezone="Asia/Tokyo",
+                preferences={}
+            )
+            db.add(demo_user)
+            db.commit()
+            db.refresh(demo_user)
+            user = demo_user
+            print("✅ Demo user created successfully")
+
         if not user:
             print(f"❌ Login failed: User not found for email={user_login.email}")
             raise HTTPException(

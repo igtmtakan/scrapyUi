@@ -246,6 +246,19 @@ class ScrapyWatchdogMonitor:
         # JSONLファイルのディレクトリを監視
         watch_directory = self.jsonl_file_path.parent
 
+        print(f"🔍 デバッグ情報:")
+        print(f"   - プロジェクトパス: {self.project_path}")
+        print(f"   - JSONLファイルパス: {self.jsonl_file_path}")
+        print(f"   - 監視対象ディレクトリ: {watch_directory}")
+        print(f"   - 監視対象ディレクトリ存在: {watch_directory.exists()}")
+
+        # 監視対象ディレクトリが存在するかチェック
+        if not watch_directory.exists():
+            print(f"⚠️ 監視対象ディレクトリが存在しません: {watch_directory}")
+            print(f"📁 ディレクトリを作成します...")
+            watch_directory.mkdir(parents=True, exist_ok=True)
+            print(f"✅ ディレクトリ作成完了: {watch_directory}")
+
         # イベントハンドラーを作成
         event_handler = JSONLWatchdogHandler(self)
 

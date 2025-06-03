@@ -207,6 +207,13 @@ def update_spider_name_in_code(code: str, spider_name: str) -> str:
         if match:
             # 元のインデントを保持して置換
             indent = match.group(1)
+            # 既に正しい名前の場合はスキップ
+            current_name_match = re.search(r'name\s*=\s*["\']([^"\']*)["\']', match.group(0))
+            if current_name_match and current_name_match.group(1) == spider_name:
+                print(f"🔄 Name attribute already correct: {spider_name}")
+                name_updated = True
+                break
+
             updated_code = re.sub(pattern, f'{indent}name = "{spider_name}"', updated_code)
             name_updated = True
             print(f"🔄 Updated name attribute with preserved indentation: {repr(indent)}")
@@ -285,14 +292,11 @@ def auto_fix_spider_indentation(code: str) -> tuple[str, list[str]]:
     fixed_lines = []
     fixes_applied = []
     in_class = False
+    in_method = False
+    current_method_indent = 0
 
     for i, line in enumerate(lines):
-        # クラス定義を検出
-        if re.match(r'^class\s+\w+.*?:', line):
-            in_class = True
-            fixed_lines.append(line)
-            print(f"🔍 Found class definition at line {i+1}: {line.strip()}")
-            continue
+        line_num = i + 1
 
         # 空行やコメント行はそのまま
         if not line.strip() or line.strip().startswith('#'):
@@ -302,81 +306,92 @@ def auto_fix_spider_indentation(code: str) -> tuple[str, list[str]]:
         # import文やfrom文はクラス外
         if re.match(r'^(import|from)\s+', line):
             in_class = False
+            in_method = False
             fixed_lines.append(line)
             continue
 
-        # 新しいクラス定義はクラス外
-        if re.match(r'^class\s+', line):
+        # 関数定義（クラス外）
+        if re.match(r'^def\s+', line):
             in_class = False
+            in_method = False
+            fixed_lines.append(line)
+            continue
+
+        # クラス定義を検出
+        if re.match(r'^class\s+\w+.*?:', line):
+            in_class = True
+            in_method = False
+            fixed_lines.append(line)
+            print(f"🔍 Found class definition at line {line_num}: {line.strip()}")
+            continue
+
+        # 新しいクラス定義（前のクラス終了）
+        if re.match(r'^class\s+', line):
+            in_class = True
+            in_method = False
             fixed_lines.append(line)
             continue
 
         # クラス内の処理
         if in_class:
-            # クラス属性（name, allowed_domains, start_urls, custom_settings など）
-            if re.match(r'^\s*(name|allowed_domains|start_urls|custom_settings|handle_httpstatus_list)\s*=', line):
-                stripped_line = line.lstrip()
-                expected_indent = '    '  # 4スペース
-
-                # インデントが正しくない場合
-                if not line.startswith(expected_indent):
-                    fixed_line = expected_indent + stripped_line
-                    fixed_lines.append(fixed_line)
-                    fixes_applied.append(f"Line {i+1}: Fixed indentation for class attribute: {stripped_line.split('=')[0].strip()}")
-                    print(f"🔧 Fixed line {i+1}: '{line.strip()}' -> '{fixed_line.strip()}'")
-                    continue
-                else:
-                    # 既に正しいインデント
-                    fixed_lines.append(line)
-                    continue
-
             # メソッド定義
-            elif re.match(r'^\s*def\s+', line):
+            if re.match(r'^\s*def\s+', line):
+                in_method = True
                 stripped_line = line.lstrip()
                 expected_indent = '    '  # 4スペース
 
-                # インデントが正しくない場合
-                if not line.startswith(expected_indent):
+                # インデントが正しくない場合のみ修正
+                if not line.startswith(expected_indent) and line.strip().startswith('def '):
                     fixed_line = expected_indent + stripped_line
                     fixed_lines.append(fixed_line)
-                    fixes_applied.append(f"Line {i+1}: Fixed indentation for method definition")
-                    print(f"🔧 Fixed line {i+1}: method definition")
+                    fixes_applied.append(f"Line {line_num}: Fixed indentation for method definition")
+                    print(f"🔧 Fixed line {line_num}: method definition")
                     continue
                 else:
                     # 既に正しいインデント
                     fixed_lines.append(line)
                     continue
 
-            # メソッド内のコード（8スペースインデント）
-            elif line.strip() and (line.startswith('yield ') or line.startswith('return ') or
-                                   line.strip().startswith('yield ') or line.strip().startswith('return ') or
-                                   line.strip().startswith('{') or line.strip().startswith('}') or
-                                   line.strip().startswith('"') or line.strip().startswith("'") or
-                                   re.match(r'^\s*[a-zA-Z_][a-zA-Z0-9_]*\s*[=:]', line.strip())):
+            # クラス属性（name, allowed_domains, start_urls, custom_settings など）
+            elif re.match(r'^\s*(name|allowed_domains|start_urls|custom_settings|handle_httpstatus_list|target_items_per_page|target_pages|total_target_items)\s*=', line):
+                in_method = False
                 stripped_line = line.lstrip()
-                expected_indent = '        '  # 8スペース（メソッド内）
+                expected_indent = '    '  # 4スペース
 
-                # インデントが正しくない場合
-                if not line.startswith(expected_indent) and not line.startswith('    def '):
+                # インデントが正しくない場合のみ修正
+                if not line.startswith(expected_indent) and not line.startswith('        '):
                     fixed_line = expected_indent + stripped_line
                     fixed_lines.append(fixed_line)
-                    fixes_applied.append(f"Line {i+1}: Fixed indentation for method body")
-                    print(f"🔧 Fixed line {i+1}: method body indentation")
+                    fixes_applied.append(f"Line {line_num}: Fixed indentation for class attribute: {stripped_line.split('=')[0].strip()}")
+                    print(f"🔧 Fixed line {line_num}: '{line.strip()}' -> '{fixed_line.strip()}'")
                     continue
                 else:
                     # 既に正しいインデント
                     fixed_lines.append(line)
                     continue
 
-            # その他のクラス内コード（インデントされていない場合は警告のみ）
-            elif line.strip() and not line.startswith(' ') and not line.startswith('\t'):
-                # トップレベルのコードが見つかった場合、クラス外に出たと判断
-                in_class = False
-                fixed_lines.append(line)
-                continue
+            # その他のクラス内コード（既に適切にインデントされている場合はそのまま）
+            elif line.strip():
+                # 既に適切にインデントされている行はそのまま保持
+                if line.startswith('    ') or line.startswith('        '):
+                    fixed_lines.append(line)
+                    continue
 
-        # そのまま追加
-        fixed_lines.append(line)
+                # インデントされていない行（トップレベル）が見つかった場合、クラス外に出たと判断
+                elif not line.startswith(' ') and not line.startswith('\t'):
+                    in_class = False
+                    in_method = False
+                    fixed_lines.append(line)
+                    continue
+
+                # その他の場合はそのまま
+                else:
+                    fixed_lines.append(line)
+                    continue
+
+        # クラス外のコード
+        else:
+            fixed_lines.append(line)
 
     fixed_code = '\n'.join(fixed_lines)
     return fixed_code, fixes_applied
@@ -565,13 +580,23 @@ async def create_puppeteer_spider(
 
     try:
         # Puppeteerスパイダーコードを生成
-        spider_code = generate_puppeteer_spider_code(request)
+        try:
+            from backend.app.templates.advanced_puppeteer_spider import get_puppeteer_spider_template
+            spider_code = get_puppeteer_spider_template(
+                request.spider_name,
+                project.path,
+                request.start_urls
+            )
+        except ImportError:
+            # フォールバック: 従来の方法
+            spider_code = generate_puppeteer_spider_code(request)
 
         # データベースにスパイダーを作成
         db_spider = DBSpider(
             id=str(uuid.uuid4()),
             name=request.spider_name,
             code=spider_code,
+            template="puppeteer",
             project_id=project_id,
             user_id=current_user.id
         )
@@ -839,13 +864,20 @@ async def create_spider(
     print(f"DEBUG: Updated spider code name to: {spider.name}")
     print(f"DEBUG: Ensured scrapy.Spider inheritance")
 
-    # バリデーションと自動修正を実行
-    validation_result = validate_spider_inheritance(updated_code, auto_fix=True)
+    # まず基本的なバリデーションを実行（自動修正なし）
+    validation_result = validate_spider_inheritance(updated_code, auto_fix=False)
+
+    # 重大なエラーがある場合のみ自動修正を実行
+    if validation_result["errors"]:
+        print(f"DEBUG: Found validation errors, attempting auto-fix: {validation_result['errors']}")
+        validation_result = validate_spider_inheritance(updated_code, auto_fix=True)
+        if validation_result["fixes_applied"]:
+            print(f"DEBUG: Auto-fixed issues: {validation_result['fixes_applied']}")
+            updated_code = validation_result["fixed_code"]
+
     if validation_result["warnings"]:
         print(f"DEBUG: Validation warnings: {validation_result['warnings']}")
-    if validation_result["fixes_applied"]:
-        print(f"DEBUG: Auto-fixed issues: {validation_result['fixes_applied']}")
-        updated_code = validation_result["fixed_code"]
+
     if not validation_result["valid"]:
         print(f"DEBUG: Validation errors: {validation_result['errors']}")
         raise HTTPException(

@@ -4,12 +4,19 @@ from typing import List
 import uuid
 from datetime import datetime
 from croniter import croniter
+from pydantic import BaseModel
 
 from ..database import get_db, Schedule as DBSchedule, Project as DBProject, Spider as DBSpider, Task as DBTask, User as DBUser, UserRole, TaskStatus
 from ..models.schemas import Schedule, ScheduleCreate, ScheduleUpdate
 from ..tasks.scrapy_tasks import scheduled_spider_run
 from ..services.scheduler_service import scheduler_service
 from .auth import get_current_active_user
+
+# リクエストモデル
+class ResetTasksRequest(BaseModel):
+    hours_back: int = 24
+    cleanup_orphaned: bool = True
+    reset_all: bool = False
 
 router = APIRouter(
     responses={
@@ -517,7 +524,7 @@ async def delete_schedule(schedule_id: str, db: Session = Depends(get_db)):
     summary="スケジュール手動実行",
     description="スケジュールを手動で実行します。"
 )
-async def run_schedule_now(schedule_id: str, db: Session = Depends(get_db)):
+async def run_schedule_now(schedule_id: str, db: Session = Depends(get_db), current_user = Depends(get_current_active_user)):
     """
     ## スケジュール手動実行
 
@@ -545,6 +552,16 @@ async def run_schedule_now(schedule_id: str, db: Session = Depends(get_db)):
             detail="Schedule is not active"
         )
 
+    # プロジェクトとスパイダーの存在確認
+    project = db.query(DBProject).filter(DBProject.id == db_schedule.project_id).first()
+    spider = db.query(DBSpider).filter(DBSpider.id == db_schedule.spider_id).first()
+
+    if not project or not spider:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project or Spider not found"
+        )
+
     # 実行中タスクチェック（重複実行防止）
     running_tasks = db.query(DBTask).filter(
         DBTask.project_id == db_schedule.project_id,
@@ -563,15 +580,62 @@ async def run_schedule_now(schedule_id: str, db: Session = Depends(get_db)):
             detail=f"Cannot execute schedule: {len(running_tasks)} task(s) already running. {', '.join(running_task_info)}"
         )
 
-    # Celeryタスクとして実行（テスト環境では簡略化）
+    # タスクIDを生成
+    import uuid
+    task_id = str(uuid.uuid4())
+
+    # データベースにタスクを作成
+    db_task = DBTask(
+        id=task_id,
+        spider_id=spider.id,
+        project_id=project.id,
+        user_id=current_user.id,
+        status=TaskStatus.PENDING,
+        settings=db_schedule.settings or {},
+        created_at=datetime.now()
+    )
+    db.add(db_task)
+
+    # リアルタイム実行（scrapy crawlwithwatchdog）を開始
     import os
     if not os.getenv("TESTING", False):
-        task = scheduled_spider_run.delay(schedule_id)
-        task_id = task.id
-    else:
-        # テスト環境では仮のタスクIDを生成
-        import uuid
-        task_id = str(uuid.uuid4())
+        from ..services.scrapy_service import ScrapyPlaywrightService
+        scrapy_service = ScrapyPlaywrightService()
+
+        # バックグラウンドでリアルタイム実行を開始
+        import threading
+        def run_spider_background():
+            try:
+                import asyncio
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+
+                # WebSocketコールバック関数
+                def websocket_callback(data: dict):
+                    try:
+                        from ..api.websocket_progress import broadcast_rich_progress_update
+                        asyncio.create_task(broadcast_rich_progress_update(task_id, data))
+                    except Exception as e:
+                        print(f"⚠️ WebSocket callback error in schedule run: {e}")
+
+                # watchdog監視付きで実行
+                result = loop.run_until_complete(
+                    scrapy_service.run_spider_with_watchdog(
+                        project_path=project.path,
+                        spider_name=spider.name,
+                        task_id=task_id,
+                        settings=db_schedule.settings or {},
+                        websocket_callback=websocket_callback
+                    )
+                )
+                print(f"✅ Schedule spider execution completed: {result}")
+            except Exception as e:
+                print(f"❌ Background schedule spider execution error: {e}")
+            finally:
+                loop.close()
+
+        thread = threading.Thread(target=run_spider_background, daemon=True)
+        thread.start()
 
     # 最終実行時刻を更新
     db_schedule.last_run = datetime.now()
@@ -586,9 +650,11 @@ async def run_schedule_now(schedule_id: str, db: Session = Depends(get_db)):
     db.commit()
 
     return {
-        "message": "Schedule executed successfully",
+        "message": "Schedule executed successfully with realtime monitoring",
         "task_id": task_id,
-        "schedule_id": schedule_id
+        "schedule_id": schedule_id,
+        "realtime": True,
+        "command": "scrapy crawlwithwatchdog"
     }
 
 @router.post(
@@ -661,8 +727,7 @@ async def get_pending_tasks_count(db: Session = Depends(get_db)):
     description="古い待機タスクと孤立タスクをキャンセルします。"
 )
 async def reset_pending_tasks(
-    hours_back: int = 24,
-    cleanup_orphaned: bool = True,
+    request: ResetTasksRequest,
     db: Session = Depends(get_db),
     current_user = Depends(get_current_active_user)
 ):
@@ -681,25 +746,55 @@ async def reset_pending_tasks(
                 detail="Admin privileges required"
             )
 
+        # リクエストパラメータを取得
+        hours_back = request.hours_back
+        cleanup_orphaned = request.cleanup_orphaned
+        reset_all = request.reset_all
+
+        print(f"🗑️ Starting task reset process...")
+        print(f"  - Hours back: {hours_back}")
+        print(f"  - Cleanup orphaned: {cleanup_orphaned}")
+        print(f"  - Reset all: {reset_all}")
+        print(f"  - User: {current_user.email}")
+
         cancelled_count = 0
         orphaned_count = 0
+        running_count = 0
 
-        # 1. 指定時間以上前の待機中タスクを取得
-        cutoff_time = datetime.now() - timedelta(hours=hours_back)
-        old_pending_tasks = db.query(DBTask).filter(
-            DBTask.status == TaskStatus.PENDING,
-            DBTask.created_at < cutoff_time
-        ).all()
+        if reset_all:
+            # 全てのRUNNINGとPENDINGタスクを取得
+            active_tasks = db.query(DBTask).filter(
+                DBTask.status.in_([TaskStatus.RUNNING, TaskStatus.PENDING])
+            ).all()
 
-        print(f"🗑️ Cancelling {len(old_pending_tasks)} old pending tasks (older than {hours_back} hours)")
-        for task in old_pending_tasks:
-            print(f"  - Cancelling old task: {task.id[:8]}... (created: {task.created_at})")
-            task.status = TaskStatus.CANCELLED
-            task.finished_at = datetime.now()
-            cancelled_count += 1
+            print(f"🗑️ Cancelling ALL {len(active_tasks)} active tasks (RUNNING and PENDING)")
+            for task in active_tasks:
+                if task.status == TaskStatus.RUNNING:
+                    print(f"  - Cancelling running task: {task.id[:8]}... (started: {task.started_at})")
+                    running_count += 1
+                else:
+                    print(f"  - Cancelling pending task: {task.id[:8]}... (created: {task.created_at})")
+                    cancelled_count += 1
 
-        # 2. 孤立した待機タスクのクリーンアップ（オプション）
-        if cleanup_orphaned:
+                task.status = TaskStatus.CANCELLED
+                task.finished_at = datetime.now()
+        else:
+            # 1. 指定時間以上前の待機中タスクを取得
+            cutoff_time = datetime.now() - timedelta(hours=hours_back)
+            old_pending_tasks = db.query(DBTask).filter(
+                DBTask.status == TaskStatus.PENDING,
+                DBTask.created_at < cutoff_time
+            ).all()
+
+            print(f"🗑️ Cancelling {len(old_pending_tasks)} old pending tasks (older than {hours_back} hours)")
+            for task in old_pending_tasks:
+                print(f"  - Cancelling old task: {task.id[:8]}... (created: {task.created_at})")
+                task.status = TaskStatus.CANCELLED
+                task.finished_at = datetime.now()
+                cancelled_count += 1
+
+        # 2. 孤立した待機タスクのクリーンアップ（オプション、reset_allの場合はスキップ）
+        if cleanup_orphaned and not reset_all:
             # 関連するスケジュールが存在しない待機タスクを取得
             all_pending_tasks = db.query(DBTask).filter(DBTask.status == TaskStatus.PENDING).all()
 
@@ -720,23 +815,32 @@ async def reset_pending_tasks(
 
         # 残りの待機タスク数を取得
         remaining_pending = db.query(DBTask).filter(DBTask.status == TaskStatus.PENDING).count()
+        remaining_running = db.query(DBTask).filter(DBTask.status == TaskStatus.RUNNING).count()
 
-        message_parts = []
-        if cancelled_count > 0:
-            message_parts.append(f"{cancelled_count} old pending tasks")
-        if orphaned_count > 0:
-            message_parts.append(f"{orphaned_count} orphaned tasks")
+        if reset_all:
+            total_cancelled = cancelled_count + running_count
+            message = f"Successfully cancelled ALL active tasks: {running_count} running and {cancelled_count} pending tasks"
+        else:
+            message_parts = []
+            if cancelled_count > 0:
+                message_parts.append(f"{cancelled_count} old pending tasks")
+            if orphaned_count > 0:
+                message_parts.append(f"{orphaned_count} orphaned tasks")
 
-        message = f"Successfully cancelled {' and '.join(message_parts) if message_parts else 'no tasks'}"
+            message = f"Successfully cancelled {' and '.join(message_parts) if message_parts else 'no tasks'}"
+            total_cancelled = cancelled_count + orphaned_count
 
         return {
             "message": message,
             "cancelled_count": cancelled_count,
+            "running_count": running_count,
             "orphaned_count": orphaned_count,
-            "total_cancelled": cancelled_count + orphaned_count,
+            "total_cancelled": total_cancelled,
             "remaining_pending": remaining_pending,
+            "remaining_running": remaining_running,
             "hours_back": hours_back,
-            "cleanup_orphaned": cleanup_orphaned
+            "cleanup_orphaned": cleanup_orphaned,
+            "reset_all": reset_all
         }
 
     except HTTPException:

@@ -6,11 +6,18 @@
 # 環境変数: SCRAPY_UI_DATABASE=development
 usedatabase: default
 
-# デフォルト設定: SQLite（backend/database/ディレクトリ内）
+# デフォルト設定: MySQL
 default:
-  type: "sqlite"
-  database: "backend/database/scrapy_ui.db"
-  echo: false  # SQLログ出力
+  type: "mysql"
+  host: "localhost"
+  port: 3306
+  database: "scrapy_ui"
+  username: "scrapy_user"
+  password: "ScrapyUser%402024%23"
+  charset: "utf8mb4"
+  echo: false
+  pool_size: 15
+  max_overflow: 30
 
 # 開発環境設定
 development:
@@ -60,9 +67,9 @@ mysql_production:
   type: "mysql"
   host: "localhost"
   port: 3306
-  database: "scrapy_ui_prod"
+  database: "scrapy_ui"
   username: "scrapy_user"
-  password: "your_secure_password"
+  password: "ScrapyUser%402024%23"
   charset: "utf8mb4"
   echo: false
   pool_size: 15

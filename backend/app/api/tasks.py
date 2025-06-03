@@ -22,6 +22,8 @@ from ..services.scrapy_service import ScrapyPlaywrightService
 from ..services.result_sync_service import result_sync_service
 from .auth import get_current_active_user
 from ..websocket.manager import manager
+from ..celery_app import celery_app
+from datetime import datetime
 
 router = APIRouter(
     responses={
@@ -2764,4 +2766,189 @@ async def internal_websocket_notify(request: Request):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to send websocket notification: {str(e)}"
+        )
+
+@router.post(
+    "/clear-workers",
+    summary="ワーカータスククリア",
+    description="すべてのCeleryワーカータスクをクリアします（管理者のみ）。",
+    response_description="クリア結果"
+)
+async def clear_worker_tasks(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    ## ワーカータスククリア
+
+    すべてのCeleryワーカータスクとデータベース内のアクティブなタスクをクリアします。
+    この機能は管理者のみが使用できます。
+
+    ### 実行内容
+    1. アクティブなCeleryタスクの取り消し
+    2. 予約されたCeleryタスクの取り消し
+    3. Celeryキューのパージ
+    4. データベース内の実行中・ペンディングタスクをキャンセル状態に変更
+    5. 実行中のScrapyプロセスの停止
+
+    ### レスポンス
+    - **200**: クリア処理が正常に完了した場合
+    - **403**: 管理者権限がない場合
+    - **500**: サーバーエラー
+    """
+
+    # 管理者権限チェック
+    is_admin = (current_user.role == UserRole.ADMIN or
+                current_user.role == "ADMIN" or
+                current_user.role == "admin")
+
+    if not is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin privileges required"
+        )
+
+    try:
+        result = {
+            "status": "success",
+            "cleared_tasks": {
+                "celery_active": 0,
+                "celery_reserved": 0,
+                "db_running": 0,
+                "db_pending": 0
+            },
+            "operations": []
+        }
+
+        print("🔍 Celeryタスクの状況を確認中...")
+
+        # 1. アクティブなCeleryタスクを確認・取り消し
+        try:
+            active_tasks = celery_app.control.inspect().active()
+            if active_tasks:
+                for worker, tasks in active_tasks.items():
+                    result["cleared_tasks"]["celery_active"] += len(tasks)
+                    for task in tasks:
+                        task_id = task.get('id')
+                        if task_id:
+                            celery_app.control.revoke(task_id, terminate=True)
+                            print(f"  ✅ アクティブタスク取り消し: {task_id[:8]}...")
+                result["operations"].append(f"アクティブなCeleryタスク {result['cleared_tasks']['celery_active']}件を取り消し")
+            else:
+                result["operations"].append("アクティブなCeleryタスクはありませんでした")
+        except Exception as e:
+            result["operations"].append(f"アクティブタスク確認エラー: {str(e)}")
+
+        # 2. 予約されたCeleryタスクを確認・取り消し
+        try:
+            reserved_tasks = celery_app.control.inspect().reserved()
+            if reserved_tasks:
+                for worker, tasks in reserved_tasks.items():
+                    result["cleared_tasks"]["celery_reserved"] += len(tasks)
+                    for task in tasks:
+                        task_id = task.get('id')
+                        if task_id:
+                            celery_app.control.revoke(task_id, terminate=True)
+                            print(f"  ✅ 予約タスク取り消し: {task_id[:8]}...")
+                result["operations"].append(f"予約されたCeleryタスク {result['cleared_tasks']['celery_reserved']}件を取り消し")
+            else:
+                result["operations"].append("予約されたCeleryタスクはありませんでした")
+        except Exception as e:
+            result["operations"].append(f"予約タスク確認エラー: {str(e)}")
+
+        # 3. Celeryキューをパージ
+        try:
+            celery_app.control.purge()
+            result["operations"].append("Celeryキューをパージしました")
+            print("  ✅ Celeryキューパージ完了")
+        except Exception as e:
+            result["operations"].append(f"キューパージエラー: {str(e)}")
+
+        # 4. データベース内の実行中タスクをキャンセル
+        try:
+            running_tasks = db.query(DBTask).filter(DBTask.status == TaskStatus.RUNNING).all()
+            result["cleared_tasks"]["db_running"] = len(running_tasks)
+
+            for task in running_tasks:
+                task.status = TaskStatus.CANCELLED
+                task.finished_at = datetime.now()
+                print(f"  ✅ 実行中タスクキャンセル: {task.id[:8]}... (Spider: {task.spider_id})")
+
+            if running_tasks:
+                result["operations"].append(f"データベース内の実行中タスク {len(running_tasks)}件をキャンセル")
+            else:
+                result["operations"].append("データベース内に実行中タスクはありませんでした")
+        except Exception as e:
+            result["operations"].append(f"実行中タスク処理エラー: {str(e)}")
+
+        # 5. データベース内のペンディングタスクをキャンセル
+        try:
+            pending_tasks = db.query(DBTask).filter(DBTask.status == TaskStatus.PENDING).all()
+            result["cleared_tasks"]["db_pending"] = len(pending_tasks)
+
+            for task in pending_tasks:
+                task.status = TaskStatus.CANCELLED
+                task.finished_at = datetime.now()
+                print(f"  ✅ ペンディングタスクキャンセル: {task.id[:8]}... (Spider: {task.spider_id})")
+
+            if pending_tasks:
+                result["operations"].append(f"データベース内のペンディングタスク {len(pending_tasks)}件をキャンセル")
+            else:
+                result["operations"].append("データベース内にペンディングタスクはありませんでした")
+        except Exception as e:
+            result["operations"].append(f"ペンディングタスク処理エラー: {str(e)}")
+
+        # 6. データベース変更をコミット
+        try:
+            db.commit()
+            result["operations"].append("データベース変更をコミットしました")
+        except Exception as e:
+            db.rollback()
+            result["operations"].append(f"データベースコミットエラー: {str(e)}")
+            raise
+
+        # 7. 実行中のScrapyプロセスを停止（オプション）
+        try:
+            scrapy_processes = []
+            for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+                try:
+                    if proc.info['cmdline'] and any('scrapy crawlwithwatchdog' in ' '.join(proc.info['cmdline']) for _ in [1]):
+                        scrapy_processes.append(proc.info['pid'])
+                        proc.terminate()
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+
+            if scrapy_processes:
+                result["operations"].append(f"実行中のScrapyプロセス {len(scrapy_processes)}件を停止")
+            else:
+                result["operations"].append("実行中のScrapyプロセスはありませんでした")
+        except Exception as e:
+            result["operations"].append(f"Scrapyプロセス停止エラー: {str(e)}")
+
+        # 8. 最終確認
+        try:
+            final_running = db.query(DBTask).filter(DBTask.status == TaskStatus.RUNNING).count()
+            final_pending = db.query(DBTask).filter(DBTask.status == TaskStatus.PENDING).count()
+
+            result["final_status"] = {
+                "running_tasks": final_running,
+                "pending_tasks": final_pending,
+                "all_cleared": (final_running == 0 and final_pending == 0)
+            }
+
+            if result["final_status"]["all_cleared"]:
+                result["operations"].append("✅ すべてのワーカータスクが正常にクリアされました")
+            else:
+                result["operations"].append(f"⚠️ まだアクティブなタスクがあります: 実行中{final_running}件, ペンディング{final_pending}件")
+        except Exception as e:
+            result["operations"].append(f"最終確認エラー: {str(e)}")
+
+        print("🎉 ワーカータスククリア処理完了")
+        return result
+
+    except Exception as e:
+        print(f"❌ ワーカータスククリアエラー: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to clear worker tasks: {str(e)}"
         )

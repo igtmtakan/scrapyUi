@@ -123,6 +123,8 @@ export default function SchedulesPage() {
   })
   const [isResettingTasks, setIsResettingTasks] = useState(false)
 
+
+
   // 管理者権限チェック関数
   const isAdmin = (user: any) => {
     if (!user) return false
@@ -327,8 +329,12 @@ export default function SchedulesPage() {
   }
 
   // 待機タスクをリセット
-  const handleResetPendingTasks = async () => {
-    if (!confirm('古い待機タスクと孤立タスクをキャンセルしますか？\n\n以下の処理を実行します：\n• 24時間以上前の待機タスクをキャンセル\n• 関連するスケジュールが存在しない孤立タスクをキャンセル\n\nこの操作により、タスクキューがクリアされます。')) {
+  const handleResetPendingTasks = async (resetAll: boolean = false) => {
+    const confirmMessage = resetAll
+      ? '⚠️ 全ての実行中・待機中タスクをキャンセルしますか？\n\nこの操作は元に戻せません。\n\n• 実行中のタスクを強制停止\n• 待機中のタスクをキャンセル\n• 全てのタスクキューをクリア'
+      : '古い待機タスクと孤立タスクをキャンセルしますか？\n\n以下の処理を実行します：\n• 24時間以上前の待機タスクをキャンセル\n• 関連するスケジュールが存在しない孤立タスクをキャンセル\n\nこの操作により、タスクキューがクリアされます。'
+
+    if (!confirm(confirmMessage)) {
       return
     }
 
@@ -336,30 +342,45 @@ export default function SchedulesPage() {
       setIsResettingTasks(true)
       const response = await apiClient.post('/api/schedules/pending-tasks/reset', {
         hours_back: 24,
-        cleanup_orphaned: true
+        cleanup_orphaned: true,
+        reset_all: resetAll
       })
 
-      const { cancelled_count, orphaned_count, total_cancelled, remaining_pending } = response.data
+      const { cancelled_count, running_count, orphaned_count, total_cancelled, remaining_pending, remaining_running } = response.data
 
-      let message = '✅ タスクリセット完了\n\n'
-      if (cancelled_count > 0) {
-        message += `• 古い待機タスク: ${cancelled_count} 個キャンセル\n`
+      if (resetAll) {
+        let message = '✅ 全てのタスクをクリアしました\n\n'
+        if (running_count > 0) {
+          message += `• 実行中タスク: ${running_count} 個停止\n`
+        }
+        if (cancelled_count > 0) {
+          message += `• 待機中タスク: ${cancelled_count} 個キャンセル\n`
+        }
+        if (total_cancelled === 0) {
+          message += '• キャンセル対象のタスクはありませんでした\n'
+        }
+        message += `\n残りタスク: 実行中 ${remaining_running} 個、待機中 ${remaining_pending} 個`
+        alert(message)
+      } else {
+        let message = '✅ タスクリセット完了\n\n'
+        if (cancelled_count > 0) {
+          message += `• 古い待機タスク: ${cancelled_count} 個キャンセル\n`
+        }
+        if (orphaned_count > 0) {
+          message += `• 孤立タスク: ${orphaned_count} 個キャンセル\n`
+        }
+        if (total_cancelled === 0) {
+          message += '• キャンセル対象のタスクはありませんでした\n'
+        }
+        message += `\n残り待機タスク: ${remaining_pending} 個`
+        alert(message)
       }
-      if (orphaned_count > 0) {
-        message += `• 孤立タスク: ${orphaned_count} 個キャンセル\n`
-      }
-      if (total_cancelled === 0) {
-        message += '• キャンセル対象のタスクはありませんでした\n'
-      }
-      message += `\n残り待機タスク: ${remaining_pending} 個`
-
-      alert(message)
 
       // 待機タスク情報を再取得
       await loadPendingTasksInfo()
     } catch (error: any) {
       console.error('Failed to reset pending tasks:', error)
-      alert(error.response?.data?.detail || '待機タスクのリセットに失敗しました')
+      alert(error.response?.data?.detail || 'タスクリセットに失敗しました')
     } finally {
       setIsResettingTasks(false)
     }
@@ -424,15 +445,374 @@ export default function SchedulesPage() {
   const handleRunScheduleNow = async (scheduleId: string) => {
     try {
       const result = await scheduleService.runSchedule(scheduleId)
-      alert(`スケジュールを実行しました。タスクID: ${result.task_id}`)
+
+      // リアルタイム実行の場合は別ウィンドウで進捗モニターを表示
+      if (result.realtime && result.task_id) {
+        // 別ウィンドウを開く（スパイダーページと同じ仕様）
+        const streamingWindow = window.open('', '_blank', 'width=1200,height=800');
+        if (!streamingWindow) {
+          alert('ポップアップがブロックされました。ポップアップを許可してください。');
+          return;
+        }
+
+        // ウィンドウにリアルタイム進捗表示のHTMLを設定（スパイダーページと同じ仕様）
+        const htmlContent = `<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>リアルタイム実行監視 - Schedule ${scheduleId}</title>
+            <style>
+              body {
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+                background: #111827;
+                color: #f9fafb;
+                padding: 20px;
+                margin: 0;
+                line-height: 1.6;
+              }
+              .header {
+                background: #1f2937;
+                padding: 20px;
+                margin-bottom: 20px;
+                border-radius: 8px;
+                border: 1px solid #374151;
+              }
+              .header h1 {
+                margin: 0 0 10px 0;
+                color: #60a5fa;
+                font-size: 24px;
+              }
+              .header p {
+                margin: 5px 0;
+                color: #d1d5db;
+              }
+              .progress-container {
+                background: #1f2937;
+                border: 1px solid #374151;
+                border-radius: 8px;
+                padding: 20px;
+                margin-bottom: 20px;
+              }
+              .progress-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                gap: 15px;
+                margin-bottom: 20px;
+              }
+              .progress-item {
+                background: #374151;
+                padding: 15px;
+                border-radius: 6px;
+                text-align: center;
+              }
+              .progress-item .label {
+                font-size: 12px;
+                color: #9ca3af;
+                margin-bottom: 5px;
+              }
+              .progress-item .value {
+                font-size: 20px;
+                font-weight: bold;
+                color: #60a5fa;
+              }
+              .progress-bar {
+                width: 100%;
+                height: 8px;
+                background: #374151;
+                border-radius: 4px;
+                overflow: hidden;
+                margin: 10px 0;
+              }
+              .progress-bar-fill {
+                height: 100%;
+                background: linear-gradient(90deg, #3b82f6, #60a5fa);
+                transition: width 0.3s ease;
+                width: 0%;
+              }
+              .status {
+                padding: 15px;
+                background: #1f2937;
+                border: 1px solid #374151;
+                border-radius: 8px;
+                margin-bottom: 20px;
+              }
+              .status.running {
+                border-color: #10b981;
+                background: #064e3b;
+              }
+              .status.completed {
+                border-color: #3b82f6;
+                background: #1e3a8a;
+              }
+              .status.error {
+                border-color: #ef4444;
+                background: #7f1d1d;
+              }
+              .logs {
+                background: #000;
+                color: #00ff00;
+                padding: 15px;
+                border-radius: 8px;
+                height: 300px;
+                overflow-y: auto;
+                font-family: 'Courier New', monospace;
+                font-size: 12px;
+                white-space: pre-wrap;
+                border: 1px solid #374151;
+              }
+              .connection-status {
+                position: fixed;
+                top: 20px;
+                right: 20px;
+                padding: 8px 12px;
+                border-radius: 4px;
+                font-size: 12px;
+                font-weight: bold;
+              }
+              .connection-status.connected {
+                background: #10b981;
+                color: white;
+              }
+              .connection-status.disconnected {
+                background: #ef4444;
+                color: white;
+              }
+              .connection-status.connecting {
+                background: #f59e0b;
+                color: white;
+              }
+            </style>
+          </head>
+          <body>
+            <div class="connection-status" id="connectionStatus">接続中...</div>
+
+            <div class="header">
+              <h1>🕷️ リアルタイム実行監視</h1>
+              <p><strong>スケジュールID:</strong> ${scheduleId}</p>
+              <p><strong>タスクID:</strong> ${result.task_id}</p>
+              <p><strong>コマンド:</strong> ${result.command || 'scrapy crawlwithwatchdog'}</p>
+              <p><strong>開始時刻:</strong> ${new Date().toLocaleString('ja-JP')}</p>
+            </div>
+
+            <div class="progress-container">
+              <h3 style="margin-top: 0; color: #60a5fa;">📊 進捗統計</h3>
+              <div class="progress-grid">
+                <div class="progress-item">
+                  <div class="label">アイテム数</div>
+                  <div class="value" id="itemsCount">0</div>
+                </div>
+                <div class="progress-item">
+                  <div class="label">リクエスト数</div>
+                  <div class="value" id="requestsCount">0</div>
+                </div>
+                <div class="progress-item">
+                  <div class="label">レスポンス数</div>
+                  <div class="value" id="responsesCount">0</div>
+                </div>
+                <div class="progress-item">
+                  <div class="label">エラー数</div>
+                  <div class="value" id="errorsCount">0</div>
+                </div>
+                <div class="progress-item">
+                  <div class="label">経過時間</div>
+                  <div class="value" id="elapsedTime">0秒</div>
+                </div>
+                <div class="progress-item">
+                  <div class="label">アイテム/分</div>
+                  <div class="value" id="itemsPerMinute">0</div>
+                </div>
+              </div>
+
+              <div class="progress-bar">
+                <div class="progress-bar-fill" id="progressBarFill"></div>
+              </div>
+              <div style="text-align: center; margin-top: 5px; color: #9ca3af;">
+                進捗: <span id="progressPercentage">0%</span>
+              </div>
+            </div>
+
+            <div class="status" id="taskStatus">
+              <strong>ステータス:</strong> <span id="statusText">初期化中...</span>
+            </div>
+
+            <div>
+              <h3 style="color: #60a5fa; margin-bottom: 10px;">📝 実行ログ</h3>
+              <div class="logs" id="logs">リアルタイム進捗データを待機中...\n</div>
+            </div>
+
+            <script>
+              const taskId = '${result.task_id}';
+              let ws = null;
+              let isConnected = false;
+              let startTime = Date.now();
+
+              // DOM要素の取得
+              const elements = {
+                connectionStatus: document.getElementById('connectionStatus'),
+                itemsCount: document.getElementById('itemsCount'),
+                requestsCount: document.getElementById('requestsCount'),
+                responsesCount: document.getElementById('responsesCount'),
+                errorsCount: document.getElementById('errorsCount'),
+                elapsedTime: document.getElementById('elapsedTime'),
+                itemsPerMinute: document.getElementById('itemsPerMinute'),
+                progressBarFill: document.getElementById('progressBarFill'),
+                progressPercentage: document.getElementById('progressPercentage'),
+                taskStatus: document.getElementById('taskStatus'),
+                statusText: document.getElementById('statusText'),
+                logs: document.getElementById('logs')
+              };
+
+              // WebSocket接続
+              function connectWebSocket() {
+                try {
+                  const wsUrl = 'ws://localhost:8000/ws/progress/' + taskId;
+                  console.log('Connecting to WebSocket:', wsUrl);
+
+                  ws = new WebSocket(wsUrl);
+
+                  ws.onopen = function() {
+                    console.log('WebSocket connected to:', wsUrl);
+                    isConnected = true;
+                    elements.connectionStatus.textContent = '接続済み';
+                    elements.connectionStatus.className = 'connection-status connected';
+
+                    addLog('🔗 WebSocket接続が確立されました: ' + wsUrl);
+                    addLog('🎯 タスクID: ' + taskId);
+                    elements.statusText.textContent = 'WebSocket接続済み - 進捗データを待機中';
+                  };
+
+                  ws.onmessage = function(event) {
+                    try {
+                      const data = JSON.parse(event.data);
+                      handleProgressUpdate(data);
+                    } catch (e) {
+                      console.error('Failed to parse WebSocket message:', e);
+                      addLog('⚠️ WebSocketメッセージの解析に失敗: ' + event.data);
+                    }
+                  };
+
+                  ws.onclose = function() {
+                    console.log('WebSocket disconnected');
+                    isConnected = false;
+                    elements.connectionStatus.textContent = '切断';
+                    elements.connectionStatus.className = 'connection-status disconnected';
+                    addLog('🔌 WebSocket接続が切断されました');
+
+                    // 5秒後に再接続を試行
+                    setTimeout(connectWebSocket, 5000);
+                  };
+
+                  ws.onerror = function(error) {
+                    console.error('WebSocket error:', error);
+                    console.error('WebSocket URL:', wsUrl);
+                    console.error('WebSocket readyState:', ws ? ws.readyState : 'undefined');
+                    addLog('❌ WebSocketエラーが発生しました: ' + wsUrl);
+                    addLog('🔍 readyState: ' + (ws ? ws.readyState : 'undefined'));
+                  };
+
+                } catch (error) {
+                  console.error('Failed to connect WebSocket:', error);
+                  addLog('❌ WebSocket接続に失敗しました: ' + error.message);
+                }
+              }
+
+              // 進捗データの更新
+              function handleProgressUpdate(data) {
+                console.log('Progress update:', data);
+
+                if (data.task_id === taskId) {
+                  // 統計情報の更新
+                  if (data.items_count !== undefined) {
+                    elements.itemsCount.textContent = data.items_count.toLocaleString();
+                  }
+                  if (data.requests_count !== undefined) {
+                    elements.requestsCount.textContent = data.requests_count.toLocaleString();
+                  }
+                  if (data.responses_count !== undefined) {
+                    elements.responsesCount.textContent = data.responses_count.toLocaleString();
+                  }
+                  if (data.errors_count !== undefined) {
+                    elements.errorsCount.textContent = data.errors_count.toLocaleString();
+                  }
+                  if (data.items_per_minute !== undefined) {
+                    elements.itemsPerMinute.textContent = Math.round(data.items_per_minute).toLocaleString();
+                  }
+
+                  // 進捗バーの更新
+                  if (data.progress_percentage !== undefined) {
+                    const percentage = Math.min(100, Math.max(0, data.progress_percentage));
+                    elements.progressBarFill.style.width = percentage + '%';
+                    elements.progressPercentage.textContent = percentage.toFixed(1) + '%';
+                  }
+
+                  // ステータスの更新
+                  if (data.status) {
+                    elements.statusText.textContent = data.status;
+                    elements.taskStatus.className = 'status ' + (data.status.includes('完了') ? 'completed' : 'running');
+                  }
+
+                  // ログの追加
+                  if (data.message) {
+                    addLog(data.message);
+                  }
+                }
+              }
+
+              // ログの追加
+              function addLog(message) {
+                const timestamp = new Date().toLocaleTimeString('ja-JP');
+                elements.logs.textContent += '[' + timestamp + '] ' + message + '\n';
+                elements.logs.scrollTop = elements.logs.scrollHeight;
+              }
+
+              // 経過時間の更新
+              function updateElapsedTime() {
+                const elapsed = Math.floor((Date.now() - startTime) / 1000);
+                const minutes = Math.floor(elapsed / 60);
+                const seconds = elapsed % 60;
+
+                if (minutes > 0) {
+                  elements.elapsedTime.textContent = minutes + '分' + seconds + '秒';
+                } else {
+                  elements.elapsedTime.textContent = seconds + '秒';
+                }
+              }
+
+              // 初期化
+              connectWebSocket();
+              setInterval(updateElapsedTime, 1000);
+
+              // ページが閉じられる時にWebSocketを閉じる
+              window.addEventListener('beforeunload', function() {
+                if (ws) {
+                  ws.close();
+                }
+              });
+            </script>
+          </body>
+          </html>`;
+
+        streamingWindow.document.write(htmlContent);
+        streamingWindow.document.close();
+
+        alert(`リアルタイム実行を開始しました。別ウィンドウで進捗を確認できます。\nタスクID: ${result.task_id}`)
+      } else {
+        alert(`スケジュールを実行しました。タスクID: ${result.task_id}`)
+      }
+
       // 最終実行時刻を更新
       loadSchedules()
     } catch (error: any) {
+      console.error('Schedule run error:', error);
+
       if (error.response?.status === 409) {
         // 重複実行エラーの場合
-        alert(`⚠️ 重複実行防止: ${error.response?.data?.detail || '同じスパイダーが既に実行中です。実行中のタスクが完了してから再試行してください。'}`)
+        const detail = error.response?.data?.detail || '同じスパイダーが既に実行中です。実行中のタスクが完了してから再試行してください。';
+        alert(`⚠️ 重複実行防止\n\n${detail}\n\n💡 ヒント: スケジュールページを更新して実行中タスクの状況を確認してください。`);
       } else {
-        alert(error.response?.data?.detail || 'スケジュールの実行に失敗しました')
+        const detail = error.response?.data?.detail || 'スケジュールの実行に失敗しました';
+        alert(`❌ 実行エラー\n\n${detail}\n\nエラーコード: ${error.response?.status || 'Unknown'}`);
       }
     }
   }
@@ -653,36 +1033,59 @@ export default function SchedulesPage() {
 
               {/* リセットボタン（管理者のみ表示） */}
               {isAdmin(user) && (
-                <button
-                  onClick={handleResetPendingTasks}
-                  disabled={isResettingTasks || pendingTasksInfo.total_pending === 0}
-                  className={`w-full flex items-center justify-center space-x-2 px-3 py-2 rounded text-sm transition-colors mt-3 ${
-                    pendingTasksInfo.total_pending === 0
-                      ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
-                      : 'bg-red-600 hover:bg-red-700 disabled:bg-red-800'
-                  }`}
-                  title={pendingTasksInfo.total_pending === 0
-                    ? '待機タスクがありません'
-                    : '古い待機タスクと孤立タスクをキャンセル'
-                  }
-                >
-                  {isResettingTasks ? (
-                    <>
-                      <RefreshCw className="w-4 h-4 animate-spin" />
-                      <span>処理中...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Trash2 className="w-4 h-4" />
-                      <span>
-                        {pendingTasksInfo.total_pending === 0
-                          ? 'タスクなし'
-                          : `タスクリセット (${pendingTasksInfo.total_pending})`
-                        }
-                      </span>
-                    </>
-                  )}
-                </button>
+                <div className="space-y-2 mt-3">
+                  {/* 通常のリセットボタン */}
+                  <button
+                    onClick={() => handleResetPendingTasks(false)}
+                    disabled={isResettingTasks || pendingTasksInfo.total_pending === 0}
+                    className={`w-full flex items-center justify-center space-x-2 px-3 py-2 rounded text-sm transition-colors ${
+                      pendingTasksInfo.total_pending === 0
+                        ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
+                        : 'bg-red-600 hover:bg-red-700 disabled:bg-red-800'
+                    }`}
+                    title={pendingTasksInfo.total_pending === 0
+                      ? '待機タスクがありません'
+                      : '古い待機タスクと孤立タスクをキャンセル'
+                    }
+                  >
+                    {isResettingTasks ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        <span>処理中...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Trash2 className="w-4 h-4" />
+                        <span>
+                          {pendingTasksInfo.total_pending === 0
+                            ? 'タスクなし'
+                            : `タスクリセット (${pendingTasksInfo.total_pending})`
+                          }
+                        </span>
+                      </>
+                    )}
+                  </button>
+
+                  {/* 全てクリアボタン */}
+                  <button
+                    onClick={() => handleResetPendingTasks(true)}
+                    disabled={isResettingTasks}
+                    className="w-full flex items-center justify-center space-x-2 px-3 py-2 rounded text-sm transition-colors bg-red-800 hover:bg-red-900 disabled:bg-red-900"
+                    title="全ての実行中・待機中タスクを強制キャンセル"
+                  >
+                    {isResettingTasks ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        <span>処理中...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Trash2 className="w-4 h-4" />
+                        <span>全てクリア</span>
+                      </>
+                    )}
+                  </button>
+                </div>
               )}
 
               {/* 待機タスクがない場合のメッセージ */}
@@ -1420,6 +1823,8 @@ export default function SchedulesPage() {
           </div>
         </div>
       )}
+
+
     </div>
   )
 }

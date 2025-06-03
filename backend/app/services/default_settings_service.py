@@ -255,6 +255,8 @@ class DefaultSettingsService:
             base_settings.update(self.get_ecommerce_settings())
         elif spider_type == "amazon-ranking60":
             base_settings.update(self.get_amazon_ranking60_settings())
+        elif spider_type == "puppeteer":
+            base_settings.update(self.get_puppeteer_settings())
 
         return base_settings
     
@@ -384,7 +386,61 @@ class DefaultSettingsService:
                 },
             }
         }
-    
+
+    def get_puppeteer_settings(self) -> Dict[str, Any]:
+        """Node.js Puppeteer用設定"""
+        return {
+            'DOWNLOAD_DELAY': 2.0,
+            'RANDOMIZE_DOWNLOAD_DELAY': 0.5,
+            'CONCURRENT_REQUESTS': 1,
+            'CONCURRENT_REQUESTS_PER_DOMAIN': 1,
+            'AUTOTHROTTLE_ENABLED': True,
+            'AUTOTHROTTLE_START_DELAY': 1,
+            'AUTOTHROTTLE_MAX_DELAY': 10,
+            'AUTOTHROTTLE_TARGET_CONCURRENCY': 1.0,
+            'USER_AGENT': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'DEFAULT_REQUEST_HEADERS': {
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+                'Accept-Language': 'ja,en-US;q=0.9,en;q=0.8',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'Cache-Control': 'no-cache',
+                'Sec-Fetch-Dest': 'document',
+                'Sec-Fetch-Mode': 'navigate',
+                'Sec-Fetch-Site': 'none',
+                'Sec-Fetch-User': '?1',
+                'Upgrade-Insecure-Requests': '1',
+            },
+            # Puppeteer特有の設定
+            'PUPPETEER_SERVICE_URL': 'http://localhost:3001',
+            'PUPPETEER_TIMEOUT': 30000,
+            'PUPPETEER_WAIT_FOR': 3000,
+            'PUPPETEER_VIEWPORT': {'width': 1920, 'height': 1080},
+            'PUPPETEER_HEADLESS': True,
+            'FEEDS': {
+                'puppeteer_results.jsonl': {
+                    'format': 'jsonlines',
+                    'encoding': 'utf8',
+                    'store_empty': False,
+                    'item_export_kwargs': {
+                        'ensure_ascii': False,
+                    },
+                },
+                'puppeteer_results.json': {
+                    'format': 'json',
+                    'encoding': 'utf8',
+                    'store_empty': False,
+                    'item_export_kwargs': {
+                        'ensure_ascii': False,
+                    },
+                },
+                'puppeteer_results.csv': {
+                    'format': 'csv',
+                    'encoding': 'utf8',
+                    'store_empty': False,
+                },
+            }
+        }
+
     def get_export_settings(self) -> Dict[str, Any]:
         """エクスポート設定を取得"""
         return self.default_settings["export_settings"]

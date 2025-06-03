@@ -20,6 +20,7 @@ import {
   Settings,
   BarChart3
 } from 'lucide-react';
+import { WorkerTaskClearButton } from '@/components/admin/WorkerTaskClearButton';
 
 interface User {
   id: string;
@@ -617,6 +618,7 @@ export default function AdminPage() {
             <p className="mt-2 text-gray-600">システムユーザーの管理と統計情報</p>
           </div>
           <div className="flex space-x-3">
+            <WorkerTaskClearButton />
             <button
               onClick={() => handleAutoRecovery(24)}
               disabled={autoRecoveryLoading}

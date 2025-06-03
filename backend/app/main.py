@@ -21,8 +21,10 @@ from .middleware.error_middleware import (
     PerformanceLoggingMiddleware
 )
 
-from .api import projects, spiders, tasks, results, schedules, notifications, auth, proxies, ai, admin, script_runner, project_files, performance, system, database_config, settings, timezone, websocket_progress
-# from .api import shell, extensions  # 一時的に無効化
+from .api import projects, spiders, tasks, results, schedules, notifications, auth, proxies, ai, admin, script_runner, project_files, performance, system, settings, timezone, websocket_progress
+# from .api import extensions  # テンプレート管理API - 一時的に無効化
+# from .api import database_config  # 一時的に無効化
+# from .api import shell  # 一時的に無効化
 from .api.routes import nodejs_integration
 # from .api import settings
 from .database import engine, Base
@@ -37,6 +39,17 @@ setup_logging(
 )
 
 logger = get_logger(__name__)
+
+# データベース接続情報をログ出力
+from .config.database_config import get_database_config
+db_config = get_database_config()
+logger.info(f"🗄️  Database Configuration:")
+logger.info(f"   Type: {db_config.type}")
+logger.info(f"   Host: {db_config.host}")
+logger.info(f"   Port: {db_config.port}")
+logger.info(f"   Database: {db_config.database}")
+logger.info(f"   Username: {db_config.username}")
+logger.info(f"   Engine URL: {engine.url}")
 
 # データベーステーブルの作成
 Base.metadata.create_all(bind=engine)
@@ -433,9 +446,9 @@ app.include_router(notifications.router, prefix="/api/notifications", tags=["not
 app.include_router(proxies.router, prefix="/api/proxies", tags=["proxies"])
 app.include_router(ai.router, prefix="/api/ai", tags=["ai-analysis"])
 # app.include_router(shell.router, prefix="/api/shell", tags=["scrapy-shell"])  # 一時的に無効化
-app.include_router(database_config.router, prefix="/api/database", tags=["database-config"])
+# app.include_router(database_config.router, prefix="/api/database", tags=["database-config"])  # 一時的に無効化
 app.include_router(settings.router, prefix="/api/settings", tags=["settings"])
-# app.include_router(extensions.router, prefix="/api", tags=["extensions"])  # 一時的に無効化
+# app.include_router(extensions.router, prefix="/api", tags=["extensions"])  # テンプレート管理API - 一時的に無効化
 app.include_router(admin.router, tags=["admin"])
 app.include_router(script_runner.router, prefix="/api/script", tags=["script-runner"])
 app.include_router(nodejs_integration.router, prefix="/api/nodejs", tags=["nodejs-integration"])
@@ -514,6 +527,7 @@ async def startup_event():
         from .services.scrapy_service import ScrapyPlaywrightService
         from .services.scheduler_service import scheduler_service
         from .services.task_sync_service import task_sync_service
+        from .services.task_executor import task_executor
 
         # ScrapyServiceのシングルトンインスタンスを取得
         scrapy_service_instance = ScrapyPlaywrightService()
@@ -530,6 +544,10 @@ async def startup_event():
         # タスクアイテム数同期サービスを開始
         task_sync_service.start()
         logger.info("🔧 Task sync service started")
+
+        # タスクエグゼキューターを開始
+        task_executor.start()
+        logger.info("🚀 Task executor started")
 
         # リアルタイムWebSocket管理を開始
         realtime_websocket_manager.start()
@@ -570,6 +588,11 @@ async def shutdown_event():
         from .services.task_sync_service import task_sync_service
         task_sync_service.stop()
         logger.info("🔧 Task sync service stopped")
+
+        # タスクエグゼキューターを停止
+        from .services.task_executor import task_executor
+        task_executor.stop()
+        logger.info("🚀 Task executor stopped")
 
         logger.info("🛑 ScrapyUI Application shutdown completed")
         print("🛑 ScrapyUI Application shutdown completed")

@@ -114,7 +114,7 @@ export default function RealtimeProgressMonitor({
     setConnectionStatus('connecting');
 
     try {
-      const wsUrl = `ws://localhost:8000/ws/realtime-progress`;
+      const wsUrl = `ws://localhost:8000/ws/progress/${taskId}`;
       console.log(`🔗 Attempting WebSocket connection to: ${wsUrl}`);
 
       wsRef.current = new WebSocket(wsUrl);
@@ -124,43 +124,58 @@ export default function RealtimeProgressMonitor({
         setIsConnected(true);
         setConnectionStatus('connected');
         setReconnectAttempts(0);
-
-        // 接続確認メッセージを送信（少し遅延を入れて確実に接続完了後に送信）
-        setTimeout(() => {
-          const message = {
-            task_id: taskId,
-            action: 'subscribe',
-            timestamp: new Date().toISOString()
-          };
-
-          if (sendWebSocketMessage(message)) {
-            console.log('📡 Subscription message sent:', message);
-          } else {
-            console.warn('⚠️ Failed to send subscription message');
-          }
-        }, 100); // 100ms遅延
       };
 
       wsRef.current.onmessage = (event) => {
         try {
           console.log('📨 WebSocket message received:', event.data);
 
-          // 接続確認メッセージの場合
-          if (typeof event.data === 'string' && event.data.startsWith('Connected:')) {
-            console.log('✅ WebSocket connection confirmed');
-            return;
-          }
-
-          const message: WebSocketMessage = JSON.parse(event.data);
+          const message = JSON.parse(event.data);
           console.log('📊 Parsed message:', message);
 
-          // 対象のタスクIDのメッセージのみ処理
-          if (message.task_id && message.task_id !== taskId) {
-            console.log(`⏭️ Skipping message for different task: ${message.task_id}`);
-            return;
-          }
+          // Rich進捗バー用メッセージの処理
+          if (message.type === 'rich_progress' && message.data) {
+            const progressData = message.data;
 
-          handleWebSocketMessage(message);
+            // 進捗率を計算（アイテム数ベース、最低でも1%は表示）
+            const itemsScraped = progressData.itemsScraped || 0;
+            const requestsCount = progressData.requestsCount || 0;
+            let progressPercentage = 0;
+
+            if (requestsCount > 0) {
+              // リクエスト数に基づいて進捗を計算
+              progressPercentage = Math.min((itemsScraped / requestsCount) * 100, 100);
+            } else if (itemsScraped > 0) {
+              // アイテムがある場合は最低10%表示
+              progressPercentage = Math.max(10, Math.min(itemsScraped / 10, 100));
+            }
+
+            // 経過時間から速度を計算
+            const elapsedTime = progressData.elapsedTime || 0;
+            const itemsPerMinute = elapsedTime > 0 ? (itemsScraped / (elapsedTime / 60)) : 0;
+            const requestsPerMinute = elapsedTime > 0 ? (requestsCount / (elapsedTime / 60)) : 0;
+
+            // RealtimeProgressData形式に変換
+            const convertedProgress: RealtimeProgressData = {
+              items_count: itemsScraped,
+              requests_count: requestsCount,
+              responses_count: requestsCount, // レスポンス数はリクエスト数と同じと仮定
+              errors_count: progressData.errorCount || 0,
+              bytes_downloaded: 0, // バイト数は現在取得していない
+              elapsed_time: elapsedTime,
+              items_per_minute: itemsPerMinute,
+              requests_per_minute: requestsPerMinute,
+              progress_percentage: progressPercentage,
+              estimated_completion: progressData.estimatedTimeRemaining ?
+                new Date(Date.now() + (progressData.estimatedTimeRemaining * 1000)).toISOString() :
+                undefined
+            };
+
+            setProgress(convertedProgress);
+          } else if (message.type === 'error') {
+            console.error('Task error:', message.data);
+            onError?.(taskId, message.data);
+          }
 
         } catch (error) {
           console.error('Error parsing WebSocket message:', {
@@ -207,34 +222,6 @@ export default function RealtimeProgressMonitor({
     } catch (error) {
       console.error('Failed to connect WebSocket:', error);
       setConnectionStatus('disconnected');
-    }
-  };
-
-  const handleWebSocketMessage = (message: WebSocketMessage) => {
-    switch (message.type) {
-      case 'task_progress':
-        setProgress(message.data as RealtimeProgressData);
-        break;
-
-      case 'download_progress':
-        const downloadData = message.data as DownloadProgressData;
-        setRecentDownloads(prev => [downloadData, ...prev.slice(0, 9)]); // 最新10件
-        break;
-
-      case 'item_processed':
-        const itemData = message.data as ItemProgressData;
-        setRecentItems(prev => [itemData, ...prev.slice(0, 9)]); // 最新10件
-        break;
-
-      case 'task_error':
-        console.error('Task error:', message.data);
-        onError?.(taskId, message.data);
-        break;
-
-      case 'task_completion':
-        console.log('Task completed:', message.data);
-        onComplete?.(taskId);
-        break;
     }
   };
 

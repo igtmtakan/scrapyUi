@@ -1,11 +1,10 @@
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 import json
 import asyncio
 from typing import Dict, Set
 import logging
 
-from ..database import get_db, Task as DBTask
+from ..database import SessionLocal, Task as DBTask
 from ..services.realtime_websocket_manager import realtime_websocket_manager
 
 logger = logging.getLogger(__name__)
@@ -16,7 +15,7 @@ router = APIRouter()
 task_connections: Dict[str, Set[WebSocket]] = {}
 
 @router.websocket("/ws/progress/{task_id}")
-async def websocket_progress_endpoint(websocket: WebSocket, task_id: str, db: Session = Depends(get_db)):
+async def websocket_progress_endpoint(websocket: WebSocket, task_id: str):
     """
     Rich進捗バー用WebSocketエンドポイント
     特定のタスクの進捗情報をリアルタイムで送信
@@ -38,33 +37,53 @@ async def websocket_progress_endpoint(websocket: WebSocket, task_id: str, db: Se
 
     logger.info(f"📡 Rich進捗WebSocket接続: タスクID {task_id}, クライアント: {websocket.client}")
     logger.info(f"📡 現在の接続数: {len(task_connections[task_id])}")
-    
+
     try:
+        # データベースセッションを作成
+        db = SessionLocal()
+
         # 初期データを送信
         task = db.query(DBTask).filter(DBTask.id == task_id).first()
         if task:
+            # started_atがNULLの場合はcreated_atを使用
+            effective_start_time = task.started_at or task.created_at
+
+            # 経過時間を計算
+            elapsed_time = 0
+            if effective_start_time:
+                from datetime import datetime
+                if task.finished_at:
+                    elapsed_time = int((task.finished_at - effective_start_time).total_seconds())
+                else:
+                    elapsed_time = int((datetime.now() - effective_start_time).total_seconds())
+
+            # 進捗率を計算
+            progress_percentage = 0
+            items_scraped = task.items_count or 0
+            requests_count = task.requests_count or 0
+
+            if requests_count > 0:
+                progress_percentage = min((items_scraped / requests_count) * 100, 100)
+            elif items_scraped > 0:
+                # アイテムがある場合は最低10%表示
+                progress_percentage = max(10, min(items_scraped / 10, 100))
+
             initial_data = {
                 "type": "rich_progress",
                 "data": {
                     "taskId": task.id,
                     "status": task.status.value.lower() if task.status else "unknown",
-                    "itemsScraped": task.items_count or 0,
-                    "requestsCount": task.requests_count or 0,
+                    "itemsScraped": items_scraped,
+                    "requestsCount": requests_count,
                     "errorCount": task.error_count or 0,
-                    "startedAt": task.started_at.isoformat() if task.started_at else None,
+                    "startedAt": effective_start_time.isoformat() if effective_start_time else None,
                     "finishedAt": task.finished_at.isoformat() if task.finished_at else None,
-                    "elapsedTime": 0
+                    "elapsedTime": elapsed_time,
+                    "progressPercentage": progress_percentage,
+                    "itemsPerSecond": (items_scraped / max(elapsed_time, 1)) if elapsed_time > 0 else 0,
+                    "requestsPerSecond": (requests_count / max(elapsed_time, 1)) if elapsed_time > 0 else 0
                 }
             }
-
-            # 経過時間を計算
-            if task.started_at:
-                from datetime import datetime
-                if task.finished_at:
-                    elapsed = (task.finished_at - task.started_at).total_seconds()
-                else:
-                    elapsed = (datetime.now() - task.started_at).total_seconds()
-                initial_data["data"]["elapsedTime"] = int(elapsed)
 
             try:
                 await websocket.send_text(json.dumps(initial_data, ensure_ascii=False))
@@ -93,30 +112,48 @@ async def websocket_progress_endpoint(websocket: WebSocket, task_id: str, db: Se
             # 30秒ごとにタスクデータを更新して送信
             await asyncio.sleep(30)
             
-            # 最新のタスクデータを取得
-            task = db.query(DBTask).filter(DBTask.id == task_id).first()
+            # 最新のタスクデータを取得（新しいセッションを使用）
+            with SessionLocal() as fresh_db:
+                task = fresh_db.query(DBTask).filter(DBTask.id == task_id).first()
             if task:
+                # started_atがNULLの場合はcreated_atを使用
+                effective_start_time = task.started_at or task.created_at
+
                 # 経過時間を計算
                 elapsed_time = 0
-                if task.started_at:
+                if effective_start_time:
                     from datetime import datetime
                     if task.finished_at:
-                        elapsed_time = int((task.finished_at - task.started_at).total_seconds())
+                        elapsed_time = int((task.finished_at - effective_start_time).total_seconds())
                     else:
-                        elapsed_time = int((datetime.now() - task.started_at).total_seconds())
-                
+                        elapsed_time = int((datetime.now() - effective_start_time).total_seconds())
+
+                # 進捗率を計算
+                progress_percentage = 0
+                items_scraped = task.items_count or 0
+                requests_count = task.requests_count or 0
+
+                if requests_count > 0:
+                    progress_percentage = min((items_scraped / requests_count) * 100, 100)
+                elif items_scraped > 0:
+                    # アイテムがある場合は最低10%表示
+                    progress_percentage = max(10, min(items_scraped / 10, 100))
+
                 # 進捗データを作成
                 progress_data = {
                     "type": "rich_progress",
                     "data": {
                         "taskId": task.id,
                         "status": task.status.value.lower() if task.status else "unknown",
-                        "itemsScraped": task.items_count or 0,
-                        "requestsCount": task.requests_count or 0,
+                        "itemsScraped": items_scraped,
+                        "requestsCount": requests_count,
                         "errorCount": task.error_count or 0,
-                        "startedAt": task.started_at.isoformat() if task.started_at else None,
+                        "startedAt": effective_start_time.isoformat() if effective_start_time else None,
                         "finishedAt": task.finished_at.isoformat() if task.finished_at else None,
-                        "elapsedTime": elapsed_time
+                        "elapsedTime": elapsed_time,
+                        "progressPercentage": progress_percentage,
+                        "itemsPerSecond": (items_scraped / max(elapsed_time, 1)) if elapsed_time > 0 else 0,
+                        "requestsPerSecond": (requests_count / max(elapsed_time, 1)) if elapsed_time > 0 else 0
                     }
                 }
                 
@@ -155,6 +192,12 @@ async def websocket_progress_endpoint(websocket: WebSocket, task_id: str, db: Se
         logger.error(f"❌ Rich進捗WebSocketエラー: {type(e).__name__}: {str(e)}")
         logger.error(f"❌ タスクID: {task_id}, クライアント: {websocket.client}")
     finally:
+        # データベースセッションをクリーンアップ
+        try:
+            db.close()
+        except:
+            pass
+
         # 接続を削除
         if task_id in task_connections:
             task_connections[task_id].discard(websocket)

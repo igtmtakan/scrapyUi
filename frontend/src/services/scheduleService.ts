@@ -57,6 +57,8 @@ export interface ScheduleRunResponse {
   message: string;
   task_id: string;
   schedule_id: string;
+  realtime?: boolean;
+  command?: string;
 }
 
 export interface Project {

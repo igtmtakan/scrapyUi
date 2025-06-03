@@ -3,10 +3,10 @@ from pydantic import BaseModel
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 
-from app.api.auth import get_current_active_user
-from app.database import User, UserRole
-from app.config.database_config import get_database_config, db_config_manager, DatabaseType
-from app.services.database_service import get_database_service, close_all_services
+from .auth import get_current_active_user
+from ..database import User, UserRole
+from ..config.database_config import get_database_config, db_config_manager, DatabaseType
+from ..services.database_service import get_database_service
 
 router = APIRouter()
 

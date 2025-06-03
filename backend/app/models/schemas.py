@@ -12,9 +12,9 @@ class TaskStatus(str, Enum):
     CANCELLED = "CANCELLED"
 
 class UserRole(str, Enum):
-    USER = "user"
-    ADMIN = "admin"
-    MODERATOR = "moderator"
+    USER = "USER"
+    ADMIN = "ADMIN"
+    MODERATOR = "MODERATOR"
 
 # Project schemas
 class ProjectBase(BaseModel):

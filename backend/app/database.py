@@ -9,12 +9,12 @@ import os
 
 from .config.database_config import get_database_config, DatabaseType
 
-# データベース設定を取得
-db_config = get_database_config()
-
 # SQLAlchemyエンジンとセッション
 def create_database_engine():
     """データベースエンジンを作成"""
+    # データベース設定を動的に取得
+    db_config = get_database_config()
+
     if db_config.type in [DatabaseType.SQLITE, DatabaseType.MYSQL, DatabaseType.POSTGRESQL]:
         connection_url = db_config.get_connection_url()
 
@@ -70,19 +70,19 @@ class TaskStatus(enum.Enum):
     CANCELLED = "CANCELLED"
 
 class UserRole(enum.Enum):
-    USER = "user"
-    ADMIN = "admin"
-    MODERATOR = "moderator"
+    USER = "USER"
+    ADMIN = "ADMIN"
+    MODERATOR = "MODERATOR"
 
 # Models
 class Project(Base):
     __tablename__ = "projects"
 
-    id = Column(String, primary_key=True, index=True)
-    name = Column(String, index=True, nullable=False)
+    id = Column(String(36), primary_key=True, index=True)
+    name = Column(String(255), index=True, nullable=False)
     description = Column(Text)
-    path = Column(String, unique=True, nullable=False)
-    scrapy_version = Column(String, default="2.11.0")
+    path = Column(String(500), unique=True, nullable=False)
+    scrapy_version = Column(String(50), default="2.11.0")
     settings = Column(JSON)
     is_active = Column(Boolean, default=True)  # is_activeフィールドを追加
     db_save_enabled = Column(Boolean, default=True, nullable=False)  # 結果をDBに保存するかどうか
@@ -90,7 +90,7 @@ class Project(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     # Foreign Keys
-    user_id = Column(String, ForeignKey("users.id"), nullable=False)
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=False)
 
     # Relationships
     user = relationship("User")
@@ -106,20 +106,20 @@ class Project(Base):
 class Spider(Base):
     __tablename__ = "spiders"
 
-    id = Column(String, primary_key=True, index=True)
-    name = Column(String, nullable=False)
+    id = Column(String(36), primary_key=True, index=True)
+    name = Column(String(255), nullable=False)
     description = Column(Text)
     code = Column(Text, nullable=False)
-    template = Column(String)
-    framework = Column(String)
+    template = Column(String(100))
+    framework = Column(String(50))
     start_urls = Column(JSON)
     settings = Column(JSON)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     # Foreign Keys
-    project_id = Column(String, ForeignKey("projects.id"), nullable=False)
-    user_id = Column(String, ForeignKey("users.id"), nullable=False)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=False)
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=False)
 
     # Relationships
     project = relationship("Project", back_populates="spiders")
@@ -129,17 +129,17 @@ class Spider(Base):
 class ProjectFile(Base):
     __tablename__ = "project_files"
 
-    id = Column(String, primary_key=True, index=True)
-    name = Column(String, nullable=False)  # ファイル名 (settings.py, items.py, etc.)
-    path = Column(String, nullable=False)  # ファイルパス (project_name/settings.py)
+    id = Column(String(36), primary_key=True, index=True)
+    name = Column(String(255), nullable=False)  # ファイル名 (settings.py, items.py, etc.)
+    path = Column(String(500), nullable=False)  # ファイルパス (project_name/settings.py)
     content = Column(Text, nullable=False)  # ファイル内容
-    file_type = Column(String, default="python")  # ファイルタイプ (python, config, etc.)
+    file_type = Column(String(50), default="python")  # ファイルタイプ (python, config, etc.)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     # Foreign Keys
-    project_id = Column(String, ForeignKey("projects.id"), nullable=False)
-    user_id = Column(String, ForeignKey("users.id"), nullable=False)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=False)
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=False)
 
     # Relationships
     project = relationship("Project", back_populates="project_files")
@@ -153,24 +153,24 @@ class ProjectFile(Base):
 class Task(Base):
     __tablename__ = "tasks"
 
-    id = Column(String, primary_key=True, index=True)
+    id = Column(String(36), primary_key=True, index=True)
     status = Column(Enum(TaskStatus), default=TaskStatus.PENDING)
     started_at = Column(DateTime(timezone=True))
     finished_at = Column(DateTime(timezone=True))
     items_count = Column(Integer, default=0)
     requests_count = Column(Integer, default=0)
     error_count = Column(Integer, default=0)
-    log_level = Column(String, default="INFO")
+    log_level = Column(String(20), default="INFO")
     settings = Column(JSON)
-    celery_task_id = Column(String, nullable=True)  # CeleryタスクIDとの関連付け
+    celery_task_id = Column(String(255), nullable=True)  # CeleryタスクIDとの関連付け
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     # Foreign Keys
-    project_id = Column(String, ForeignKey("projects.id"), nullable=False)
-    spider_id = Column(String, ForeignKey("spiders.id"), nullable=False)
-    user_id = Column(String, ForeignKey("users.id"), nullable=False)
-    schedule_id = Column(String, ForeignKey("schedules.id"), nullable=True)  # スケジュール実行の場合のみ
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=False)
+    spider_id = Column(String(36), ForeignKey("spiders.id"), nullable=False)
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=False)
+    schedule_id = Column(String(36), ForeignKey("schedules.id"), nullable=True)  # スケジュール実行の場合のみ
 
     # Relationships
     project = relationship("Project", back_populates="tasks")
@@ -183,37 +183,37 @@ class Task(Base):
 class Result(Base):
     __tablename__ = "results"
 
-    id = Column(String, primary_key=True, index=True)
+    id = Column(String(36), primary_key=True, index=True)
     data = Column(JSON, nullable=False)
-    url = Column(String)
+    url = Column(String(2000))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     crawl_start_datetime = Column(DateTime(timezone=True), nullable=True)  # クロールスタート日時
     item_acquired_datetime = Column(DateTime(timezone=True), nullable=True)  # アイテム取得日時
 
     # データの重複を防ぐためのハッシュ値
-    data_hash = Column(String, nullable=True, index=True)
+    data_hash = Column(String(64), nullable=True, index=True)
 
     # Foreign Keys
-    task_id = Column(String, ForeignKey("tasks.id"), nullable=False)
+    task_id = Column(String(36), ForeignKey("tasks.id"), nullable=False)
 
     # Relationships
     task = relationship("Task", back_populates="results")
 
-    # ユニーク制約（同じタスクで同じデータハッシュは重複不可）
+    # インデックス（パフォーマンス向上のため）
     __table_args__ = (
-        Index('idx_task_data_hash', 'task_id', 'data_hash', unique=True),
+        Index('idx_task_data_hash', 'task_id', 'data_hash'),
     )
 
 class Log(Base):
     __tablename__ = "logs"
 
-    id = Column(String, primary_key=True, index=True)
-    level = Column(String, nullable=False)
+    id = Column(String(36), primary_key=True, index=True)
+    level = Column(String(20), nullable=False)
     message = Column(Text, nullable=False)
     timestamp = Column(DateTime(timezone=True), server_default=func.now())
 
     # Foreign Keys
-    task_id = Column(String, ForeignKey("tasks.id"), nullable=False)
+    task_id = Column(String(36), ForeignKey("tasks.id"), nullable=False)
 
     # Relationships
     task = relationship("Task", back_populates="logs")
@@ -221,10 +221,10 @@ class Log(Base):
 class Schedule(Base):
     __tablename__ = "schedules"
 
-    id = Column(String, primary_key=True, index=True)
-    name = Column(String, nullable=False)
+    id = Column(String(36), primary_key=True, index=True)
+    name = Column(String(255), nullable=False)
     description = Column(Text)
-    cron_expression = Column(String, nullable=False)  # Cron式
+    cron_expression = Column(String(100), nullable=False)  # Cron式
     is_active = Column(Boolean, default=True)
     last_run = Column(DateTime(timezone=True))
     next_run = Column(DateTime(timezone=True))
@@ -232,8 +232,8 @@ class Schedule(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     # Foreign Keys
-    project_id = Column(String, ForeignKey("projects.id"), nullable=False)
-    spider_id = Column(String, ForeignKey("spiders.id"), nullable=False)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=False)
+    spider_id = Column(String(36), ForeignKey("spiders.id"), nullable=False)
 
     # Settings for the scheduled run
     settings = Column(JSON)
@@ -245,17 +245,17 @@ class Schedule(Base):
 class Notification(Base):
     __tablename__ = "notifications"
 
-    id = Column(String, primary_key=True, index=True)
-    title = Column(String, nullable=False)
+    id = Column(String(36), primary_key=True, index=True)
+    title = Column(String(255), nullable=False)
     message = Column(Text, nullable=False)
-    type = Column(String, nullable=False)  # info, warning, error, success
+    type = Column(String(20), nullable=False)  # info, warning, error, success
     is_read = Column(Boolean, default=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     # Optional: link to specific task or project
-    task_id = Column(String, ForeignKey("tasks.id"), nullable=True)
-    project_id = Column(String, ForeignKey("projects.id"), nullable=True)
-    user_id = Column(String, ForeignKey("users.id"), nullable=True)
+    task_id = Column(String(36), ForeignKey("tasks.id"), nullable=True)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=True)
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=True)
 
     # Relationships
     task = relationship("Task")
@@ -265,11 +265,11 @@ class Notification(Base):
 class User(Base):
     __tablename__ = "users"
 
-    id = Column(String, primary_key=True, index=True)
-    email = Column(String, unique=True, index=True, nullable=False)
-    username = Column(String, unique=True, index=True, nullable=False)
-    full_name = Column(String, nullable=True)
-    hashed_password = Column(String, nullable=False)
+    id = Column(String(36), primary_key=True, index=True)
+    email = Column(String(255), unique=True, index=True, nullable=False)
+    username = Column(String(100), unique=True, index=True, nullable=False)
+    full_name = Column(String(255), nullable=True)
+    hashed_password = Column(String(255), nullable=False)
     is_active = Column(Boolean, default=True)
     is_superuser = Column(Boolean, default=False)
     role = Column(Enum(UserRole), default=UserRole.USER)
@@ -278,23 +278,23 @@ class User(Base):
     last_login = Column(DateTime(timezone=True), nullable=True)
 
     # Profile information
-    avatar_url = Column(String, nullable=True)
-    timezone = Column(String, default="UTC")
+    avatar_url = Column(String(500), nullable=True)
+    timezone = Column(String(50), default="UTC")
     preferences = Column(JSON, default={})
 
 class UserSession(Base):
     __tablename__ = "user_sessions"
 
-    id = Column(String, primary_key=True, index=True)
-    user_id = Column(String, ForeignKey("users.id"), nullable=False)
-    refresh_token = Column(String, nullable=False)
+    id = Column(String(36), primary_key=True, index=True)
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=False)
+    refresh_token = Column(String(500), nullable=False)
     expires_at = Column(DateTime(timezone=True), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     is_active = Column(Boolean, default=True)
 
     # Session metadata
-    user_agent = Column(String, nullable=True)
-    ip_address = Column(String, nullable=True)
+    user_agent = Column(String(500), nullable=True)
+    ip_address = Column(String(45), nullable=True)
 
     # Relationships
     user = relationship("User")
@@ -302,13 +302,13 @@ class UserSession(Base):
 class Proxy(Base):
     __tablename__ = "proxies"
 
-    id = Column(String, primary_key=True, index=True)
-    name = Column(String, nullable=False)
-    host = Column(String, nullable=False)
+    id = Column(String(36), primary_key=True, index=True)
+    name = Column(String(255), nullable=False)
+    host = Column(String(255), nullable=False)
     port = Column(Integer, nullable=False)
-    username = Column(String, nullable=True)
-    password = Column(String, nullable=True)
-    proxy_type = Column(String, default="http")  # http, https, socks4, socks5
+    username = Column(String(100), nullable=True)
+    password = Column(String(255), nullable=True)
+    proxy_type = Column(String(20), default="http")  # http, https, socks4, socks5
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
@@ -320,7 +320,7 @@ class Proxy(Base):
     failure_count = Column(Integer, default=0)
 
     # User association
-    user_id = Column(String, ForeignKey("users.id"), nullable=True)
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=True)
 
     # Relationships
     user = relationship("User")

@@ -106,8 +106,11 @@ async def create_user(
     # ロールを文字列からUserRoleに変換
     role_mapping = {
         "user": UserRole.USER,
+        "USER": UserRole.USER,
         "admin": UserRole.ADMIN,
-        "moderator": UserRole.MODERATOR
+        "ADMIN": UserRole.ADMIN,
+        "moderator": UserRole.MODERATOR,
+        "MODERATOR": UserRole.MODERATOR
     }
     user_role = role_mapping.get(user_create.role, UserRole.USER)
 

@@ -158,7 +158,9 @@ class DatabaseConfigManager:
     def get_config(self, environment: Optional[str] = None) -> DatabaseConfig:
         """指定環境の設定を取得"""
         # 環境変数から環境名を取得
-        env = environment or os.getenv('SCRAPY_UI_ENV', 'default')
+        env = environment or os.getenv('SCRAPY_UI_ENV', self.default_database)
+
+
 
         # 環境変数での設定上書きをチェック
         config = self._get_config_with_env_override(env)
@@ -171,6 +173,8 @@ class DatabaseConfigManager:
         base_config = self.configs.get(environment, self.configs.get('default'))
         if not base_config:
             raise ValueError(f"No configuration found for environment: {environment}")
+
+
 
         # 環境変数での上書き
         env_database = os.getenv('DATABASE_NAME') or os.getenv('DATABASE_DB')

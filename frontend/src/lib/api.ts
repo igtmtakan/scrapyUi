@@ -1712,6 +1712,27 @@ class ApiClient {
       throw error;
     }
   }
+
+  // Worker Tasks Management API
+  async clearWorkerTasks(): Promise<{
+    status: string;
+    cleared_tasks: {
+      celery_active: number;
+      celery_reserved: number;
+      db_running: number;
+      db_pending: number;
+    };
+    operations: string[];
+    final_status: {
+      running_tasks: number;
+      pending_tasks: number;
+      all_cleared: boolean;
+    };
+  }> {
+    return this.request<any>('/api/tasks/clear-workers', {
+      method: 'POST',
+    });
+  }
 }
 
 // Export singleton instance with direct backend connection

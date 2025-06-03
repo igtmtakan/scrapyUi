@@ -52,6 +52,8 @@ logs/
 *.db
 *.sqlite
 *.sqlite3
+*.db.backup*
+*.db.bak*
 
 # Node.js
 node_modules/

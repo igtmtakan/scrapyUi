@@ -651,16 +651,26 @@ def scheduled_spider_run(schedule_id: str):
             max_wait_time = 120  # 2分間待機
             check_interval = 10  # 10秒間隔
             elapsed_time = 0
+            max_checks = max_wait_time // check_interval  # 最大チェック回数
 
-            while elapsed_time < max_wait_time:
+            check_count = 0
+            start_time = time.time()
+            while elapsed_time < max_wait_time and check_count < max_checks:
+                # 実際の経過時間もチェック（安全性向上）
+                actual_elapsed = time.time() - start_time
+                if actual_elapsed > max_wait_time:
+                    print(f"⏰ Timeout reached: actual elapsed time {actual_elapsed:.1f}s > {max_wait_time}s")
+                    break
+
                 db_results_count = db.query(DBResult).filter(DBResult.task_id == task_id).count()
-                print(f"   Checking crawlwithwatchdog results after {elapsed_time}s: {db_results_count}")
+                print(f"   Checking crawlwithwatchdog results after {elapsed_time}s: {db_results_count} (check {check_count + 1}/{max_checks})")
 
                 if db_results_count > 0:
                     print(f"🔧 IMMEDIATE AUTO-REPAIR: Found {db_results_count} crawlwithwatchdog results")
                     break
 
-                if elapsed_time < max_wait_time:
+                check_count += 1
+                if elapsed_time < max_wait_time and check_count < max_checks:
                     time.sleep(check_interval)
                     elapsed_time += check_interval
 
@@ -923,16 +933,26 @@ def run_spider_with_watchdog_task(self, project_id: str, spider_id: str, setting
         max_wait_time = 120  # 2分間待機
         check_interval = 10  # 10秒間隔
         elapsed_time = 0
+        max_checks = max_wait_time // check_interval  # 最大チェック回数
 
-        while elapsed_time < max_wait_time:
+        check_count = 0
+        start_time = time.time()
+        while elapsed_time < max_wait_time and check_count < max_checks:
+            # 実際の経過時間もチェック（安全性向上）
+            actual_elapsed = time.time() - start_time
+            if actual_elapsed > max_wait_time:
+                print(f"⏰ Timeout reached: actual elapsed time {actual_elapsed:.1f}s > {max_wait_time}s")
+                break
+
             db_results_count = db.query(DBResult).filter(DBResult.task_id == task_id).count()
-            print(f"   Checking crawlwithwatchdog results after {elapsed_time}s: {db_results_count}")
+            print(f"   Checking crawlwithwatchdog results after {elapsed_time}s: {db_results_count} (check {check_count + 1}/{max_checks})")
 
             if db_results_count > 0:
                 print(f"🔧 IMMEDIATE AUTO-REPAIR: Found {db_results_count} crawlwithwatchdog results")
                 break
 
-            if elapsed_time < max_wait_time:
+            check_count += 1
+            if elapsed_time < max_wait_time and check_count < max_checks:
                 time.sleep(check_interval)
                 elapsed_time += check_interval
 
