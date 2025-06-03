@@ -54,6 +54,21 @@ logs/
 *.sqlite3
 *.db.backup*
 *.db.bak*
+*.sql.backup*
+*.sql.bak*
+
+# Large result files (over 50MB)
+**/ranking_results.jsonl
+**/stats_task_*.json
+**/*.jsonl.large
+**/*.csv.large
+
+# Temporary and cache files
+*.tmp
+*.temp
+**/__pycache__/
+**/.pytest_cache/
+**/node_modules/.cache/
 
 # Node.js
 node_modules/
