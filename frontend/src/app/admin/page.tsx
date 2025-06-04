@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useAuthStore } from '@/stores/authStore';
 import { useRouter } from 'next/navigation';
 import { validateUserForm, sanitizeUsername } from '@/lib/validation';
+import AdminGuard from '@/components/AdminGuard';
 import {
   Users,
   UserPlus,
@@ -407,9 +408,8 @@ function UserDeleteModal({ user, onClose, onConfirm }: UserDeleteModalProps) {
   );
 }
 
-export default function AdminPage() {
+function AdminPageContent() {
   const { user, isAuthenticated } = useAuthStore();
-  const router = useRouter();
   const [users, setUsers] = useState<User[]>([]);
   const [stats, setStats] = useState<UserStats | null>(null);
   const [loading, setLoading] = useState(true);
@@ -426,25 +426,13 @@ export default function AdminPage() {
   const [autoRecoveryResult, setAutoRecoveryResult] = useState<any>(null);
 
   useEffect(() => {
-    if (!isAuthenticated) {
-      router.push('/login');
-      return;
-    }
-
-    if (user?.role !== 'admin') {
-      router.push('/');
-      return;
-    }
-
     fetchUsers();
     fetchStats();
-  }, [isAuthenticated, user, router]);
+  }, []);
 
   // フィルター変更時にユーザーリストを更新
   useEffect(() => {
-    if (isAuthenticated && user?.role === 'admin') {
-      fetchUsers();
-    }
+    fetchUsers();
   }, [searchTerm, roleFilter, statusFilter]);
 
   const fetchUsers = async () => {
@@ -585,17 +573,7 @@ export default function AdminPage() {
     });
   };
 
-  if (!isAuthenticated || user?.role !== 'admin') {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-center">
-          <Shield className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-          <h2 className="text-xl font-semibold text-gray-900 mb-2">アクセス権限がありません</h2>
-          <p className="text-gray-600">この機能は管理者のみ利用できます。</p>
-        </div>
-      </div>
-    );
-  }
+
 
   if (loading) {
     return (
@@ -899,5 +877,13 @@ export default function AdminPage() {
         )}
       </div>
     </div>
+  );
+}
+
+export default function AdminPage() {
+  return (
+    <AdminGuard requireSuperUser={false} fallbackPath="/dashboard">
+      <AdminPageContent />
+    </AdminGuard>
   );
 }

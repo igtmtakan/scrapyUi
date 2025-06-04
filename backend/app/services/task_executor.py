@@ -128,6 +128,9 @@ class TaskExecutor:
             # タスクを実行中リストに追加（プレースホルダー）
             self.current_tasks[task.id] = "RUNNING"
 
+            # タスクの開始時刻を設定
+            self._mark_task_started(task.id)
+
             # 非同期でタスクを実行
             def run_task():
                 try:
@@ -148,9 +151,11 @@ class TaskExecutor:
                     if result.get('success', False):
                         logger.info(f"✅ Task {task.id[:8]} completed successfully")
                         print(f"✅ Task {task.id[:8]} completed successfully")
+                        self._mark_task_completed(task.id, result)
                     else:
                         logger.error(f"❌ Task {task.id[:8]} failed: {result.get('error', 'Unknown error')}")
                         print(f"❌ Task {task.id[:8]} failed: {result.get('error', 'Unknown error')}")
+                        self._mark_task_failed(task.id, result.get('error', 'Unknown error'))
 
                 except Exception as e:
                     logger.error(f"❌ Error executing task {task.id}: {e}")
@@ -221,7 +226,7 @@ class TaskExecutor:
         try:
             for task_id in list(self.current_tasks.keys()):
                 task = db.query(DBTask).filter(DBTask.id == task_id).first()
-                if task and task.status in [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED]:
+                if task and task.status in [TaskStatus.FINISHED, TaskStatus.FAILED, TaskStatus.CANCELLED]:
                     completed_tasks.append(task_id)
         except Exception as e:
             logger.error(f"Error checking completed tasks: {e}")
@@ -233,6 +238,46 @@ class TaskExecutor:
                 del self.current_tasks[task_id]
                 logger.info(f"🧹 Cleaned up completed task {task_id[:8]}")
 
+    def _mark_task_started(self, task_id: str):
+        """タスクを開始としてマーク"""
+        db = SessionLocal()
+        try:
+            task = db.query(DBTask).filter(DBTask.id == task_id).first()
+            if task:
+                task.status = TaskStatus.RUNNING
+                task.started_at = datetime.now()
+                db.commit()
+                logger.info(f"🚀 Marked task {task_id[:8]} as started")
+        except Exception as e:
+            logger.error(f"Error marking task as started: {e}")
+            db.rollback()
+        finally:
+            db.close()
+
+    def _mark_task_completed(self, task_id: str, result: Dict[str, Any]):
+        """タスクを完了としてマーク"""
+        db = SessionLocal()
+        try:
+            task = db.query(DBTask).filter(DBTask.id == task_id).first()
+            if task:
+                task.status = TaskStatus.FINISHED
+                task.finished_at = datetime.now()
+                if task.started_at is None:
+                    task.started_at = datetime.now()
+
+                # アイテム数を更新
+                items_processed = result.get('items_processed', 0)
+                if items_processed > 0:
+                    task.items_count = items_processed
+
+                db.commit()
+                logger.info(f"✅ Marked task {task_id[:8]} as completed with {items_processed} items")
+        except Exception as e:
+            logger.error(f"Error marking task as completed: {e}")
+            db.rollback()
+        finally:
+            db.close()
+
     def _mark_task_failed(self, task_id: str, error_message: str):
         """タスクを失敗としてマーク"""
         db = SessionLocal()
@@ -241,6 +286,8 @@ class TaskExecutor:
             if task:
                 task.status = TaskStatus.FAILED
                 task.finished_at = datetime.now()
+                if task.started_at is None:
+                    task.started_at = datetime.now()
                 task.error_message = error_message
                 db.commit()
                 logger.info(f"❌ Marked task {task_id[:8]} as failed: {error_message}")

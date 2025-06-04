@@ -39,7 +39,7 @@ const adminNavigation = [
 export default function Navigation() {
   const pathname = usePathname();
   const router = useRouter();
-  const { user, isAuthenticated, logout } = useAuthStore();
+  const { user, isAuthenticated, logout, isAdmin } = useAuthStore();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
 
@@ -102,7 +102,7 @@ export default function Navigation() {
               })}
 
               {/* Admin Navigation */}
-              {(user?.role === 'admin' || user?.is_superuser) && adminNavigation.map((item) => {
+              {isAdmin() && adminNavigation.map((item) => {
                 const isActive = pathname === item.href ||
                   (item.href !== '/' && pathname.startsWith(item.href));
 
@@ -231,7 +231,7 @@ export default function Navigation() {
             })}
 
             {/* Admin Navigation for Mobile */}
-            {(user?.role === 'admin' || user?.is_superuser) && (
+            {isAdmin() && (
               <>
                 <div className="border-t border-gray-700 my-2"></div>
                 {adminNavigation.map((item) => {

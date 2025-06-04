@@ -604,15 +604,18 @@ async def run_schedule_now(schedule_id: str, db: Session = Depends(get_db), curr
         # Celeryタスクとして実行（スケジュール実行と同じ方式）
         try:
             celery_task = run_spider_with_watchdog_task.delay(
-                project_path=project.path,
-                spider_name=spider.name,
-                task_id=task_id,
-                settings=db_schedule.settings or {}
+                project_id=project.id,
+                spider_id=spider.id,
+                settings=db_schedule.settings or {},
+                task_id=task_id
             )
 
             # CeleryタスクIDをデータベースに保存
             db_task.celery_task_id = celery_task.id
             print(f"🚀 Manual execution started with Celery task: {celery_task.id}")
+            print(f"   Project ID: {project.id}")
+            print(f"   Spider ID: {spider.id}")
+            print(f"   Task ID: {task_id}")
 
         except Exception as e:
             print(f"❌ Failed to start Celery task for manual execution: {e}")

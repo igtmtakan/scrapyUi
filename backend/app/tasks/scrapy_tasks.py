@@ -567,6 +567,11 @@ def scheduled_spider_run(schedule_id: str):
         print(f"   Project ID: {schedule.project_id}")
         print(f"   Spider ID: {schedule.spider_id}")
 
+        # プロジェクト情報を取得してuser_idを取得
+        project = db.query(DBProject).filter(DBProject.id == schedule.project_id).first()
+        if not project:
+            raise Exception(f"Project not found: {schedule.project_id}")
+
         # タスクレコードを作成（schedule_idを設定）
         task_id = str(uuid.uuid4())
         db_task = DBTask(
@@ -577,7 +582,7 @@ def scheduled_spider_run(schedule_id: str):
             status=TaskStatus.PENDING,
             log_level="INFO",
             settings=schedule.settings or {},
-            user_id="system"  # スケジュール実行はシステムユーザー
+            user_id=project.user_id  # プロジェクトの作成者のユーザーIDを使用
         )
         db.add(db_task)
         db.commit()
@@ -824,12 +829,11 @@ def export_results_task(export_request: dict):
         db.close()
 
 @celery_app.task(bind=True, soft_time_limit=3300, time_limit=3600)
-def run_spider_with_watchdog_task(self, project_id: str, spider_id: str, settings: dict = None):
+def run_spider_with_watchdog_task(self, project_id: str, spider_id: str, settings: dict = None, task_id: str = None):
     """
     watchdog監視付きでスパイダーを実行するCeleryタスク
     """
     db = SessionLocal()
-    task_id = str(uuid.uuid4())
 
     try:
         print(f"🔍 Starting spider task with watchdog monitoring: {spider_id} in project {project_id}")
@@ -843,21 +847,33 @@ def run_spider_with_watchdog_task(self, project_id: str, spider_id: str, setting
         if not spider:
             raise Exception(f"Spider not found: {spider_id}")
 
-        # タスクレコードを作成
-        db_task = DBTask(
-            id=task_id,
-            project_id=project_id,
-            spider_id=spider_id,
-            status=TaskStatus.PENDING,
-            log_level="INFO",
-            settings=settings or {},
-            user_id=spider.user_id,
-            celery_task_id=self.request.id
-        )
-        db.add(db_task)
-        db.commit()
-
-        print(f"✅ Task record created: {task_id}")
+        # 既存のタスクを検索するか、新しいタスクを作成
+        if task_id:
+            # 既存のタスクを使用（スケジュール実行の場合）
+            db_task = db.query(DBTask).filter(DBTask.id == task_id).first()
+            if db_task:
+                print(f"✅ Using existing task record: {task_id}")
+                # CeleryタスクIDを更新
+                db_task.celery_task_id = self.request.id
+                db.commit()
+            else:
+                raise Exception(f"Task not found: {task_id}")
+        else:
+            # 新しいタスクを作成（直接実行の場合）
+            task_id = str(uuid.uuid4())
+            db_task = DBTask(
+                id=task_id,
+                project_id=project_id,
+                spider_id=spider_id,
+                status=TaskStatus.PENDING,
+                log_level="INFO",
+                settings=settings or {},
+                user_id=spider.user_id,
+                celery_task_id=self.request.id
+            )
+            db.add(db_task)
+            db.commit()
+            print(f"✅ New task record created: {task_id}")
 
         # プログレスコールバック関数
         def progress_callback(items_count: int, requests_count: int, error_count: int):
