@@ -1,15 +1,23 @@
 # ScrapyUI Database Directory
 
-このディレクトリには、ScrapyUIのSQLiteデータベースファイルが格納されます。
+このディレクトリには、ScrapyUIの**統一SQLiteデータベースファイル**が格納されます。
 
 ## 📁 ディレクトリ構造
 
 ```
 backend/database/
 ├── README.md           # このファイル
-├── scrapy_ui.db       # メインデータベース（SQLite）
+├── scrapy_ui.db       # 統一メインデータベース（SQLite）
 └── backups/           # バックアップファイル（オプション）
 ```
+
+## 🔄 データベース統一について
+
+**2025年6月4日より、すべてのデータベースアクセスが統一されました：**
+
+- **統一ファイル**: `backend/database/scrapy_ui.db`
+- **設定管理**: `backend/config/database.yaml`の`development`環境を使用
+- **自動検出**: アプリケーション全体で統一設定から自動的にパスを取得
 
 ## 🗄️ データベースファイル
 

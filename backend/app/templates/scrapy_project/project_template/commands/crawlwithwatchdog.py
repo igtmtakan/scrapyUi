@@ -169,8 +169,8 @@ Examples:
         parser.add_argument("--task-id", dest="task_id",
                            help="task ID for monitoring (auto-generated if not provided)")
         parser.add_argument("--db-path", dest="db_path",
-                           default="backend/database/scrapy_ui.db",
-                           help="database path for storing results")
+                           default=None,
+                           help="database path for storing results (auto-detected from config if not specified)")
 
     def process_options(self, args, opts):
         ScrapyCommand.process_options(self, args, opts)

@@ -596,46 +596,64 @@ async def run_schedule_now(schedule_id: str, db: Session = Depends(get_db), curr
     )
     db.add(db_task)
 
-    # リアルタイム実行（scrapy crawlwithwatchdog）を開始
+    # Celeryタスクでリアルタイム実行（scrapy crawlwithwatchdog）を開始
     import os
     if not os.getenv("TESTING", False):
-        from ..services.scrapy_service import ScrapyPlaywrightService
-        scrapy_service = ScrapyPlaywrightService()
+        from ..tasks.scrapy_tasks import run_spider_with_watchdog_task
 
-        # バックグラウンドでリアルタイム実行を開始
-        import threading
-        def run_spider_background():
-            try:
-                import asyncio
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
+        # Celeryタスクとして実行（スケジュール実行と同じ方式）
+        try:
+            celery_task = run_spider_with_watchdog_task.delay(
+                project_path=project.path,
+                spider_name=spider.name,
+                task_id=task_id,
+                settings=db_schedule.settings or {}
+            )
 
-                # WebSocketコールバック関数
-                def websocket_callback(data: dict):
-                    try:
-                        from ..api.websocket_progress import broadcast_rich_progress_update
-                        asyncio.create_task(broadcast_rich_progress_update(task_id, data))
-                    except Exception as e:
-                        print(f"⚠️ WebSocket callback error in schedule run: {e}")
+            # CeleryタスクIDをデータベースに保存
+            db_task.celery_task_id = celery_task.id
+            print(f"🚀 Manual execution started with Celery task: {celery_task.id}")
 
-                # watchdog監視付きで実行
-                result = loop.run_until_complete(
-                    scrapy_service.run_spider_with_watchdog(
-                        project_path=project.path,
-                        spider_name=spider.name,
-                        task_id=task_id,
-                        settings=db_schedule.settings or {},
-                        websocket_callback=websocket_callback
+        except Exception as e:
+            print(f"❌ Failed to start Celery task for manual execution: {e}")
+            # フォールバック: 直接実行
+            from ..services.scrapy_service import ScrapyPlaywrightService
+            scrapy_service = ScrapyPlaywrightService()
+
+            # バックグラウンドでリアルタイム実行を開始
+            import threading
+            def run_spider_background():
+                try:
+                    import asyncio
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+
+                    # WebSocketコールバック関数
+                    def websocket_callback(data: dict):
+                        try:
+                            from ..api.websocket_progress import broadcast_rich_progress_update
+                            asyncio.create_task(broadcast_rich_progress_update(task_id, data))
+                        except Exception as e:
+                            print(f"⚠️ WebSocket callback error in schedule run: {e}")
+
+                    # watchdog監視付きで実行
+                    result = loop.run_until_complete(
+                        scrapy_service.run_spider_with_watchdog(
+                            project_path=project.path,
+                            spider_name=spider.name,
+                            task_id=task_id,
+                            settings=db_schedule.settings or {},
+                            websocket_callback=websocket_callback
+                        )
                     )
-                )
-                print(f"✅ Schedule spider execution completed: {result}")
-            except Exception as e:
-                print(f"❌ Background schedule spider execution error: {e}")
-            finally:
-                loop.close()
+                    print(f"✅ Schedule spider execution completed: {result}")
+                except Exception as e:
+                    print(f"❌ Background schedule spider execution error: {e}")
+                finally:
+                    loop.close()
 
-        thread = threading.Thread(target=run_spider_background, daemon=True)
-        thread.start()
+            thread = threading.Thread(target=run_spider_background, daemon=True)
+            thread.start()
 
     # 最終実行時刻を更新
     db_schedule.last_run = datetime.now()

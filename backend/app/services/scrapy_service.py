@@ -88,6 +88,17 @@ class ScrapyPlaywrightService:
         self._initialized = True
         print(f"🔧 ScrapyPlaywrightService initialized with base_dir: {self.base_projects_dir.absolute()}")
 
+    def _get_database_url(self) -> str:
+        """統一データベース設定からデータベースURLを取得"""
+        try:
+            from ..config.database_config import get_database_config
+            config = get_database_config()
+            return config.get_connection_url()
+        except Exception as e:
+            # フォールバック: デフォルトパス
+            fallback_path = self.base_projects_dir.parent / "backend" / "database" / "scrapy_ui.db"
+            return f"sqlite:///{fallback_path}"
+
     def create_project(self, project_name: str, project_path: str, db_save_enabled: bool = True) -> bool:
         """新しいScrapyプロジェクトを作成（scrapy startproject と同じ動作）"""
         try:
@@ -507,8 +518,8 @@ class Command(ScrapyCommand):
         parser.add_argument("--task-id", dest="task_id",
                          help="task ID for monitoring (auto-generated if not provided)")
         parser.add_argument("--db-path", dest="db_path",
-                         default="backend/database/scrapy_ui.db",
-                         help="database path for storing results")
+                         default=None,
+                         help="database path for storing results (auto-detected from config if not specified)")
 
     def process_options(self, args, opts):
         ScrapyCommand.process_options(self, args, opts)
@@ -1333,8 +1344,8 @@ project = {project_path}
             # DB保存が有効な場合のみパイプライン設定を追加
             if db_save_enabled:
                 default_settings.update({
-                    # ScrapyUIデータベースパイプライン設定
-                    'SCRAPYUI_DATABASE_URL': f"sqlite:///{self.base_projects_dir.parent}/backend/database/scrapy_ui.db",
+                    # ScrapyUIデータベースパイプライン設定（統一設定から取得）
+                    'SCRAPYUI_DATABASE_URL': self._get_database_url(),
                     'SCRAPYUI_TASK_ID': task_id,
                     'SCRAPYUI_JSON_FILE': f"results_{task_id}.jsonl",
                     # パイプライン設定を有効化

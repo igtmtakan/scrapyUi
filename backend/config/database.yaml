@@ -1,12 +1,3 @@
-# ScrapyUI Database Configuration
-# データベース設定ファイル
-
-# 使用するデータベース環境を指定
-# コマンドライン: scrapyui -c database.yaml --database development
-# 環境変数: SCRAPY_UI_DATABASE=development
-usedatabase: default
-
-# デフォルト設定: MySQL
 default:
   type: "mysql"
   host: "localhost"
@@ -18,165 +9,123 @@ default:
   echo: false
   pool_size: 15
   max_overflow: 30
-
-# 開発環境設定
 development:
-  type: "sqlite"
-  database: "backend/database/scrapy_ui.db"
+  database: backend/database/scrapy_ui.db
   echo: false
-
-# テスト環境設定
-testing:
-  type: "sqlite"
-  database: ":memory:"  # インメモリデータベース
-  echo: false
-
-# 本番環境設定（SQLite使用）
-production:
-  type: "sqlite"
-  database: "backend/database/scrapy_ui.db"
-  echo: false
-
-# 本番環境設定例（PostgreSQL）
-production_postgresql:
-  type: "postgresql"
-  host: "localhost"
-  port: 5432
-  database: "scrapy_ui_prod"
-  username: "scrapy_user"
-  password: "your_password"
-  echo: false
-  pool_size: 10
-  max_overflow: 20
-
-# MySQL設定例
-mysql_example:
-  type: "mysql"
-  host: "localhost"
-  port: 3306
-  database: "scrapy_ui"
-  username: "scrapy_user"
-  password: "your_password"
-  charset: "utf8mb4"
-  echo: false
-  pool_size: 10
-  max_overflow: 20
-
-# MySQL本番設定（使用する場合はdefaultセクションを置き換え）
-mysql_production:
-  type: "mysql"
-  host: "localhost"
-  port: 3306
-  database: "scrapy_ui"
-  username: "scrapy_user"
-  password: "ScrapyUser%402024%23"
-  charset: "utf8mb4"
-  echo: false
-  pool_size: 15
-  max_overflow: 30
-
-# PostgreSQL設定例
-postgresql_example:
-  type: "postgresql"
-  host: "localhost"
-  port: 5432
-  database: "scrapy_ui"
-  username: "scrapy_user"
-  password: "your_password"
-  echo: false
-  pool_size: 10
-  max_overflow: 20
-  # PostgreSQL固有設定
-  options:
-    sslmode: "prefer"
-    connect_timeout: 10
-
-# MongoDB設定例（ドキュメントストレージ用）
-mongodb_example:
-  type: "mongodb"
-  host: "localhost"
-  port: 27017
-  database: "scrapy_ui"
-  username: "scrapy_user"
-  password: "your_password"
-  # MongoDB固有設定
-  options:
-    authSource: "admin"
-    retryWrites: true
-    w: "majority"
-
-# Elasticsearch設定例（検索・ログ用）
+  type: sqlite
 elasticsearch_example:
-  type: "elasticsearch"
   hosts:
-    - "http://localhost:9200"
-  index_prefix: "scrapy_ui"
-  # Elasticsearch固有設定
+  - http://localhost:9200
+  index_prefix: scrapy_ui
   options:
-    timeout: 30
+    http_auth:
+      password: your_password
+      username: elastic
     max_retries: 3
     retry_on_timeout: true
-    # 認証設定
-    http_auth:
-      username: "elastic"
-      password: "your_password"
-    # SSL設定
+    timeout: 30
     use_ssl: false
     verify_certs: false
-
-# Redis設定例（キャッシュ・セッション用）
+  type: elasticsearch
+mongodb_example:
+  database: scrapy_ui
+  host: localhost
+  options:
+    authSource: admin
+    retryWrites: true
+    w: majority
+  password: your_password
+  port: 27017
+  type: mongodb
+  username: scrapy_user
+multi_database_example:
+  cache:
+    database: 0
+    host: localhost
+    port: 6379
+    type: redis
+  document:
+    database: scrapy_ui_docs
+    host: localhost
+    password: your_password
+    port: 27017
+    type: mongodb
+    username: scrapy_user
+  primary:
+    database: scrapy_ui_main
+    host: localhost
+    password: your_password
+    port: 5432
+    type: postgresql
+    username: scrapy_user
+  search:
+    hosts:
+    - http://localhost:9200
+    index_prefix: scrapy_ui
+    type: elasticsearch
+mysql_example:
+  charset: utf8mb4
+  database: scrapy_ui
+  echo: false
+  host: localhost
+  max_overflow: 20
+  password: your_password
+  pool_size: 10
+  port: 3306
+  type: mysql
+  username: scrapy_user
+mysql_production:
+  charset: utf8mb4
+  database: scrapy_ui
+  echo: false
+  host: localhost
+  max_overflow: 30
+  password: ScrapyUser%402024%23
+  pool_size: 15
+  port: 3306
+  type: mysql
+  username: scrapy_user
+postgresql_example:
+  database: scrapy_ui
+  echo: false
+  host: localhost
+  max_overflow: 20
+  options:
+    connect_timeout: 10
+    sslmode: prefer
+  password: your_password
+  pool_size: 10
+  port: 5432
+  type: postgresql
+  username: scrapy_user
+production:
+  database: backend/database/scrapy_ui.db
+  echo: false
+  type: sqlite
+production_postgresql:
+  database: scrapy_ui_prod
+  echo: false
+  host: localhost
+  max_overflow: 20
+  password: your_password
+  pool_size: 10
+  port: 5432
+  type: postgresql
+  username: scrapy_user
 redis_example:
-  type: "redis"
-  host: "localhost"
-  port: 6379
   database: 0
-  password: "your_password"
-  # Redis固有設定
+  host: localhost
   options:
     decode_responses: true
-    socket_timeout: 5
-    socket_connect_timeout: 5
-    retry_on_timeout: true
     max_connections: 10
-
-# 複数データベース設定例
-multi_database_example:
-  # メインデータベース（リレーショナル）
-  primary:
-    type: "postgresql"
-    host: "localhost"
-    port: 5432
-    database: "scrapy_ui_main"
-    username: "scrapy_user"
-    password: "your_password"
-
-  # ドキュメントストレージ
-  document:
-    type: "mongodb"
-    host: "localhost"
-    port: 27017
-    database: "scrapy_ui_docs"
-    username: "scrapy_user"
-    password: "your_password"
-
-  # 検索エンジン
-  search:
-    type: "elasticsearch"
-    hosts:
-      - "http://localhost:9200"
-    index_prefix: "scrapy_ui"
-
-  # キャッシュ
-  cache:
-    type: "redis"
-    host: "localhost"
-    port: 6379
-    database: 0
-
-# 環境変数での設定上書き例
-# DATABASE_TYPE=postgresql
-# DATABASE_HOST=db.example.com
-# DATABASE_PORT=5432
-# DATABASE_NAME=scrapy_ui
-# DATABASE_USER=scrapy_user
-# DATABASE_PASSWORD=secret_password
+    retry_on_timeout: true
+    socket_connect_timeout: 5
+    socket_timeout: 5
+  password: your_password
+  port: 6379
+  type: redis
+testing:
+  database: backend/database/scrapy_ui.db
+  echo: false
+  type: sqlite
+usedatabase: default
