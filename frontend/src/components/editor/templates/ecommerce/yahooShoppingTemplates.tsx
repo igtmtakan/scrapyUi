@@ -40,7 +40,6 @@ class YahooShoppingSpider(scrapy.Spider):
         'CONCURRENT_REQUESTS': 1,
         'DEPTH_LIMIT': 2,
         'USER_AGENT': 'ScrapyUI Educational Bot 1.0 (Research Purpose)',
-        'CLOSESPIDER_PAGECOUNT': 25,
         'DEFAULT_REQUEST_HEADERS': {
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             'Accept-Language': 'ja,en-US;q=0.9,en;q=0.8',

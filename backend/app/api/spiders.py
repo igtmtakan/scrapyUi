@@ -216,70 +216,48 @@ def update_spider_name_in_code(code: str, spider_name: str) -> str:
 
             updated_code = re.sub(pattern, f'{indent}name = "{spider_name}"', updated_code)
             name_updated = True
-            print(f"🔄 Updated name attribute with preserved indentation: {repr(indent)}")
-            break
 
-    # name = が見つからない場合、クラス定義の後に適切なインデントで追加
-    if not name_updated:
-        class_pattern = r'(class\s+\w+.*?Spider.*?:)'
-        if re.search(class_pattern, updated_code):
-            updated_code = re.sub(class_pattern, f'\\1\n    name = "{spider_name}"', updated_code)
-            print(f"🔧 Added missing name attribute with proper indentation")
+    # 2. クラス名を更新（重要：これが欠けていた）
+    class_name = spider_name_to_class_name(spider_name)
 
-    # 2. クラス名を更新（継承関係を確実に保持）
-    # より詳細なクラス定義パターンを検出
-    class_patterns = [
-        # 継承ありのパターン
-        r'class\s+(\w+)(\([^)]+\)):\s*',  # class ClassName(scrapy.Spider):
-        # 継承なしのパターン（これを修正する）
-        r'class\s+(\w+):\s*',             # class ClassName:
-    ]
-
-    class_match = None
-    inheritance_part = ""
-
-    # 継承ありのパターンを最初にチェック
-    for pattern in class_patterns:
-        class_match = re.search(pattern, updated_code)
-        if class_match:
-            if len(class_match.groups()) > 1:
-                inheritance_part = class_match.group(2)  # (scrapy.Spider) 部分
-            break
+    # 既存のクラス定義を検索
+    class_pattern = r'class\s+(\w+)\s*\([^)]*\):'
+    class_match = re.search(class_pattern, updated_code)
 
     if class_match:
-        original_class_name = class_match.group(1)
+        old_class_name = class_match.group(1)
+        # クラス名を新しい名前に置換
+        updated_code = re.sub(
+            r'class\s+' + re.escape(old_class_name) + r'\s*\(',
+            f'class {class_name}(',
+            updated_code
+        )
+        print(f"🔄 Updated class name: {old_class_name} -> {class_name}")
+    else:
+        print(f"⚠️ No class definition found in spider code")
 
-        # 新しいクラス名を生成（CamelCase）
-        new_class_name = ''.join(word.capitalize() for word in spider_name.replace('_', ' ').replace('-', ' ').split())
-        if not new_class_name.endswith('Spider'):
-            new_class_name += 'Spider'
-
-        # 継承関係を確実に保持
-        if not inheritance_part:
-            # 継承がない場合は scrapy.Spider を追加
-            inheritance_part = "(scrapy.Spider)"
-            print(f"🔧 Added missing inheritance: scrapy.Spider")
-
-        # クラス定義を置換
-        old_class_pattern = re.escape(class_match.group(0))
-        new_class_definition = f'class {new_class_name}{inheritance_part}:\n'
-        updated_code = re.sub(old_class_pattern, new_class_definition, updated_code)
-
-        print(f"🔄 Updated class: {original_class_name} -> {new_class_name}{inheritance_part}")
-
-    # 3. scrapy のインポートを確認・追加
-    if 'import scrapy' not in updated_code and 'from scrapy' not in updated_code:
-        # scrapy のインポートがない場合は追加
-        import_lines = []
-        if 'import scrapy' not in updated_code:
-            import_lines.append('import scrapy')
-
-        if import_lines:
-            # ファイルの先頭にインポートを追加
-            updated_code = '\n'.join(import_lines) + '\n' + updated_code
-            print(f"🔧 Added missing imports: {', '.join(import_lines)}")
+    # name属性が見つからない場合の処理を追加
+    if not name_updated:
+        print(f"⚠️ Name attribute not found, adding it")
+        # クラス定義の後に name 属性を追加
+        class_pattern = r'(class\s+\w+.*?:)'
+        if re.search(class_pattern, updated_code):
+            updated_code = re.sub(class_pattern, f'\\1\n    name = "{spider_name}"', updated_code)
+            print(f"🔧 Added missing name attribute")
 
     return updated_code
+
+def spider_name_to_class_name(spider_name: str) -> str:
+    """スパイダー名からクラス名を生成"""
+    # アンダースコアを削除してキャメルケースに変換
+    parts = spider_name.split('_')
+    class_name = ''.join(word.capitalize() for word in parts)
+
+    # Spiderサフィックスを追加（まだない場合）
+    if not class_name.endswith('Spider'):
+        class_name += 'Spider'
+
+    return class_name
 
 def auto_fix_spider_indentation(code: str) -> tuple[str, list[str]]:
     """スパイダーコードのインデントエラーを自動修正する"""

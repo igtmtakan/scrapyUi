@@ -15,6 +15,11 @@ from scrapy.crawler import Crawler
 from scrapy.spiders import Spider
 from scrapy.http import Request, Response
 from scrapy.exceptions import NotConfigured
+import pytz
+from datetime import datetime
+
+# タイムゾーン設定
+TIMEZONE = pytz.timezone('Asia/Tokyo')
 
 try:
     from rich.progress import Progress, TaskID, BarColumn, TextColumn, TimeRemainingColumn, SpinnerColumn
@@ -345,8 +350,8 @@ class RichProgressExtension:
                         'task_id': task_id,
                         'data': item_data,
                         'data_hash': data_hash,
-                        'item_acquired_datetime': datetime.now(),
-                        'created_at': datetime.now()
+                        'item_acquired_datetime': datetime.now(TIMEZONE),
+                        'created_at': datetime.now(TIMEZONE)
                     })
 
                 # バルクインサート実行
@@ -429,7 +434,7 @@ class RichProgressExtension:
 
                 # タスクのアイテム数を更新
                 task.items_count = result_count
-                task.updated_at = datetime.now()
+                task.updated_at = datetime.now(TIMEZONE)
 
                 db.commit()
                 spider.logger.info(f"📊 Task item count updated: {result_count} items")
@@ -586,8 +591,9 @@ class RichProgressExtension:
             spider.logger.error(f"❌ Completion notification error: {e}")
     
     def request_scheduled(self, request: Request, spider: Spider):
-        """リクエスト送信時の処理"""
-        self.stats['requests_count'] += 1
+        """リクエスト送信時の処理（Scrapyの統計と同期）"""
+        # Scrapyの統計システムから実際の値を取得して同期
+        self._sync_with_scrapy_stats()
         self._update_progress()
         self._save_stats()
 
@@ -861,12 +867,12 @@ class RichProgressExtension:
             pass
 
     def _sync_with_scrapy_stats(self):
-        """Scrapyの統計情報と同期"""
+        """Scrapyの統計情報と同期（Scrapyの統計を優先）"""
         try:
             if hasattr(self.crawler, 'stats'):
                 scrapy_stats = self.crawler.stats
 
-                # Scrapyの統計情報から値を取得
+                # Scrapyの統計情報を常に優先（実際のHTTPリクエスト数と一致させる）
                 self.stats['items_count'] = scrapy_stats.get_value('item_scraped_count', self.stats['items_count'])
                 self.stats['requests_count'] = scrapy_stats.get_value('downloader/request_count', self.stats['requests_count'])
                 self.stats['responses_count'] = scrapy_stats.get_value('response_received_count', self.stats['responses_count'])

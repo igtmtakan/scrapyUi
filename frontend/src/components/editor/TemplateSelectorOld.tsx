@@ -1621,7 +1621,6 @@ class CrawlSpiderWithRules(CrawlSpider):
         'CONCURRENT_REQUESTS': 1,
         'DEPTH_LIMIT': 3,  # 最大3階層まで
         'USER_AGENT': 'ScrapyUI CrawlSpider 1.0',
-        'CLOSESPIDER_PAGECOUNT': 20,  # 最大20ページまで
     }
 
     # ルール定義：どのリンクをフォローするかを指定
@@ -1817,7 +1816,6 @@ class NewsCrawlSpider(CrawlSpider):
         'CONCURRENT_REQUESTS': 1,
         'DEPTH_LIMIT': 3,
         'USER_AGENT': 'ScrapyUI News Crawler 1.0',
-        'CLOSESPIDER_PAGECOUNT': 50,
     }
 
     rules = (
@@ -2089,7 +2087,6 @@ class EcommerceCrawlSpider(CrawlSpider):
         'CONCURRENT_REQUESTS': 1,
         'DEPTH_LIMIT': 4,
         'USER_AGENT': 'ScrapyUI E-commerce Crawler 1.0',
-        'CLOSESPIDER_PAGECOUNT': 100,
         # アイテム数制限を削除（自然な終了を待つ）
     }
 
@@ -2564,7 +2561,6 @@ class SecuritySpider(scrapy.Spider):
         'CONCURRENT_REQUESTS': 1,
         'DEPTH_LIMIT': 2,
         'USER_AGENT': 'ScrapyUI Security Scanner 1.0 (Educational Purpose)',
-        'CLOSESPIDER_PAGECOUNT': 20,
         'DEFAULT_REQUEST_HEADERS': {
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             'Accept-Language': 'en',
@@ -2869,7 +2865,6 @@ class PerformanceSpider(scrapy.Spider):
         'CONCURRENT_REQUESTS': 1,
         'DEPTH_LIMIT': 2,
         'USER_AGENT': 'ScrapyUI Performance Monitor 1.0',
-        'CLOSESPIDER_PAGECOUNT': 10,
         'DOWNLOADER_MIDDLEWARES': {
             'scrapy.downloadermiddlewares.stats.DownloaderStats': 850,
         }
@@ -3192,7 +3187,6 @@ class TestingSpider(scrapy.Spider):
         'CONCURRENT_REQUESTS': 1,
         'DEPTH_LIMIT': 2,
         'USER_AGENT': 'ScrapyUI Testing Bot 1.0',
-        'CLOSESPIDER_PAGECOUNT': 20,
         'DEFAULT_REQUEST_HEADERS': {
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             'Accept-Language': 'en,ja;q=0.9',
@@ -3658,7 +3652,6 @@ class PlaywrightAdvancedSpider(scrapy.Spider):
         'PLAYWRIGHT_DEFAULT_TIMEOUT': 10000,
         'DOWNLOAD_DELAY': 2,
         'CONCURRENT_REQUESTS': 1,
-        'CLOSESPIDER_PAGECOUNT': 10,
     }
 
     def start_requests(self):
@@ -4119,7 +4112,6 @@ class PlaywrightSPASpider(scrapy.Spider):
         'PLAYWRIGHT_DEFAULT_TIMEOUT': 30000,
         'DOWNLOAD_DELAY': 3,
         'CONCURRENT_REQUESTS': 1,
-        'CLOSESPIDER_PAGECOUNT': 15,
     }
 
     def start_requests(self):
@@ -4592,7 +4584,6 @@ class AmazonSpider(scrapy.Spider):
         'CONCURRENT_REQUESTS': 1,
         'DEPTH_LIMIT': 2,
         'USER_AGENT': 'ScrapyUI Educational Bot 1.0 (Research Purpose)',
-        'CLOSESPIDER_PAGECOUNT': 20,
         'DEFAULT_REQUEST_HEADERS': {
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             'Accept-Language': 'ja,en-US;q=0.9,en;q=0.8',
@@ -4844,7 +4835,6 @@ class AmazonRankingSpider(scrapy.Spider):
         'CONCURRENT_REQUESTS': 1,
         'DEPTH_LIMIT': 3,
         'USER_AGENT': 'ScrapyUI Educational Ranking Bot 1.0',
-        'CLOSESPIDER_PAGECOUNT': 30,
         'DEFAULT_REQUEST_HEADERS': {
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             'Accept-Language': 'ja,en-US;q=0.9,en;q=0.8',
@@ -5035,7 +5025,6 @@ class RakutenSpider(scrapy.Spider):
         'CONCURRENT_REQUESTS': 1,
         'DEPTH_LIMIT': 2,
         'USER_AGENT': 'ScrapyUI Educational Bot 1.0 (Research Purpose)',
-        'CLOSESPIDER_PAGECOUNT': 25,
         'DEFAULT_REQUEST_HEADERS': {
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             'Accept-Language': 'ja,en-US;q=0.9,en;q=0.8',
@@ -5301,7 +5290,6 @@ class RakutenRankingSpider(scrapy.Spider):
         'CONCURRENT_REQUESTS': 1,
         'DEPTH_LIMIT': 3,
         'USER_AGENT': 'ScrapyUI Educational Ranking Bot 1.0',
-        'CLOSESPIDER_PAGECOUNT': 30,
         'DEFAULT_REQUEST_HEADERS': {
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             'Accept-Language': 'ja,en-US;q=0.9,en;q=0.8',
@@ -5496,7 +5484,6 @@ class YahooShoppingSpider(scrapy.Spider):
         'CONCURRENT_REQUESTS': 1,
         'DEPTH_LIMIT': 2,
         'USER_AGENT': 'ScrapyUI Educational Bot 1.0 (Research Purpose)',
-        'CLOSESPIDER_PAGECOUNT': 25,
         'DEFAULT_REQUEST_HEADERS': {
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             'Accept-Language': 'ja,en-US;q=0.9,en;q=0.8',
@@ -5761,7 +5748,6 @@ class GurunaviSpider(scrapy.Spider):
         'CONCURRENT_REQUESTS': 1,
         'DEPTH_LIMIT': 2,
         'USER_AGENT': 'ScrapyUI Educational Bot 1.0 (Research Purpose)',
-        'CLOSESPIDER_PAGECOUNT': 30,
         'DEFAULT_REQUEST_HEADERS': {
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             'Accept-Language': 'ja,en-US;q=0.9,en;q=0.8',
@@ -6064,7 +6050,6 @@ class YahooNewsDomesticSpider(scrapy.Spider):
         'CONCURRENT_REQUESTS': 1,
         'DEPTH_LIMIT': 2,
         'USER_AGENT': 'ScrapyUI Educational News Bot 1.0 (Research Purpose)',
-        'CLOSESPIDER_PAGECOUNT': 30,
         'DEFAULT_REQUEST_HEADERS': {
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             'Accept-Language': 'ja,en-US;q=0.9,en;q=0.8',
@@ -6323,7 +6308,6 @@ class YahooNewsInternationalSpider(scrapy.Spider):
         'CONCURRENT_REQUESTS': 1,
         'DEPTH_LIMIT': 2,
         'USER_AGENT': 'ScrapyUI Educational News Bot 1.0 (Research Purpose)',
-        'CLOSESPIDER_PAGECOUNT': 30,
         'DEFAULT_REQUEST_HEADERS': {
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             'Accept-Language': 'ja,en-US;q=0.9,en;q=0.8',

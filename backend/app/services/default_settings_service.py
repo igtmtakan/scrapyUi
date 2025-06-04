@@ -340,8 +340,6 @@ class DefaultSettingsService:
             'RANDOMIZE_DOWNLOAD_DELAY': 0.5,
             'CONCURRENT_REQUESTS': 1,
             'DEPTH_LIMIT': 3,
-            'CLOSESPIDER_PAGECOUNT': 10,
-            'CLOSESPIDER_ITEMCOUNT': 70,
             'AUTOTHROTTLE_ENABLED': False,  # 手動で制御
             'ROBOTSTXT_OBEY': True,
             'USER_AGENT': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',

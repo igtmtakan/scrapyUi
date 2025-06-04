@@ -4,7 +4,6 @@ import React, { useState, useEffect } from 'react'
 import {
   Calendar,
   Clock,
-  Play,
   Pause,
   Edit,
   Trash2,
@@ -156,7 +155,7 @@ export default function SchedulesPage() {
         loadSchedules()
         loadTaskProgress()
         loadPendingTasksInfo()
-      }, 5000) // 5秒ごとに更新
+      }, 3000) // 3秒ごとに更新（より頻繁に同期）
     }
 
     return () => {
@@ -224,56 +223,43 @@ export default function SchedulesPage() {
       // 各スケジュールの最新タスクを取得
       for (const schedule of schedules) {
         try {
-          // URLパラメータを適切にエンコード
-          const params = new URLSearchParams({
+          // まず実行中・待機中のタスクを優先的に取得
+          let activeTasks = await apiClient.getTasks({
             project_id: schedule.project_id,
             spider_id: schedule.spider_id,
-            limit: '1'
-          });
-
-          // RUNNINGタスクのみを取得（PENDINGは除外）
-          const runningParams = new URLSearchParams({
-            project_id: schedule.project_id,
-            spider_id: schedule.spider_id,
-            limit: '1',
-            status: 'RUNNING'
-          });
-
-          // RUNNINGタスクのみを確認
-          let tasks = await apiClient.getTasks({
-            project_id: schedule.project_id,
-            spider_id: schedule.spider_id,
-            status: 'RUNNING',
+            status: 'RUNNING,PENDING',
             limit: 1
           })
 
-          if (tasks.length > 0) {
-            const task = tasks[0]
+          // 実行中・待機中のタスクがある場合は優先表示
+          if (activeTasks.length > 0) {
+            const task = activeTasks[0]
 
-            // 実行中のタスクがある場合のみ表示（待機中は除外）
-            if (task.status === 'RUNNING') {
-              progressData[schedule.id] = {
-                taskId: task.id,
-                status: task.status.toLowerCase(),
-                itemsScraped: task.items_count || 0,
-                requestsCount: task.requests_count || 0,
-                responsesCount: task.responses_count || 0,
-                errorsCount: task.errors_count || 0,
-                startedAt: task.started_at,
-                elapsedTime: task.started_at ?
-                  Math.floor((new Date().getTime() - new Date(task.started_at).getTime()) / 1000) : 0,
-                richStats: task.rich_stats || null,
-                scrapyStatsUsed: task.scrapy_stats_used || false
-              }
-
-              // Rich progress統計情報を保存
-              if (task.rich_stats) {
-                setRichStatsData(prev => ({
-                  ...prev,
-                  [schedule.id]: task.rich_stats
-                }))
-              }
+            progressData[schedule.id] = {
+              taskId: task.id,
+              status: task.status.toLowerCase(),
+              itemsScraped: task.items_count || 0,
+              requestsCount: task.requests_count || 0,
+              responsesCount: task.responses_count || 0,
+              errorsCount: task.errors_count || 0,
+              startedAt: task.started_at,
+              elapsedTime: task.started_at ?
+                Math.floor((new Date().getTime() - new Date(task.started_at).getTime()) / 1000) : 0,
+              richStats: task.rich_stats || null,
+              scrapyStatsUsed: task.scrapy_stats_used || false
             }
+
+            // Rich progress統計情報を保存
+            if (task.rich_stats) {
+              setRichStatsData(prev => ({
+                ...prev,
+                [schedule.id]: task.rich_stats
+              }))
+            }
+
+            console.log(`📊 Schedule ${schedule.name}: Found ACTIVE ${task.status} task ${task.id.slice(0, 8)}`)
+          } else {
+            console.log(`📊 Schedule ${schedule.name}: No active tasks found`)
           }
         } catch (error) {
           // ネットワークエラーやその他のエラー
@@ -316,6 +302,118 @@ export default function SchedulesPage() {
 
     setStats({ total, active, inactive, running })
   }
+
+  // WebSocket接続とメッセージ処理（オプション機能）
+  useEffect(() => {
+    if (!isAuthenticated || !user) {
+      console.log('SchedulesPage: Not authenticated, skipping WebSocket connection')
+      return
+    }
+
+    console.log('SchedulesPage: Setting up WebSocket connection')
+    let ws: WebSocket | null = null
+    let reconnectTimeout: NodeJS.Timeout | null = null
+
+    const connectWebSocket = () => {
+      try {
+        // リアルタイム進捗監視用のWebSocketエンドポイントを使用
+        ws = new WebSocket('ws://localhost:8000/ws/realtime-progress')
+
+        ws.onopen = () => {
+          console.log('SchedulesPage: WebSocket connected to realtime-progress')
+        }
+
+        ws.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data)
+            console.log('SchedulesPage: WebSocket message received:', data)
+
+            if (data.type === 'task_update') {
+              // タスクの進捗更新を受信
+              const { task_id, status, items_count, requests_count, rich_stats } = data
+
+              // 該当するスケジュールを見つけて更新
+              setTaskProgress(prev => {
+                const updated = { ...prev }
+                let foundSchedule = false
+
+                for (const [scheduleId, progress] of Object.entries(updated)) {
+                  if (progress && typeof progress === 'object' && 'taskId' in progress && progress.taskId === task_id) {
+                    updated[scheduleId] = {
+                      ...progress,
+                      status: status?.toLowerCase() || progress.status,
+                      itemsScraped: items_count || progress.itemsScraped,
+                      requestsCount: requests_count || progress.requestsCount,
+                      richStats: rich_stats || progress.richStats
+                    }
+                    console.log(`📊 Updated progress for schedule ${scheduleId}:`, updated[scheduleId])
+                    foundSchedule = true
+                    break
+                  }
+                }
+
+                // タスクが完了した場合、進捗を削除
+                if (status === 'FINISHED' || status === 'FAILED' || status === 'CANCELLED') {
+                  for (const [scheduleId, progress] of Object.entries(updated)) {
+                    if (progress && typeof progress === 'object' && 'taskId' in progress && progress.taskId === task_id) {
+                      delete updated[scheduleId]
+                      console.log(`🏁 Removed completed task progress for schedule ${scheduleId}`)
+                      break
+                    }
+                  }
+                }
+
+                return updated
+              })
+
+              // Rich統計情報も更新
+              if (rich_stats) {
+                setRichStatsData(prev => {
+                  const updated = { ...prev }
+                  for (const [scheduleId, progress] of Object.entries(taskProgress)) {
+                    if (progress && typeof progress === 'object' && 'taskId' in progress && progress.taskId === task_id) {
+                      updated[scheduleId] = rich_stats
+                      break
+                    }
+                  }
+                  return updated
+                })
+              }
+            }
+          } catch (error) {
+            console.error('SchedulesPage: Error parsing WebSocket message:', error)
+          }
+        }
+
+        ws.onerror = (error) => {
+          console.warn('SchedulesPage: WebSocket error (non-critical):', error)
+          // WebSocketエラーは非致命的 - ポーリングで代替
+        }
+
+        ws.onclose = (event) => {
+          console.log('SchedulesPage: WebSocket disconnected', event.code, event.reason)
+          // 自動再接続は行わない（ポーリングで代替）
+        }
+
+      } catch (error) {
+        console.warn('SchedulesPage: Failed to create WebSocket connection:', error)
+        // WebSocket接続失敗は非致命的 - ポーリングで代替
+      }
+    }
+
+    // WebSocket接続を試行
+    connectWebSocket()
+
+    return () => {
+      console.log('SchedulesPage: Cleaning up WebSocket connection')
+      if (reconnectTimeout) {
+        clearTimeout(reconnectTimeout)
+      }
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.close()
+      }
+    }
+  }, [isAuthenticated, user])
 
   // 待機タスク情報を取得
   const loadPendingTasksInfo = async () => {
@@ -442,380 +540,7 @@ export default function SchedulesPage() {
     }
   }
 
-  const handleRunScheduleNow = async (scheduleId: string) => {
-    try {
-      const result = await scheduleService.runSchedule(scheduleId)
 
-      // リアルタイム実行の場合は別ウィンドウで進捗モニターを表示
-      if (result.realtime && result.task_id) {
-        // 別ウィンドウを開く（スパイダーページと同じ仕様）
-        const streamingWindow = window.open('', '_blank', 'width=1200,height=800');
-        if (!streamingWindow) {
-          alert('ポップアップがブロックされました。ポップアップを許可してください。');
-          return;
-        }
-
-        // ウィンドウにリアルタイム進捗表示のHTMLを設定（スパイダーページと同じ仕様）
-        const htmlContent = `<!DOCTYPE html>
-<html lang="ja">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>リアルタイム実行監視 - Schedule ${scheduleId}</title>
-            <style>
-              body {
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
-                background: #111827;
-                color: #f9fafb;
-                padding: 20px;
-                margin: 0;
-                line-height: 1.6;
-              }
-              .header {
-                background: #1f2937;
-                padding: 20px;
-                margin-bottom: 20px;
-                border-radius: 8px;
-                border: 1px solid #374151;
-              }
-              .header h1 {
-                margin: 0 0 10px 0;
-                color: #60a5fa;
-                font-size: 24px;
-              }
-              .header p {
-                margin: 5px 0;
-                color: #d1d5db;
-              }
-              .progress-container {
-                background: #1f2937;
-                border: 1px solid #374151;
-                border-radius: 8px;
-                padding: 20px;
-                margin-bottom: 20px;
-              }
-              .progress-grid {
-                display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-                gap: 15px;
-                margin-bottom: 20px;
-              }
-              .progress-item {
-                background: #374151;
-                padding: 15px;
-                border-radius: 6px;
-                text-align: center;
-              }
-              .progress-item .label {
-                font-size: 12px;
-                color: #9ca3af;
-                margin-bottom: 5px;
-              }
-              .progress-item .value {
-                font-size: 20px;
-                font-weight: bold;
-                color: #60a5fa;
-              }
-              .progress-bar {
-                width: 100%;
-                height: 8px;
-                background: #374151;
-                border-radius: 4px;
-                overflow: hidden;
-                margin: 10px 0;
-              }
-              .progress-bar-fill {
-                height: 100%;
-                background: linear-gradient(90deg, #3b82f6, #60a5fa);
-                transition: width 0.3s ease;
-                width: 0%;
-              }
-              .status {
-                padding: 15px;
-                background: #1f2937;
-                border: 1px solid #374151;
-                border-radius: 8px;
-                margin-bottom: 20px;
-              }
-              .status.running {
-                border-color: #10b981;
-                background: #064e3b;
-              }
-              .status.completed {
-                border-color: #3b82f6;
-                background: #1e3a8a;
-              }
-              .status.error {
-                border-color: #ef4444;
-                background: #7f1d1d;
-              }
-              .logs {
-                background: #000;
-                color: #00ff00;
-                padding: 15px;
-                border-radius: 8px;
-                height: 300px;
-                overflow-y: auto;
-                font-family: 'Courier New', monospace;
-                font-size: 12px;
-                white-space: pre-wrap;
-                border: 1px solid #374151;
-              }
-              .connection-status {
-                position: fixed;
-                top: 20px;
-                right: 20px;
-                padding: 8px 12px;
-                border-radius: 4px;
-                font-size: 12px;
-                font-weight: bold;
-              }
-              .connection-status.connected {
-                background: #10b981;
-                color: white;
-              }
-              .connection-status.disconnected {
-                background: #ef4444;
-                color: white;
-              }
-              .connection-status.connecting {
-                background: #f59e0b;
-                color: white;
-              }
-            </style>
-          </head>
-          <body>
-            <div class="connection-status" id="connectionStatus">接続中...</div>
-
-            <div class="header">
-              <h1>🕷️ リアルタイム実行監視</h1>
-              <p><strong>スケジュールID:</strong> ${scheduleId}</p>
-              <p><strong>タスクID:</strong> ${result.task_id}</p>
-              <p><strong>コマンド:</strong> ${result.command || 'scrapy crawlwithwatchdog'}</p>
-              <p><strong>開始時刻:</strong> ${new Date().toLocaleString('ja-JP')}</p>
-            </div>
-
-            <div class="progress-container">
-              <h3 style="margin-top: 0; color: #60a5fa;">📊 進捗統計</h3>
-              <div class="progress-grid">
-                <div class="progress-item">
-                  <div class="label">アイテム数</div>
-                  <div class="value" id="itemsCount">0</div>
-                </div>
-                <div class="progress-item">
-                  <div class="label">リクエスト数</div>
-                  <div class="value" id="requestsCount">0</div>
-                </div>
-                <div class="progress-item">
-                  <div class="label">レスポンス数</div>
-                  <div class="value" id="responsesCount">0</div>
-                </div>
-                <div class="progress-item">
-                  <div class="label">エラー数</div>
-                  <div class="value" id="errorsCount">0</div>
-                </div>
-                <div class="progress-item">
-                  <div class="label">経過時間</div>
-                  <div class="value" id="elapsedTime">0秒</div>
-                </div>
-                <div class="progress-item">
-                  <div class="label">アイテム/分</div>
-                  <div class="value" id="itemsPerMinute">0</div>
-                </div>
-              </div>
-
-              <div class="progress-bar">
-                <div class="progress-bar-fill" id="progressBarFill"></div>
-              </div>
-              <div style="text-align: center; margin-top: 5px; color: #9ca3af;">
-                進捗: <span id="progressPercentage">0%</span>
-              </div>
-            </div>
-
-            <div class="status" id="taskStatus">
-              <strong>ステータス:</strong> <span id="statusText">初期化中...</span>
-            </div>
-
-            <div>
-              <h3 style="color: #60a5fa; margin-bottom: 10px;">📝 実行ログ</h3>
-              <div class="logs" id="logs">リアルタイム進捗データを待機中...\n</div>
-            </div>
-
-            <script>
-              const taskId = '${result.task_id}';
-              let ws = null;
-              let isConnected = false;
-              let startTime = Date.now();
-
-              // DOM要素の取得
-              const elements = {
-                connectionStatus: document.getElementById('connectionStatus'),
-                itemsCount: document.getElementById('itemsCount'),
-                requestsCount: document.getElementById('requestsCount'),
-                responsesCount: document.getElementById('responsesCount'),
-                errorsCount: document.getElementById('errorsCount'),
-                elapsedTime: document.getElementById('elapsedTime'),
-                itemsPerMinute: document.getElementById('itemsPerMinute'),
-                progressBarFill: document.getElementById('progressBarFill'),
-                progressPercentage: document.getElementById('progressPercentage'),
-                taskStatus: document.getElementById('taskStatus'),
-                statusText: document.getElementById('statusText'),
-                logs: document.getElementById('logs')
-              };
-
-              // WebSocket接続
-              function connectWebSocket() {
-                try {
-                  const wsUrl = 'ws://localhost:8000/ws/progress/' + taskId;
-                  console.log('Connecting to WebSocket:', wsUrl);
-
-                  ws = new WebSocket(wsUrl);
-
-                  ws.onopen = function() {
-                    console.log('WebSocket connected to:', wsUrl);
-                    isConnected = true;
-                    elements.connectionStatus.textContent = '接続済み';
-                    elements.connectionStatus.className = 'connection-status connected';
-
-                    addLog('🔗 WebSocket接続が確立されました: ' + wsUrl);
-                    addLog('🎯 タスクID: ' + taskId);
-                    elements.statusText.textContent = 'WebSocket接続済み - 進捗データを待機中';
-                  };
-
-                  ws.onmessage = function(event) {
-                    try {
-                      const data = JSON.parse(event.data);
-                      handleProgressUpdate(data);
-                    } catch (e) {
-                      console.error('Failed to parse WebSocket message:', e);
-                      addLog('⚠️ WebSocketメッセージの解析に失敗: ' + event.data);
-                    }
-                  };
-
-                  ws.onclose = function() {
-                    console.log('WebSocket disconnected');
-                    isConnected = false;
-                    elements.connectionStatus.textContent = '切断';
-                    elements.connectionStatus.className = 'connection-status disconnected';
-                    addLog('🔌 WebSocket接続が切断されました');
-
-                    // 5秒後に再接続を試行
-                    setTimeout(connectWebSocket, 5000);
-                  };
-
-                  ws.onerror = function(error) {
-                    console.error('WebSocket error:', error);
-                    console.error('WebSocket URL:', wsUrl);
-                    console.error('WebSocket readyState:', ws ? ws.readyState : 'undefined');
-                    addLog('❌ WebSocketエラーが発生しました: ' + wsUrl);
-                    addLog('🔍 readyState: ' + (ws ? ws.readyState : 'undefined'));
-                  };
-
-                } catch (error) {
-                  console.error('Failed to connect WebSocket:', error);
-                  addLog('❌ WebSocket接続に失敗しました: ' + error.message);
-                }
-              }
-
-              // 進捗データの更新
-              function handleProgressUpdate(data) {
-                console.log('Progress update:', data);
-
-                if (data.task_id === taskId) {
-                  // 統計情報の更新
-                  if (data.items_count !== undefined) {
-                    elements.itemsCount.textContent = data.items_count.toLocaleString();
-                  }
-                  if (data.requests_count !== undefined) {
-                    elements.requestsCount.textContent = data.requests_count.toLocaleString();
-                  }
-                  if (data.responses_count !== undefined) {
-                    elements.responsesCount.textContent = data.responses_count.toLocaleString();
-                  }
-                  if (data.errors_count !== undefined) {
-                    elements.errorsCount.textContent = data.errors_count.toLocaleString();
-                  }
-                  if (data.items_per_minute !== undefined) {
-                    elements.itemsPerMinute.textContent = Math.round(data.items_per_minute).toLocaleString();
-                  }
-
-                  // 進捗バーの更新
-                  if (data.progress_percentage !== undefined) {
-                    const percentage = Math.min(100, Math.max(0, data.progress_percentage));
-                    elements.progressBarFill.style.width = percentage + '%';
-                    elements.progressPercentage.textContent = percentage.toFixed(1) + '%';
-                  }
-
-                  // ステータスの更新
-                  if (data.status) {
-                    elements.statusText.textContent = data.status;
-                    elements.taskStatus.className = 'status ' + (data.status.includes('完了') ? 'completed' : 'running');
-                  }
-
-                  // ログの追加
-                  if (data.message) {
-                    addLog(data.message);
-                  }
-                }
-              }
-
-              // ログの追加
-              function addLog(message) {
-                const timestamp = new Date().toLocaleTimeString('ja-JP');
-                elements.logs.textContent += '[' + timestamp + '] ' + message + '\n';
-                elements.logs.scrollTop = elements.logs.scrollHeight;
-              }
-
-              // 経過時間の更新
-              function updateElapsedTime() {
-                const elapsed = Math.floor((Date.now() - startTime) / 1000);
-                const minutes = Math.floor(elapsed / 60);
-                const seconds = elapsed % 60;
-
-                if (minutes > 0) {
-                  elements.elapsedTime.textContent = minutes + '分' + seconds + '秒';
-                } else {
-                  elements.elapsedTime.textContent = seconds + '秒';
-                }
-              }
-
-              // 初期化
-              connectWebSocket();
-              setInterval(updateElapsedTime, 1000);
-
-              // ページが閉じられる時にWebSocketを閉じる
-              window.addEventListener('beforeunload', function() {
-                if (ws) {
-                  ws.close();
-                }
-              });
-            </script>
-          </body>
-          </html>`;
-
-        streamingWindow.document.write(htmlContent);
-        streamingWindow.document.close();
-
-        alert(`リアルタイム実行を開始しました。別ウィンドウで進捗を確認できます。\nタスクID: ${result.task_id}`)
-      } else {
-        alert(`スケジュールを実行しました。タスクID: ${result.task_id}`)
-      }
-
-      // 最終実行時刻を更新
-      loadSchedules()
-    } catch (error: any) {
-      console.error('Schedule run error:', error);
-
-      if (error.response?.status === 409) {
-        // 重複実行エラーの場合
-        const detail = error.response?.data?.detail || '同じスパイダーが既に実行中です。実行中のタスクが完了してから再試行してください。';
-        alert(`⚠️ 重複実行防止\n\n${detail}\n\n💡 ヒント: スケジュールページを更新して実行中タスクの状況を確認してください。`);
-      } else {
-        const detail = error.response?.data?.detail || 'スケジュールの実行に失敗しました';
-        alert(`❌ 実行エラー\n\n${detail}\n\nエラーコード: ${error.response?.status || 'Unknown'}`);
-      }
-    }
-  }
 
   const handleDeleteSchedule = async (scheduleId: string) => {
     if (!confirm('このスケジュールを削除しますか？')) return
@@ -1387,13 +1112,19 @@ export default function SchedulesPage() {
 
                       </div>
                     ) : schedule.latest_task ? (
-                      /* 最新完了タスクの表示 */
+                      /* 最新タスクの表示（実行中を優先） */
                       <div className="mt-4 p-3 bg-gray-700/50 rounded-lg border border-gray-600">
                         <div className="flex items-center justify-between mb-3">
                           <div className="flex items-center space-x-2">
-                            <div className="w-3 h-3 rounded-full bg-blue-400"></div>
+                            <div className={`w-3 h-3 rounded-full ${
+                              schedule.latest_task.status === 'RUNNING' ? 'bg-green-400 animate-pulse' :
+                              schedule.latest_task.status === 'PENDING' ? 'bg-yellow-400 animate-pulse' :
+                              'bg-blue-400'
+                            }`}></div>
                             <span className="text-sm font-medium text-gray-300">
-                              ✅ 最新実行完了
+                              {schedule.latest_task.status === 'RUNNING' ? '🔄 実行中' :
+                               schedule.latest_task.status === 'PENDING' ? '⏳ 待機中' :
+                               '✅ 最新実行完了'}
                             </span>
                             <span className="text-xs text-gray-400">
                               (タスクID: {schedule.latest_task.id.slice(0, 8)}...)
@@ -1498,16 +1229,8 @@ export default function SchedulesPage() {
 
                   {/* アクション */}
                   <div className="flex flex-col space-y-2 ml-4">
-                    {/* 第1行: 実行・制御ボタン */}
+                    {/* 第1行: 制御ボタン */}
                     <div className="flex items-center space-x-2">
-                      <button
-                        onClick={() => handleRunScheduleNow(schedule.id)}
-                        className="p-2 text-gray-400 hover:text-green-400 transition-colors"
-                        title="今すぐ実行"
-                      >
-                        <Play className="w-4 h-4" />
-                      </button>
-
                       <button
                         onClick={() => handleToggleSchedule(schedule.id)}
                         className={`p-2 transition-colors ${

@@ -29,7 +29,6 @@ class RichProgressExtension:
         self.errors_count = 0
         
         # 設定
-        self.item_limit = crawler.settings.getint('CLOSESPIDER_ITEMCOUNT', 0)
         self.spider_name = ""
         
         # スレッドロック

@@ -45,7 +45,6 @@ class PlaywrightAdvancedSpider(scrapy.Spider):
         'AUTOTHROTTLE_ENABLED': False,
         'ROBOTSTXT_OBEY': True,
         'USER_AGENT': 'ScrapyUI Playwright Spider 1.0',
-        'CLOSESPIDER_PAGECOUNT': 10,
     }
 
     def start_requests(self):

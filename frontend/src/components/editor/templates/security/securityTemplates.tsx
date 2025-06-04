@@ -35,7 +35,6 @@ class SecurityHeadersSpider(scrapy.Spider):
         'DOWNLOAD_DELAY': 1,
         'CONCURRENT_REQUESTS': 1,
         'USER_AGENT': 'ScrapyUI Security Scanner 1.0 (Educational Purpose)',
-        'CLOSESPIDER_PAGECOUNT': 10,
     }
     
     def parse(self, response):
@@ -337,7 +336,6 @@ class VulnerabilityScannerSpider(scrapy.Spider):
         'DOWNLOAD_DELAY': 2,  # 丁寧にスキャン
         'CONCURRENT_REQUESTS': 1,
         'USER_AGENT': 'ScrapyUI Vulnerability Scanner 1.0 (Educational Purpose)',
-        'CLOSESPIDER_PAGECOUNT': 15,
     }
     
     def parse(self, response):

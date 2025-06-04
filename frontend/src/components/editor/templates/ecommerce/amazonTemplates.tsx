@@ -40,7 +40,6 @@ class AmazonSpider(scrapy.Spider):
         'CONCURRENT_REQUESTS': 1,
         'DEPTH_LIMIT': 2,
         'USER_AGENT': 'ScrapyUI Educational Bot 1.0 (Research Purpose)',
-        'CLOSESPIDER_PAGECOUNT': 20,
         'DEFAULT_REQUEST_HEADERS': {
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             'Accept-Language': 'ja,en-US;q=0.9,en;q=0.8',
@@ -272,8 +271,8 @@ class AmazonRanking60Spider(scrapy.Spider):
     ]
 
     # 取得する商品数の設定
-    target_items_per_page = 30  # 1ページあたりの目標商品数
-    target_pages = 2           # 取得するページ数
+    target_items_per_page = 100  # 1ページあたりの目標商品数
+    target_pages = 10           # 取得するページ数
     total_target_items = target_items_per_page * target_pages  # 合計60商品
 
     custom_settings = {
@@ -287,8 +286,6 @@ class AmazonRanking60Spider(scrapy.Spider):
         'CONCURRENT_REQUESTS': 1,
         'DEPTH_LIMIT': 3,
         'USER_AGENT': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'CLOSESPIDER_PAGECOUNT': 10,
-        'CLOSESPIDER_ITEMCOUNT': 70,  # 目標より少し多めに設定
         'DEFAULT_REQUEST_HEADERS': {
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
             'Accept-Language': 'ja,en-US;q=0.9,en;q=0.8',

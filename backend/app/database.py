@@ -6,8 +6,12 @@ import enum
 from datetime import datetime
 from typing import Optional
 import os
+import pytz
 
 from .config.database_config import get_database_config, DatabaseType
+
+# タイムゾーン設定
+TIMEZONE = pytz.timezone('Asia/Tokyo')
 
 # SQLAlchemyエンジンとセッション
 def create_database_engine():

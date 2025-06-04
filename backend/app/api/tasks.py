@@ -168,11 +168,12 @@ async def get_tasks(
         # Scrapyの統計ファイルから全パラメータを取得
         full_stats = scrapy_service._get_scrapy_full_stats(task.id, task.project_id)
 
-        # 基本統計情報（優先順位：Scrapy統計 > データベース値 > 0）
-        final_items = full_stats.get('items_count', 0) if full_stats else (task.items_count or 0)
-        final_requests = full_stats.get('requests_count', 0) if full_stats else (task.requests_count or 0)
+        # 基本統計情報（優先順位：データベース値 > Scrapy統計 > 0）
+        # Rich progress extensionが正確にデータベースに記録した値を優先
+        final_items = (task.items_count or 0) if (task.items_count or 0) > 0 else (full_stats.get('items_count', 0) if full_stats else 0)
+        final_requests = (task.requests_count or 0) if (task.requests_count or 0) > 0 else (full_stats.get('requests_count', 0) if full_stats else 0)
         final_responses = full_stats.get('responses_count', 0) if full_stats else 0
-        final_errors = full_stats.get('errors_count', 0) if full_stats else (task.error_count or 0)
+        final_errors = (task.error_count or 0) if (task.error_count or 0) >= 0 else (full_stats.get('errors_count', 0) if full_stats else 0)
 
         # 基本フィールド
         task_dict['items_scraped'] = final_items  # フロントエンド互換性
@@ -353,11 +354,12 @@ async def get_task(
     # Scrapyの統計ファイルから全パラメータを取得
     full_stats = scrapy_service._get_scrapy_full_stats(task.id, task.project_id)
 
-    # 基本統計情報（優先順位：Scrapy統計 > データベース値 > 0）
-    final_items = full_stats.get('items_count', 0) if full_stats else (task.items_count or 0)
-    final_requests = full_stats.get('requests_count', 0) if full_stats else (task.requests_count or 0)
+    # 基本統計情報（優先順位：データベース値 > Scrapy統計 > 0）
+    # Rich progress extensionが正確にデータベースに記録した値を優先
+    final_items = (task.items_count or 0) if (task.items_count or 0) > 0 else (full_stats.get('items_count', 0) if full_stats else 0)
+    final_requests = (task.requests_count or 0) if (task.requests_count or 0) > 0 else (full_stats.get('requests_count', 0) if full_stats else 0)
     final_responses = full_stats.get('responses_count', 0) if full_stats else 0
-    final_errors = full_stats.get('errors_count', 0) if full_stats else (task.error_count or 0)
+    final_errors = (task.error_count or 0) if (task.error_count or 0) >= 0 else (full_stats.get('errors_count', 0) if full_stats else 0)
 
     # 基本フィールド
     task_dict['items_scraped'] = final_items  # フロントエンド互換性

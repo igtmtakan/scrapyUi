@@ -79,13 +79,24 @@ async def get_schedules(
     # レスポンス形式を調整
     schedules = []
     for schedule, project_name, spider_name in results:
-        # スケジュール実行による最新のタスクを取得
-        # schedule_idが設定されているタスクのみを対象とする
-        latest_task = db.query(DBTask).filter(
+        # スケジュール実行による最新のタスクを取得（実行中を優先）
+        # まず実行中・待機中のタスクを確認
+        active_task = db.query(DBTask).filter(
             DBTask.project_id == schedule.project_id,
             DBTask.spider_id == schedule.spider_id,
-            DBTask.schedule_id == schedule.id  # スケジュール実行のタスクのみ
+            DBTask.schedule_id == schedule.id,  # スケジュール実行のタスクのみ
+            DBTask.status.in_(['RUNNING', 'PENDING'])
         ).order_by(DBTask.created_at.desc()).first()
+
+        # 実行中・待機中のタスクがあればそれを使用、なければ最新の完了タスク
+        if active_task:
+            latest_task = active_task
+        else:
+            latest_task = db.query(DBTask).filter(
+                DBTask.project_id == schedule.project_id,
+                DBTask.spider_id == schedule.spider_id,
+                DBTask.schedule_id == schedule.id  # スケジュール実行のタスクのみ
+            ).order_by(DBTask.created_at.desc()).first()
 
         # Cron式から間隔（分）を推定
         interval_minutes = None
@@ -114,11 +125,12 @@ async def get_schedules(
             # Scrapyの統計ファイルから全パラメータを取得
             full_stats = scrapy_service._get_scrapy_full_stats(latest_task.id, latest_task.project_id)
 
-            # 基本統計情報（優先順位：Scrapy統計 > データベース値 > 0）
-            final_items = full_stats.get('items_count', 0) if full_stats else (latest_task.items_count or 0)
-            final_requests = full_stats.get('requests_count', 0) if full_stats else (latest_task.requests_count or 0)
+            # 基本統計情報（優先順位：データベース値 > Scrapy統計 > 0）
+            # Rich progress extensionが正確にデータベースに記録した値を優先
+            final_items = (latest_task.items_count or 0) if (latest_task.items_count or 0) > 0 else (full_stats.get('items_count', 0) if full_stats else 0)
+            final_requests = (latest_task.requests_count or 0) if (latest_task.requests_count or 0) > 0 else (full_stats.get('requests_count', 0) if full_stats else 0)
             final_responses = full_stats.get('responses_count', 0) if full_stats else 0
-            final_errors = full_stats.get('errors_count', 0) if full_stats else (latest_task.error_count or 0)
+            final_errors = (latest_task.error_count or 0) if (latest_task.error_count or 0) >= 0 else (full_stats.get('errors_count', 0) if full_stats else 0)
 
             # Rich progress統計情報に基づくステータス再判定
             original_status = latest_task.status.value if hasattr(latest_task.status, 'value') else latest_task.status

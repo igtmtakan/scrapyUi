@@ -9,9 +9,16 @@ import uvicorn
 import os
 from pathlib import Path
 from dotenv import load_dotenv
+import pytz
 
 # 環境変数を読み込み
 load_dotenv()
+
+# タイムゾーン設定
+from .config.timezone_config import get_timezone, get_timezone_name, now_in_timezone
+TIMEZONE = get_timezone()
+print(f"🌏 Application Timezone: {get_timezone_name()}")
+print(f"🕐 Current Time: {now_in_timezone()}")
 
 # ロギングとエラーハンドリングのインポート
 from .utils.logging_config import setup_logging, get_logger
