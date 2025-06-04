@@ -1185,13 +1185,24 @@ def _get_logs_from_file(task_id: str, task, db: Session, limit: int = 100, level
                 "timestamp": (task.started_at or task.created_at or datetime.now(timezone.utc)).isoformat()
             })
 
-            # 結果ファイルの確認
+            # 結果ファイルの確認（JSON、JSONL、CSV、XMLを含む）
             try:
                 import glob
                 patterns = [
+                    # JSON形式
                     str(scrapy_service.base_projects_dir / project.path / f"results_{task_id}.json"),
                     str(scrapy_service.base_projects_dir / project.path / project.path / f"results_{task_id}.json"),
-                    str(scrapy_service.base_projects_dir / "**" / f"results_{task_id}.json")
+                    # JSONL形式
+                    str(scrapy_service.base_projects_dir / project.path / f"results_{task_id}.jsonl"),
+                    str(scrapy_service.base_projects_dir / project.path / project.path / f"results_{task_id}.jsonl"),
+                    # CSV形式
+                    str(scrapy_service.base_projects_dir / project.path / f"results_{task_id}.csv"),
+                    str(scrapy_service.base_projects_dir / project.path / project.path / f"results_{task_id}.csv"),
+                    # XML形式
+                    str(scrapy_service.base_projects_dir / project.path / f"results_{task_id}.xml"),
+                    str(scrapy_service.base_projects_dir / project.path / project.path / f"results_{task_id}.xml"),
+                    # 再帰検索
+                    str(scrapy_service.base_projects_dir / "**" / f"results_{task_id}.*")
                 ]
 
                 result_files = []
@@ -1212,25 +1223,58 @@ def _get_logs_from_file(task_id: str, task, db: Session, limit: int = 100, level
                     # ファイル内容を確認
                     if file_size > 0:
                         try:
-                            with open(result_file, 'r', encoding='utf-8') as f:
-                                data = json.load(f)
-                                item_count = len(data) if isinstance(data, list) else 1
+                            item_count = 0
+                            if result_file.suffix == '.json':
+                                with open(result_file, 'r', encoding='utf-8') as f:
+                                    data = json.load(f)
+                                    item_count = len(data) if isinstance(data, list) else 1
+                            elif result_file.suffix == '.jsonl':
+                                # JSONLファイルの場合
+                                with open(result_file, 'r', encoding='utf-8') as f:
+                                    for line in f:
+                                        if line.strip():
+                                            item_count += 1
+                            elif result_file.suffix == '.csv':
+                                # CSVファイルの場合（ヘッダーを除く）
+                                with open(result_file, 'r', encoding='utf-8') as f:
+                                    lines = f.readlines()
+                                    item_count = max(0, len(lines) - 1)  # ヘッダーを除く
+                            else:
+                                # その他のファイル形式
+                                item_count = 1 if file_size > 0 else 0
 
-                                logs.append({
-                                    "id": f"info-{task_id}-3",
-                                    "level": "INFO",
-                                    "message": f"Successfully scraped {item_count} items",
-                                    "timestamp": (task.finished_at or datetime.now(timezone.utc)).isoformat()
-                                })
+                            logs.append({
+                                "id": f"info-{task_id}-3",
+                                "level": "INFO",
+                                "message": f"Successfully scraped {item_count} items from {result_file.suffix} file",
+                                "timestamp": (task.finished_at or datetime.now(timezone.utc)).isoformat()
+                            })
 
-                                # FAILEDだが実際にはデータがある場合
-                                if hasattr(task, 'status') and str(task.status) == 'FAILED' and item_count > 0:
+                            # タスクが完了した場合
+                            if hasattr(task, 'status') and str(task.status) in ['FINISHED', 'FAILED']:
+                                if str(task.status) == 'FINISHED':
                                     logs.append({
-                                        "id": f"warning-{task_id}-1",
-                                        "level": "WARNING",
-                                        "message": f"Task marked as FAILED but {item_count} items were successfully scraped",
+                                        "id": f"info-{task_id}-4",
+                                        "level": "INFO",
+                                        "message": f"Task completed successfully",
                                         "timestamp": (task.finished_at or datetime.now(timezone.utc)).isoformat()
                                     })
+                                else:
+                                    # FAILEDだが実際にはデータがある場合
+                                    if item_count > 0:
+                                        logs.append({
+                                            "id": f"warning-{task_id}-1",
+                                            "level": "WARNING",
+                                            "message": f"Task marked as FAILED but {item_count} items were successfully scraped",
+                                            "timestamp": (task.finished_at or datetime.now(timezone.utc)).isoformat()
+                                        })
+                                    else:
+                                        logs.append({
+                                            "id": f"error-{task_id}-2",
+                                            "level": "ERROR",
+                                            "message": f"Task completed with status: {task.status}",
+                                            "timestamp": (task.finished_at or datetime.now(timezone.utc)).isoformat()
+                                        })
                         except Exception as e:
                             logs.append({
                                 "id": f"error-{task_id}-1",

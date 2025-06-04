@@ -225,7 +225,7 @@ async def get_nodejs_client() -> NodeJSClient:
     global _nodejs_client
     if _nodejs_client is None:
         # 環境変数からAPIキーを読み込み
-        api_key = os.getenv("NODEJS_SERVICE_API_KEY")
+        api_key = os.getenv("NODEJS_SERVICE_API_KEY", "scrapyui-nodejs-service-key-2024")
         base_url = os.getenv("NODEJS_SERVICE_URL", "http://localhost:3001")
 
         config = NodeJSServiceConfig(
@@ -248,3 +248,8 @@ async def close_nodejs_client():
     if _nodejs_client:
         await _nodejs_client.client.aclose()
         _nodejs_client = None
+
+def reset_nodejs_client():
+    """Reset NodeJS client singleton (for configuration updates)"""
+    global _nodejs_client
+    _nodejs_client = None
