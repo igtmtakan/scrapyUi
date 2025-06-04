@@ -94,15 +94,31 @@ class RichProgressExtension:
         """スパイダー開始時の処理"""
         self.stats['start_time'] = time.time()
 
-        # タスクIDを取得（環境変数またはcrawlerから）
+        # タスクIDを取得（複数の方法で試行）
         self.task_id_str = (
             os.environ.get('SCRAPY_TASK_ID') or
             getattr(self.crawler, 'task_id', None) or
+            getattr(spider, 'task_id', None) or
             f"task_{int(time.time())}"
         )
 
+        # スパイダーにtask_idを設定（確実に利用可能にする）
+        if not hasattr(spider, 'task_id'):
+            spider.task_id = self.task_id_str
+
+        # プロジェクトパスを設定（複数の方法で試行）
+        project_path = (
+            os.environ.get('SCRAPY_PROJECT_PATH') or
+            getattr(spider, 'project_path', None) or
+            str(Path.cwd())
+        )
+
+        # スパイダーにproject_pathを設定
+        if not hasattr(spider, 'project_path'):
+            spider.project_path = project_path
+
         # 統計ファイルパスを設定
-        project_dir = Path.cwd()
+        project_dir = Path(project_path)
         self.stats_file = project_dir / f"stats_{self.task_id_str}.json"
 
         # start_urlsの数を取得
@@ -117,9 +133,14 @@ class RichProgressExtension:
 
         spider.logger.info(f"🎨 Rich進捗バー開始: {spider.name}")
         spider.logger.info(f"📊 統計ファイル: {self.stats_file}")
+        spider.logger.info(f"🔧 Task ID: {self.task_id_str}")
+        spider.logger.info(f"📁 Project path: {project_path}")
     
     def spider_closed(self, spider: Spider, reason: str):
         """スパイダー終了時の処理"""
+        print(f"🔥 [RICH PROGRESS] spider_closed called with reason: {reason}")
+        spider.logger.info(f"🔥 [RICH PROGRESS] spider_closed called with reason: {reason}")
+
         # 終了時刻を記録
         self.stats['finish_time'] = time.time()
 
@@ -129,12 +150,36 @@ class RichProgressExtension:
         # 最終統計ファイルを保存
         self._save_stats()
 
-        # 完了通知とバルクインサート発動
-        if reason == 'finished' and hasattr(spider, 'task_id'):
-            spider.logger.info(f"🎯 Spider completed successfully with Rich progress tracking for task {spider.task_id}")
+        # タスクIDを確実に取得（複数の方法で試行）
+        task_id = (
+            getattr(spider, 'task_id', None) or
+            self.task_id_str or
+            os.environ.get('SCRAPY_TASK_ID')
+        )
+
+        print(f"🔥 [RICH PROGRESS] Task ID found: {task_id}")
+        spider.logger.info(f"🎯 Spider closed with reason '{reason}' - Task ID: {task_id}")
+
+        # 完了通知とバルクインサート発動（理由に関係なく実行）
+        if task_id:
+            print(f"🔥 [RICH PROGRESS] Starting bulk insert for task: {task_id}")
+            spider.logger.info(f"🚀 Triggering Rich progress completion for task {task_id}")
+
+            # スパイダーにtask_idを設定（念のため）
+            if not hasattr(spider, 'task_id'):
+                spider.task_id = task_id
 
             # Rich progress完了通知でバルクインサートを発動
-            self._trigger_bulk_insert_on_completion(spider)
+            try:
+                self._trigger_bulk_insert_on_completion(spider)
+                print(f"🔥 [RICH PROGRESS] Bulk insert completed for task: {task_id}")
+            except Exception as e:
+                print(f"🔥 [RICH PROGRESS] Bulk insert error: {e}")
+                spider.logger.error(f"❌ Rich progress bulk insert error: {e}")
+        else:
+            print(f"🔥 [RICH PROGRESS] No task ID found - skipping bulk insert")
+            spider.logger.warning("🔍 Task ID not found - skipping Rich progress completion")
+            spider.logger.warning(f"🔍 Debug info: spider.task_id={getattr(spider, 'task_id', None)}, self.task_id_str={self.task_id_str}, env={os.environ.get('SCRAPY_TASK_ID')}")
 
         if self.live:
             self.live.stop()
@@ -144,15 +189,20 @@ class RichProgressExtension:
 
         # 最終統計を表示
         self._show_final_stats(spider, reason)
+        print(f"🔥 [RICH PROGRESS] spider_closed completed")
 
     def _trigger_bulk_insert_on_completion(self, spider):
         """Rich progress完了通知でバルクインサートを発動"""
         try:
+            print(f"🔥 [RICH PROGRESS] _trigger_bulk_insert_on_completion started")
+
             task_id = getattr(spider, 'task_id', None)
             if not task_id:
+                print(f"🔥 [RICH PROGRESS] Task ID not found - skipping bulk insert")
                 spider.logger.warning("🔍 Task ID not found - skipping bulk insert")
                 return
 
+            print(f"🔥 [RICH PROGRESS] Task ID found: {task_id}")
             spider.logger.info(f"🚀 Rich progress completion triggered - starting bulk insert for task {task_id}")
 
             # プロジェクトパスを取得
@@ -162,16 +212,36 @@ class RichProgressExtension:
                 import os
                 project_path = os.getcwd()
 
+            print(f"🔥 [RICH PROGRESS] Project path: {project_path}")
             spider.logger.info(f"📁 Project path: {project_path}")
 
-            # JSONLファイルパスを構築
+            # JSONLファイルパスを構築（複数のパターンを試行）
             from pathlib import Path
-            jsonl_file_path = Path(project_path) / f"results_{task_id}.jsonl"
 
-            if not jsonl_file_path.exists():
-                spider.logger.warning(f"📄 JSONL file not found: {jsonl_file_path}")
+            # 可能なファイル名パターン
+            possible_files = [
+                f"results_{task_id}.jsonl",
+                f"{task_id}.jsonl",
+                f"ranking_results.jsonl",
+                f"{spider.name}_results.jsonl"
+            ]
+
+            print(f"🔥 [RICH PROGRESS] Checking possible files: {possible_files}")
+
+            jsonl_file_path = None
+            for filename in possible_files:
+                file_path = Path(project_path) / filename
+                print(f"🔥 [RICH PROGRESS] Checking: {file_path} (exists: {file_path.exists()})")
+                if file_path.exists():
+                    jsonl_file_path = file_path
+                    break
+
+            if not jsonl_file_path:
+                print(f"🔥 [RICH PROGRESS] No JSONL file found in any pattern")
+                spider.logger.warning(f"📄 No JSONL file found for task {task_id}")
                 return
 
+            print(f"🔥 [RICH PROGRESS] Found JSONL file: {jsonl_file_path}")
             spider.logger.info(f"📄 Found JSONL file: {jsonl_file_path}")
 
             # ファイルサイズと行数を確認
@@ -179,50 +249,193 @@ class RichProgressExtension:
             with open(jsonl_file_path, 'r', encoding='utf-8') as f:
                 lines = [line.strip() for line in f if line.strip()]
 
+            print(f"🔥 [RICH PROGRESS] File size: {file_size} bytes, Lines: {len(lines)}")
             spider.logger.info(f"📊 File size: {file_size} bytes, Lines: {len(lines)}")
 
             if len(lines) == 0:
+                print(f"🔥 [RICH PROGRESS] No data lines found in JSONL file")
                 spider.logger.warning("📄 No data lines found in JSONL file")
                 return
 
             # バルクインサート実行
+            print(f"🔥 [RICH PROGRESS] Starting _execute_bulk_insert")
             self._execute_bulk_insert(task_id, lines, spider)
+            print(f"🔥 [RICH PROGRESS] _execute_bulk_insert completed")
 
         except Exception as e:
+            print(f"🔥 [RICH PROGRESS] Error in _trigger_bulk_insert_on_completion: {e}")
             spider.logger.error(f"❌ Bulk insert trigger error: {e}")
             import traceback
+            print(f"🔥 [RICH PROGRESS] Traceback: {traceback.format_exc()}")
             spider.logger.error(f"❌ Traceback: {traceback.format_exc()}")
 
     def _execute_bulk_insert(self, task_id: str, lines: list, spider):
-        """バルクインサートを実行"""
+        """JSONLファイル全体をバルクインサート（重複チェック付き）"""
         try:
-            spider.logger.info(f"🔄 Starting bulk insert for {len(lines)} lines")
+            spider.logger.info(f"🔄 Starting JSONL bulk insert for {len(lines)} lines")
 
-            # ScrapyWatchdogMonitorのバルクインサート機能を使用
-            from ..services.scrapy_watchdog_monitor import ScrapyWatchdogMonitor
+            # 直接バルクインサートを実行
+            inserted_count = self._bulk_insert_from_jsonl_lines(task_id, lines, spider)
 
-            # 一時的なモニターインスタンスを作成（バルクインサート専用）
-            monitor = ScrapyWatchdogMonitor(
-                task_id=task_id,
-                project_path=getattr(spider, 'project_path', os.getcwd()),
-                spider_name=spider.name
-            )
+            spider.logger.info(f"✅ JSONL bulk insert completed: {inserted_count}/{len(lines)} items inserted")
 
-            # バルクインサート実行
-            successful_inserts = monitor._bulk_insert_items_threading(lines)
-
-            spider.logger.info(f"✅ Bulk insert completed: {successful_inserts}/{len(lines)} items inserted")
-
-            # 重複クリーンアップを実行
+            # 念のため重複クリーンアップを実行
+            spider.logger.info(f"🧹 Starting post-insert duplicate cleanup for task {task_id}")
             cleanup_result = self._cleanup_duplicate_records(task_id, spider)
 
             # WebSocket通知を送信
-            self._send_completion_websocket_notification(task_id, successful_inserts, spider, cleanup_result)
+            self._send_completion_websocket_notification(task_id, inserted_count, spider, cleanup_result)
 
         except Exception as e:
-            spider.logger.error(f"❌ Bulk insert execution error: {e}")
+            spider.logger.error(f"❌ JSONL bulk insert execution error: {e}")
             import traceback
             spider.logger.error(f"❌ Traceback: {traceback.format_exc()}")
+
+    def _bulk_insert_from_jsonl_lines(self, task_id: str, lines: list, spider) -> int:
+        """JSONLファイルの行からバルクインサート（重複チェック付き）"""
+        try:
+            from ..database import SessionLocal, Result
+            import json
+            import uuid
+            import hashlib
+            from datetime import datetime
+
+            spider.logger.info(f"📊 Processing {len(lines)} JSONL lines for bulk insert")
+
+            # JSONLファイルの行を解析
+            items_data = []
+            for line_num, line in enumerate(lines, 1):
+                try:
+                    if line.strip():
+                        item_data = json.loads(line.strip())
+                        items_data.append(item_data)
+                except json.JSONDecodeError as e:
+                    spider.logger.warning(f"⚠️ JSON decode error at line {line_num}: {e}")
+
+            if not items_data:
+                spider.logger.warning(f"⚠️ No valid items found in JSONL lines")
+                return 0
+
+            spider.logger.info(f"📦 Found {len(items_data)} valid items in JSONL lines")
+
+            # バルクインサート実行（重複チェック付き）
+            db = SessionLocal()
+            try:
+                bulk_data = []
+                skipped_count = 0
+
+                for item_data in items_data:
+                    # データハッシュを生成
+                    data_hash = self._generate_data_hash(item_data)
+
+                    # 重複チェック（同一タスク内）
+                    existing = db.query(Result).filter(
+                        Result.task_id == task_id,
+                        Result.data_hash == data_hash
+                    ).first()
+
+                    if existing:
+                        skipped_count += 1
+                        spider.logger.debug(f"⚠️ Duplicate data skipped: {data_hash[:8]}...")
+                        continue
+
+                    result_id = str(uuid.uuid4())
+                    bulk_data.append({
+                        'id': result_id,
+                        'task_id': task_id,
+                        'data': item_data,
+                        'data_hash': data_hash,
+                        'item_acquired_datetime': datetime.now(),
+                        'created_at': datetime.now()
+                    })
+
+                # バルクインサート実行
+                inserted_count = 0
+                if bulk_data:
+                    db.bulk_insert_mappings(Result, bulk_data)
+                    db.commit()
+                    inserted_count = len(bulk_data)
+                    spider.logger.info(f"✅ Bulk insert completed: {inserted_count} items inserted, {skipped_count} duplicates skipped")
+                else:
+                    spider.logger.info(f"⚠️ No new data to insert, {skipped_count} duplicates skipped")
+
+                # タスクのアイテム数を更新
+                self._update_task_item_count(task_id, db, spider)
+
+                return inserted_count
+
+            except Exception as e:
+                db.rollback()
+                spider.logger.error(f"❌ Bulk insert error: {e}")
+                raise
+            finally:
+                db.close()
+
+        except Exception as e:
+            spider.logger.error(f"❌ Bulk insert from JSONL lines error: {e}")
+            return 0
+
+    def _generate_data_hash(self, item_data: dict) -> str:
+        """データハッシュを生成"""
+        try:
+            import json
+            import hashlib
+
+            # item_typeに応じて適切なフィールドを選択
+            item_type = item_data.get('item_type', 'unknown')
+
+            if item_type == 'ranking_product':
+                # ランキング商品の場合
+                hash_data = {
+                    'item_type': item_type,
+                    'ranking_position': item_data.get('ranking_position'),
+                    'page_number': item_data.get('page_number'),
+                    'title': item_data.get('title'),
+                    'product_url': item_data.get('product_url'),
+                    'source_url': item_data.get('source_url')
+                }
+            elif item_type == 'ranking_product_detail':
+                # 商品詳細の場合
+                hash_data = {
+                    'item_type': item_type,
+                    'title': item_data.get('title'),
+                    'product_url': item_data.get('product_url'),
+                    'description': item_data.get('description'),
+                    'detail_scraped_at': item_data.get('detail_scraped_at')
+                }
+            else:
+                # その他の場合は全データを使用
+                hash_data = item_data.copy()
+
+            # 辞書をソートしてJSON文字列に変換
+            hash_string = json.dumps(hash_data, sort_keys=True, ensure_ascii=False)
+            return hashlib.md5(hash_string.encode('utf-8')).hexdigest()
+        except Exception as e:
+            # フォールバック：データ全体のハッシュ
+            data_str = json.dumps(item_data, sort_keys=True, ensure_ascii=False)
+            return hashlib.md5(data_str.encode('utf-8')).hexdigest()
+
+    def _update_task_item_count(self, task_id: str, db, spider):
+        """タスクのアイテム数を更新"""
+        try:
+            from ..database import Task, Result
+            from datetime import datetime
+
+            # タスクを取得
+            task = db.query(Task).filter(Task.id == task_id).first()
+            if task:
+                # 結果数を取得
+                result_count = db.query(Result).filter(Result.task_id == task_id).count()
+
+                # タスクのアイテム数を更新
+                task.items_count = result_count
+                task.updated_at = datetime.now()
+
+                db.commit()
+                spider.logger.info(f"📊 Task item count updated: {result_count} items")
+
+        except Exception as e:
+            spider.logger.error(f"❌ Task item count update error: {e}")
 
     def _cleanup_duplicate_records(self, task_id: str, spider):
         """重複レコードのクリーンアップを実行"""

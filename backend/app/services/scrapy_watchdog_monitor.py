@@ -48,12 +48,12 @@ class JSONLWatchdogHandler(FileSystemEventHandler):
             ).start()
 
     def _handle_file_change(self):
-        """ファイル変更の処理（DB挿入有効化）"""
+        """ファイル変更の処理（進捗表示のみ、DBインサートなし）"""
         try:
             print(f"📝 ファイル変更を検出しました")
-            print(f"🔄 watchdog監視でDB挿入を実行します")
+            print(f"📊 watchdog監視で進捗表示を更新します")
 
-            # 新しい行をDB挿入処理
+            # 新しい行を進捗表示のみ（DBインサートなし）
             if self.monitor.jsonl_file_path.exists():
                 current_size = self.monitor.jsonl_file_path.stat().st_size
                 print(f"📊 ファイルサイズ更新: {self.monitor.last_file_size} → {current_size}")
@@ -64,34 +64,33 @@ class JSONLWatchdogHandler(FileSystemEventHandler):
                         f.seek(self.monitor.last_file_size)
                         new_content = f.read()
 
-                    # 新しい行を処理
+                    # 新しい行を検出（進捗表示のみ）
                     new_lines = [line.strip() for line in new_content.split('\n') if line.strip()]
-                    print(f"📝 新しい行を検出: {len(new_lines)}件")
+                    print(f"📝 新しい行を検出: {len(new_lines)}件（進捗表示のみ）")
 
                     if new_lines:
-                        # バルクDB挿入処理
-                        successful_inserts = self.monitor._bulk_insert_items_threading(new_lines)
-                        self.monitor.processed_lines += successful_inserts
-                        print(f"📊 総処理済みアイテム数: {self.monitor.processed_lines}")
+                        # 進捗カウンターのみ更新（DBインサートなし）
+                        self.monitor.processed_lines += len(new_lines)
+                        print(f"📊 総処理済みアイテム数: {self.monitor.processed_lines}（進捗表示のみ）")
 
                 self.monitor.last_file_size = current_size
 
-                # WebSocket通知を送信
+                # WebSocket通知を送信（進捗表示用）
                 if self.monitor.websocket_callback:
                     try:
                         import requests
                         response = requests.post(
                             'http://localhost:8000/api/tasks/internal/websocket-notify',
                             json={
-                                'type': 'file_update',
+                                'type': 'progress_update',
                                 'task_id': self.monitor.task_id,
                                 'file_lines': self.monitor.processed_lines,
-                                'message': 'ファイル更新検出・DB挿入完了'
+                                'message': 'ファイル更新検出・進捗表示更新'
                             },
                             timeout=5
                         )
                         if response.status_code == 200:
-                            print(f"📡 WebSocket通知送信完了")
+                            print(f"📡 WebSocket進捗通知送信完了")
                     except Exception as ws_error:
                         print(f"📡 WebSocket通知エラー: {ws_error}")
 
@@ -335,6 +334,8 @@ class ScrapyWatchdogMonitor:
 
             # 環境変数を設定
             env = os.environ.copy()
+            env['SCRAPY_TASK_ID'] = self.task_id
+            env['SCRAPY_PROJECT_PATH'] = str(self.project_path)
             env['PYTHONPATH'] = str(self.project_path)
 
             # プロセスを開始
@@ -482,35 +483,28 @@ class ScrapyWatchdogMonitor:
             print(f"🔍 新しい行数: {len(new_lines)}")
 
             if new_lines:
-                print(f"📝 新しい行を検出: {len(new_lines)}件")
+                print(f"📝 ファイル変更を検出しました")
+                print(f"📊 watchdog監視で進捗表示を更新します")
+                print(f"📊 ファイルサイズ更新: {self.last_file_size} → {current_size}")
+                print(f"📝 新しい行を検出: {len(new_lines)}件（進捗表示のみ）")
 
-                # 直接DB挿入処理（threading版・asyncio完全回避）
-                successful_inserts = 0
-                print(f"🔍 直接DB挿入処理開始: {len(new_lines)}件の新しい行")
+                # 進捗表示のみ（DBインサートは行わない）
+                self.processed_lines += len(new_lines)
+                print(f"📊 総処理済みアイテム数: {self.processed_lines}（進捗表示のみ）")
 
-                # バルクDB挿入処理
-                print(f"🔍 バルクDB挿入開始: {len(new_lines)}件")
-                successful_inserts = self._bulk_insert_items_threading(new_lines)
-                self.processed_lines += successful_inserts
-                print(f"✅ バルクDB挿入完了: {successful_inserts}/{len(new_lines)}件")
-
-                print(f"✅ 直接DB挿入完了: {successful_inserts}/{len(new_lines)}件")
-
-                # WebSocket通知（threading版・同期的）
-                print(f"🔍 WebSocket通知開始...")
+                # WebSocket通知（進捗表示のみ）
                 try:
-                    if self.websocket_callback and successful_inserts > 0:
-                        print(f"🔍 WebSocket通知実行中...")
+                    if self.websocket_callback and len(new_lines) > 0:
                         # 同期的にWebSocket通知を送信
                         self._safe_websocket_notify_threading({
                             'type': 'items_update',
                             'task_id': self.task_id,
-                            'new_items': successful_inserts,
+                            'new_items': len(new_lines),
                             'total_items': self.processed_lines
                         })
-                        print(f"✅ WebSocket通知完了")
+                        print(f"📡 WebSocket進捗通知送信完了")
                     else:
-                        print(f"🔍 WebSocket通知スキップ: callback={self.websocket_callback is not None}, inserts={successful_inserts}")
+                        print(f"🔍 WebSocket通知スキップ: callback={self.websocket_callback is not None}, new_lines={len(new_lines)}")
                 except Exception as ws_error:
                     print(f"📡 WebSocket通知エラー: {ws_error}")
                     import traceback
@@ -958,7 +952,7 @@ class ScrapyWatchdogMonitor:
 
                     db = SessionLocal()
                     try:
-                        # バルクインサート用のデータを準備（重複チェックなし - Rich progressで後処理）
+                        # バルクインサート用のデータを準備（軽量重複チェック付き）
                         bulk_data = []
 
                         for item_data in batch:
@@ -967,6 +961,16 @@ class ScrapyWatchdogMonitor:
 
                             if not data_hash:
                                 print(f"⚠️ ハッシュ生成失敗: {item_data}")
+                                continue
+
+                            # 軽量重複チェック（同一タスク内のみ）
+                            existing = db.query(Result).filter(
+                                Result.task_id == self.task_id,
+                                Result.data_hash == data_hash
+                            ).first()
+
+                            if existing:
+                                print(f"⚠️ 重複データをスキップ: {data_hash[:8]}...")
                                 continue
 
                             result_id = str(uuid.uuid4())
@@ -980,9 +984,9 @@ class ScrapyWatchdogMonitor:
                             }
                             bulk_data.append(bulk_item)
 
-                        # 高速バルクインサート実行（重複チェックなし）
+                        # 高速バルクインサート実行（重複チェック済み）
                         if bulk_data:
-                            print(f"🚀 高速バルクインサート実行: {len(bulk_data)}件")
+                            print(f"🚀 高速バルクインサート実行: {len(bulk_data)}件（重複チェック済み）")
 
                             for item in bulk_data:
                                 try:
@@ -1000,9 +1004,9 @@ class ScrapyWatchdogMonitor:
                                     continue
 
                             db.commit()
-                            print(f"✅ 高速バルクインサート完了: {len(bulk_data)}件")
+                            print(f"✅ 高速バルクインサート完了: {len(bulk_data)}件（重複チェック済み）")
                         else:
-                            print("⚠️ バルクデータが空のためスキップ")
+                            print("⚠️ バルクデータが空のためスキップ（重複除外後）")
 
                         successful_inserts += len(batch)
                         print(f"✅ バルクDBインサート成功: {len(batch)}件 (累計: {successful_inserts}/{len(items_data)}) - Thread: {threading.current_thread().name}")
@@ -1089,7 +1093,7 @@ class ScrapyWatchdogMonitor:
 
                     db = SessionLocal()
                     try:
-                        # バルクインサート用のデータを準備（重複チェックなし - Rich progressで後処理）
+                        # バルクインサート用のデータを準備（軽量重複チェック付き）
                         bulk_data = []
 
                         for item_data in batch:
@@ -1098,6 +1102,16 @@ class ScrapyWatchdogMonitor:
 
                             if not data_hash:
                                 print(f"⚠️ ハッシュ生成失敗: {item_data}")
+                                continue
+
+                            # 軽量重複チェック（同一タスク内のみ）
+                            existing = db.query(Result).filter(
+                                Result.task_id == self.task_id,
+                                Result.data_hash == data_hash
+                            ).first()
+
+                            if existing:
+                                print(f"⚠️ 重複データをスキップ: {data_hash[:8]}...")
                                 continue
 
                             result_id = str(uuid.uuid4())
@@ -1110,14 +1124,14 @@ class ScrapyWatchdogMonitor:
                                 'created_at': datetime.now()
                             })
 
-                        # 高速バルクインサート実行（重複チェックなし）
+                        # 高速バルクインサート実行（重複チェック済み）
                         if bulk_data:
-                            print(f"🚀 高速バルクインサート実行: {len(bulk_data)}件")
+                            print(f"🚀 高速バルクインサート実行: {len(bulk_data)}件（重複チェック済み）")
 
                             db.bulk_insert_mappings(Result, bulk_data)
                             db.commit()
                         else:
-                            print("⚠️ バルクデータが空のためスキップ")
+                            print("⚠️ バルクデータが空のためスキップ（重複除外後）")
 
                         successful_inserts += len(batch)
                         print(f"✅ バルクDBインサート成功: {len(batch)}件 (累計: {successful_inserts}/{len(items_data)})")

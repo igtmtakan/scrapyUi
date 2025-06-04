@@ -2952,3 +2952,129 @@ async def clear_worker_tasks(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to clear worker tasks: {str(e)}"
         )
+
+@router.post(
+    "/{task_id}/cleanup-duplicates",
+    summary="重複データクリーンアップ",
+    description="指定されたタスクの重複データをクリーンアップします。",
+    response_description="クリーンアップ結果"
+)
+async def cleanup_task_duplicates(
+    task_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    ## 重複データクリーンアップ
+
+    指定されたタスクの重複データをクリーンアップします。
+
+    ### パラメータ
+    - **task_id**: タスクID
+
+    ### レスポンス
+    - **200**: クリーンアップ結果を返します
+    - **404**: タスクが見つからない場合
+    - **403**: アクセス権限がない場合
+    - **500**: サーバーエラー
+    """
+    try:
+        # タスクの存在確認
+        task = db.query(DBTask).filter(DBTask.id == task_id).first()
+        if not task:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Task not found"
+            )
+
+        # 管理者以外は自分のタスクのみアクセス可能
+        is_admin = (current_user.role == UserRole.ADMIN or
+                    current_user.role == "ADMIN" or
+                    current_user.role == "admin")
+        if not is_admin and task.user_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied"
+            )
+
+        print(f"🧹 Starting duplicate cleanup for task {task_id}")
+
+        # クリーンアップ前の件数を確認
+        before_count = db.query(DBResult).filter(DBResult.task_id == task_id).count()
+        print(f"📊 Before cleanup: {before_count} records")
+
+        # 重複レコードを特定（data_hashが同じものを検索）
+        from sqlalchemy import func
+        duplicate_subquery = (
+            db.query(DBResult.data_hash)
+            .filter(DBResult.task_id == task_id)
+            .group_by(DBResult.data_hash)
+            .having(func.count(DBResult.data_hash) > 1)
+            .subquery()
+        )
+
+        # 重複グループごとに最新のレコード以外を削除
+        duplicates_to_delete = []
+        duplicate_hashes = db.query(duplicate_subquery.c.data_hash).all()
+
+        print(f"🔍 Found {len(duplicate_hashes)} duplicate hash groups")
+
+        for (hash_value,) in duplicate_hashes:
+            # 同じハッシュを持つレコードを取得（作成日時順）
+            duplicate_records = (
+                db.query(DBResult)
+                .filter(DBResult.task_id == task_id)
+                .filter(DBResult.data_hash == hash_value)
+                .order_by(DBResult.created_at.desc())
+                .all()
+            )
+
+            # 最新のレコード以外を削除対象に追加
+            if len(duplicate_records) > 1:
+                records_to_delete = duplicate_records[1:]  # 最新以外
+                duplicates_to_delete.extend(records_to_delete)
+
+                print(f"🗑️ Hash {hash_value[:8]}...: keeping 1, deleting {len(records_to_delete)} duplicates")
+
+        # 重複レコードを削除
+        deleted_count = 0
+        if duplicates_to_delete:
+            for record in duplicates_to_delete:
+                db.delete(record)
+                deleted_count += 1
+
+            db.commit()
+            print(f"✅ Deleted {deleted_count} duplicate records")
+        else:
+            print("✅ No duplicates found")
+
+        # クリーンアップ後の件数を確認
+        after_count = db.query(DBResult).filter(DBResult.task_id == task_id).count()
+        print(f"📊 After cleanup: {after_count} records")
+
+        # タスクのアイテム数を更新
+        task.items_count = after_count
+        db.commit()
+
+        result = {
+            "task_id": task_id,
+            "before_count": before_count,
+            "after_count": after_count,
+            "deleted_count": deleted_count,
+            "duplicate_groups": len(duplicate_hashes),
+            "success": True,
+            "message": f"Successfully cleaned up {deleted_count} duplicate records"
+        }
+
+        print(f"🎉 Duplicate cleanup completed for task {task_id}")
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Duplicate cleanup error: {str(e)}")
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to cleanup duplicates: {str(e)}"
+        )
