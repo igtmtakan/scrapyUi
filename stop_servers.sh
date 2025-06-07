@@ -55,11 +55,11 @@ if [ -f .celery.pid ]; then
     rm -f .celery.pid
 fi
 
-if [ -f .celery_beat.pid ]; then
-    CELERY_BEAT_PID=$(cat .celery_beat.pid)
-    echo "📅 Celery Beatプロセス (PID: ${CELERY_BEAT_PID}) を停止中..."
-    kill ${CELERY_BEAT_PID} 2>/dev/null || true
-    rm -f .celery_beat.pid
+if [ -f .scheduler.pid ]; then
+    SCHEDULER_PID=$(cat .scheduler.pid)
+    echo "📅 統一スケジューラープロセス (PID: ${SCHEDULER_PID}) を停止中..."
+    kill ${SCHEDULER_PID} 2>/dev/null || true
+    rm -f .scheduler.pid
 fi
 
 if [ -f .celery_monitor.pid ]; then
@@ -84,7 +84,7 @@ pkill -f "npm.*dev" 2>/dev/null || true
 pkill -f "node.*app.js" 2>/dev/null || true
 pkill -f "nodemon.*app.js" 2>/dev/null || true
 pkill -f "celery.*worker" 2>/dev/null || true
-pkill -f "celery.*beat" 2>/dev/null || true
+pkill -f "scheduler_service" 2>/dev/null || true
 pkill -f "celery.*flower" 2>/dev/null || true
 pkill -f "start_celery_worker.py" 2>/dev/null || true
 pkill -f "celery_monitor.py" 2>/dev/null || true

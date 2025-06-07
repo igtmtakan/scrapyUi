@@ -188,15 +188,35 @@ cd ..
 
 sleep 3
 
-# Celery Beatスケジューラを起動（安定性向上設定）
-echo "📅 Celery Beatスケジューラを起動中（安定性向上設定）..."
+# 統一スケジューラーサービスを起動（根本対応版）
+echo "📅 統一スケジューラーサービスを起動中（根本対応版）..."
 cd backend
-python3 -m celery -A app.celery_app beat \
-    --scheduler app.scheduler:DatabaseScheduler \
-    --loglevel=info \
-    --max-interval=60 \
-    --schedule=celerybeat-schedule.db &
-CELERY_BEAT_PID=$!
+python3 -c "
+from app.services.scheduler_service import scheduler_service
+import signal
+import sys
+
+def signal_handler(sig, frame):
+    print('\\n🛑 統一スケジューラーを停止中...')
+    scheduler_service.stop()
+    print('✅ 統一スケジューラーが停止しました')
+    sys.exit(0)
+
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
+
+print('🚀 統一スケジューラーを起動中...')
+scheduler_service.start()
+print('✅ 統一スケジューラーが起動しました')
+
+try:
+    while True:
+        import time
+        time.sleep(1)
+except KeyboardInterrupt:
+    signal_handler(None, None)
+" &
+SCHEDULER_PID=$!
 cd ..
 
 sleep 3
@@ -278,8 +298,8 @@ curl -s "http://localhost:${BACKEND_PORT}/health" | jq . || echo "❌ バック�
 echo "⚙️ Celeryワーカー:"
 ps aux | grep -E "(celery.*worker|start_celery_worker)" | grep -v grep | head -1 && echo "✅ Celeryワーカーが動作中" || echo "❌ Celeryワーカーが動作していません"
 
-echo "📅 Celery Beatスケジューラ:"
-ps aux | grep -E "celery.*beat" | grep -v grep | head -1 && echo "✅ Celery Beatが動作中" || echo "❌ Celery Beatが動作していません"
+echo "📅 統一スケジューラーサービス:"
+ps aux | grep -E "scheduler_service" | grep -v grep | head -1 && echo "✅ 統一スケジューラーが動作中" || echo "❌ 統一スケジューラーが動作していません"
 
 echo "🔍 Celery監視システム:"
 ps aux | grep -E "celery_monitor.py" | grep -v grep | head -1 && echo "✅ Celery監視が動作中" || echo "❌ Celery監視が動作していません"
@@ -339,7 +359,7 @@ echo $BACKEND_PID > .backend.pid
 echo $FRONTEND_PID > .frontend.pid
 echo $NODEJS_PID > .nodejs.pid
 echo $CELERY_PID > .celery.pid
-echo $CELERY_BEAT_PID > .celery_beat.pid
+echo $SCHEDULER_PID > .scheduler.pid
 echo $CELERY_MONITOR_PID > .celery_monitor.pid
 
 # FlowerプロセスIDを保存（存在する場合）
@@ -352,7 +372,7 @@ cleanup_processes() {
     echo "🛑 サーバーを停止中..."
 
     # 全プロセスを停止
-    kill $BACKEND_PID $FRONTEND_PID $NODEJS_PID $CELERY_PID $CELERY_BEAT_PID $CELERY_MONITOR_PID 2>/dev/null
+    kill $BACKEND_PID $FRONTEND_PID $NODEJS_PID $CELERY_PID $SCHEDULER_PID $CELERY_MONITOR_PID 2>/dev/null
 
     # Flowerプロセスも停止
     if [ ! -z "$FLOWER_PID" ]; then
@@ -363,7 +383,7 @@ cleanup_processes() {
     pkill -f "celery.*flower" 2>/dev/null || true
 
     # PIDファイルを削除
-    rm -f .backend.pid .frontend.pid .nodejs.pid .celery.pid .celery_beat.pid .celery_monitor.pid .flower.pid
+    rm -f .backend.pid .frontend.pid .nodejs.pid .celery.pid .scheduler.pid .celery_monitor.pid .flower.pid
 
     echo "✅ 全サーバーが停止しました"
     exit

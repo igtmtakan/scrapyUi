@@ -37,7 +37,10 @@ class SchedulerService:
         # 統計検証スケジュールを追加（根本対応）
         self._setup_statistics_validation()
 
-        print("✅ Scheduler service started with statistics validation")
+        # 追加の定期実行タスクを設定
+        self._setup_maintenance_tasks()
+
+        print("✅ Scheduler service started with statistics validation and maintenance tasks")
 
     def _setup_statistics_validation(self):
         """統計検証スケジュールのセットアップ（根本対応）"""
@@ -48,6 +51,21 @@ class SchedulerService:
             print("🔧 Statistics validation schedule setup completed (every 30 minutes)")
         except Exception as e:
             print(f"❌ Error setting up statistics validation: {str(e)}")
+
+    def _setup_maintenance_tasks(self):
+        """メンテナンスタスクのセットアップ（今後の対応）"""
+        try:
+            # 自動修復タスクを1時間毎に実行
+            self.auto_repair_interval = 60 * 60  # 1時間（秒）
+            self.last_auto_repair_time = None
+
+            # クリーンアップタスクを6時間毎に実行
+            self.cleanup_interval = 6 * 60 * 60  # 6時間（秒）
+            self.last_cleanup_time = None
+
+            print("🔧 Maintenance tasks setup completed (auto-repair: 1h, cleanup: 6h)")
+        except Exception as e:
+            print(f"❌ Error setting up maintenance tasks: {str(e)}")
 
     def _check_and_execute_statistics_validation(self):
         """統計検証の実行チェック（根本対応）"""
@@ -77,6 +95,76 @@ class SchedulerService:
         except Exception as e:
             print(f"❌ Error in statistics validation check: {str(e)}")
 
+    def _check_and_execute_maintenance_tasks(self):
+        """メンテナンスタスクの実行チェック（今後の対応）"""
+        try:
+            if not hasattr(self, 'auto_repair_interval'):
+                return
+
+            import pytz
+            jst = pytz.timezone('Asia/Tokyo')
+            current_time = datetime.now(jst).replace(tzinfo=None)
+
+            # 自動修復タスクのチェック
+            should_auto_repair = False
+            if self.last_auto_repair_time is None:
+                should_auto_repair = True
+                print("🔧 First-time auto-repair task")
+            else:
+                time_since_last = (current_time - self.last_auto_repair_time).total_seconds()
+                if time_since_last >= self.auto_repair_interval:
+                    should_auto_repair = True
+                    print(f"🔧 Auto-repair task due: {time_since_last:.0f}s since last repair")
+
+            if should_auto_repair:
+                self._execute_auto_repair()
+                self.last_auto_repair_time = current_time
+
+            # クリーンアップタスクのチェック
+            should_cleanup = False
+            if self.last_cleanup_time is None:
+                should_cleanup = True
+                print("🧹 First-time cleanup task")
+            else:
+                time_since_last = (current_time - self.last_cleanup_time).total_seconds()
+                if time_since_last >= self.cleanup_interval:
+                    should_cleanup = True
+                    print(f"🧹 Cleanup task due: {time_since_last:.0f}s since last cleanup")
+
+            if should_cleanup:
+                self._execute_cleanup()
+                self.last_cleanup_time = current_time
+
+        except Exception as e:
+            print(f"❌ Error in maintenance tasks check: {str(e)}")
+
+    def _execute_auto_repair(self):
+        """自動修復タスクを実行"""
+        try:
+            from ..tasks.scrapy_tasks import auto_repair_failed_tasks
+            print("🔧 Executing auto-repair task...")
+            task = auto_repair_failed_tasks.delay()
+            print(f"✅ Auto-repair task started: {task.id}")
+        except Exception as e:
+            print(f"❌ Error executing auto-repair task: {str(e)}")
+
+    def _execute_cleanup(self):
+        """クリーンアップタスクを実行"""
+        try:
+            from ..tasks.scrapy_tasks import cleanup_stuck_tasks, cleanup_old_results
+            print("🧹 Executing cleanup tasks...")
+
+            # スタックしたタスクのクリーンアップ
+            stuck_task = cleanup_stuck_tasks.delay()
+            print(f"✅ Stuck tasks cleanup started: {stuck_task.id}")
+
+            # 古い結果のクリーンアップ
+            old_results_task = cleanup_old_results.delay()
+            print(f"✅ Old results cleanup started: {old_results_task.id}")
+
+        except Exception as e:
+            print(f"❌ Error executing cleanup tasks: {str(e)}")
+
     def stop(self):
         """スケジューラーを停止"""
         if not self.running:
@@ -103,6 +191,9 @@ class SchedulerService:
 
                 # 統計検証の実行チェック（根本対応）
                 self._check_and_execute_statistics_validation()
+
+                # メンテナンスタスクの実行チェック（今後の対応）
+                self._check_and_execute_maintenance_tasks()
 
                 # デバッグ用：スリープ前の時刻を記録
                 sleep_start = datetime.now(jst).replace(tzinfo=None)
@@ -182,17 +273,15 @@ class SchedulerService:
             db.close()
 
     def _should_execute_schedule(self, schedule: DBSchedule, current_time: datetime) -> bool:
-        """スケジュールを実行すべきかチェック"""
+        """スケジュールを実行すべきかチェック（根本対応版）"""
         try:
             # 現在時刻を分単位で丸める（秒・マイクロ秒を0にする）
             current_time_rounded = current_time.replace(second=0, microsecond=0)
 
             # next_runが設定されていない場合は計算
             if not schedule.next_run:
-                # 最後の実行時刻がある場合はそれを基準にする
-                base_time = schedule.last_run if schedule.last_run else current_time_rounded
-                cron = croniter(schedule.cron_expression, base_time)
-                schedule.next_run = cron.get_next(datetime)
+                # 現在時刻を基準に次回実行時刻を計算（統一ロジック）
+                schedule.next_run = self._calculate_next_run(schedule.cron_expression, current_time_rounded)
                 print(f"🔧 Initialized next_run for {schedule.name}: {schedule.next_run.strftime('%H:%M:%S')}")
                 return False
 
@@ -263,15 +352,8 @@ class SchedulerService:
             current_jst = datetime.now(jst).replace(tzinfo=None, second=0, microsecond=0)
             schedule.last_run = current_jst
 
-            # 次回実行時刻を計算（現在の次回実行時刻を基準にする）
-            if schedule.next_run:
-                # 既存の次回実行時刻から次の実行時刻を計算
-                cron = croniter(schedule.cron_expression, schedule.next_run)
-                schedule.next_run = cron.get_next(datetime)
-            else:
-                # 次回実行時刻が設定されていない場合は現在時刻から計算
-                cron = croniter(schedule.cron_expression, current_jst)
-                schedule.next_run = cron.get_next(datetime)
+            # 統一された次回実行時刻計算（根本対応）
+            schedule.next_run = self._calculate_next_run(schedule.cron_expression, schedule.next_run or current_jst)
 
             db.commit()
 
@@ -334,6 +416,28 @@ class SchedulerService:
 
         except Exception as e:
             print(f"❌ Error updating next run time for {schedule.name}: {str(e)}")
+
+    def _calculate_next_run(self, cron_expression: str, base_time: datetime) -> datetime:
+        """統一された次回実行時刻計算メソッド（根本対応）"""
+        try:
+            # 基準時刻を分単位で正規化
+            normalized_base = base_time.replace(second=0, microsecond=0)
+
+            # Croniterを使用して次回実行時刻を計算
+            cron = croniter(cron_expression, normalized_base)
+            next_run = cron.get_next(datetime)
+
+            # 分単位で正規化
+            next_run_normalized = next_run.replace(second=0, microsecond=0)
+
+            print(f"🔧 Next run calculated: {normalized_base.strftime('%H:%M:%S')} → {next_run_normalized.strftime('%H:%M:%S')}")
+            return next_run_normalized
+
+        except Exception as e:
+            print(f"❌ Error calculating next run: {str(e)}")
+            # フォールバック: 5分後
+            fallback = base_time + timedelta(minutes=5)
+            return fallback.replace(second=0, microsecond=0)
 
     def _validate_task_statistics(self):
         """定期的なタスク統計検証（根本対応）"""
