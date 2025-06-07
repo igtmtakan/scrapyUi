@@ -184,21 +184,26 @@ class SchedulerService:
     def _should_execute_schedule(self, schedule: DBSchedule, current_time: datetime) -> bool:
         """スケジュールを実行すべきかチェック"""
         try:
+            # 現在時刻を分単位で丸める（秒・マイクロ秒を0にする）
+            current_time_rounded = current_time.replace(second=0, microsecond=0)
+
             # next_runが設定されていない場合は計算
             if not schedule.next_run:
-                cron = croniter(schedule.cron_expression, current_time)
+                # 最後の実行時刻がある場合はそれを基準にする
+                base_time = schedule.last_run if schedule.last_run else current_time_rounded
+                cron = croniter(schedule.cron_expression, base_time)
                 schedule.next_run = cron.get_next(datetime)
                 print(f"🔧 Initialized next_run for {schedule.name}: {schedule.next_run.strftime('%H:%M:%S')}")
                 return False
 
             # 詳細な時刻比較情報を出力
             print(f"🔍 Time comparison for {schedule.name}:")
-            print(f"  Current: {current_time} ({current_time.strftime('%Y-%m-%d %H:%M:%S')})")
+            print(f"  Current: {current_time_rounded} ({current_time_rounded.strftime('%Y-%m-%d %H:%M:%S')})")
             print(f"  Next run: {schedule.next_run} ({schedule.next_run.strftime('%Y-%m-%d %H:%M:%S')})")
-            print(f"  Current >= Next: {current_time >= schedule.next_run}")
+            print(f"  Current >= Next: {current_time_rounded >= schedule.next_run}")
 
             # 実行判定：現在時刻が次回実行時刻以降の場合
-            should_execute = current_time >= schedule.next_run
+            should_execute = current_time_rounded >= schedule.next_run
 
             if should_execute:
                 # 重複実行を防ぐため、最後の実行から最低1分は空ける
@@ -219,20 +224,22 @@ class SchedulerService:
                         should_execute = False
 
                 if should_execute:
-                    print(f"✅ Should execute {schedule.name}: Current={current_time.strftime('%H:%M:%S')}, Next={schedule.next_run.strftime('%H:%M:%S')}")
+                    print(f"✅ Should execute {schedule.name}: Current={current_time_rounded.strftime('%H:%M:%S')}, Next={schedule.next_run.strftime('%H:%M:%S')}")
 
                     # 実行が決定したら、次回実行時刻を事前に計算
                     print(f"🔄 Pre-calculating next_run for {schedule.name}")
-                    cron = croniter(schedule.cron_expression, current_time)
+                    # 現在の次回実行時刻を基準にして次の実行時刻を計算
+                    cron = croniter(schedule.cron_expression, schedule.next_run)
                     new_next_run = cron.get_next(datetime)
                     print(f"🔧 Next execution will be: {new_next_run.strftime('%Y-%m-%d %H:%M:%S')}")
 
                     return True
 
             # 次回実行時刻が過去の場合は再計算（実行はしない）
-            elif current_time > schedule.next_run:
-                print(f"🔄 Recalculating next_run for {schedule.name}: current={current_time.strftime('%Y-%m-%d %H:%M:%S')}, old_next={schedule.next_run.strftime('%Y-%m-%d %H:%M:%S')}")
-                cron = croniter(schedule.cron_expression, current_time)
+            elif current_time_rounded > schedule.next_run:
+                print(f"🔄 Recalculating next_run for {schedule.name}: current={current_time_rounded.strftime('%Y-%m-%d %H:%M:%S')}, old_next={schedule.next_run.strftime('%Y-%m-%d %H:%M:%S')}")
+                # 現在時刻を基準に次回実行時刻を再計算
+                cron = croniter(schedule.cron_expression, current_time_rounded)
                 schedule.next_run = cron.get_next(datetime)
                 print(f"🔧 New next_run for {schedule.name}: {schedule.next_run.strftime('%Y-%m-%d %H:%M:%S')}")
 
@@ -253,12 +260,18 @@ class SchedulerService:
             # 実行時刻を更新（日本時間で統一）
             import pytz
             jst = pytz.timezone('Asia/Tokyo')
-            current_jst = datetime.now(jst).replace(tzinfo=None)
+            current_jst = datetime.now(jst).replace(tzinfo=None, second=0, microsecond=0)
             schedule.last_run = current_jst
 
-            # 次回実行時刻を計算
-            cron = croniter(schedule.cron_expression, current_jst)
-            schedule.next_run = cron.get_next(datetime)
+            # 次回実行時刻を計算（現在の次回実行時刻を基準にする）
+            if schedule.next_run:
+                # 既存の次回実行時刻から次の実行時刻を計算
+                cron = croniter(schedule.cron_expression, schedule.next_run)
+                schedule.next_run = cron.get_next(datetime)
+            else:
+                # 次回実行時刻が設定されていない場合は現在時刻から計算
+                cron = croniter(schedule.cron_expression, current_jst)
+                schedule.next_run = cron.get_next(datetime)
 
             db.commit()
 
