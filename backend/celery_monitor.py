@@ -140,7 +140,27 @@ class CeleryMonitor:
             return False
         except Exception as e:
             self.log(f"ワーカーヘルスチェックエラー: {e}")
-            
+
+        # 重複プロセスをチェック
+        try:
+            import subprocess
+            result = subprocess.run(['pgrep', '-f', 'celery.*worker'],
+                                  capture_output=True, text=True)
+            worker_pids = result.stdout.strip().split('\n') if result.stdout.strip() else []
+
+            if len(worker_pids) > 2:  # メインプロセス + 子プロセス
+                self.log(f"⚠️ 重複Celeryワーカーを検出: {len(worker_pids)}個のプロセス")
+                # 重複プロセスを停止（自分のプロセス以外）
+                for pid in worker_pids:
+                    try:
+                        if int(pid) != self.worker_process.pid:
+                            subprocess.run(['kill', '-TERM', pid], check=False)
+                            self.log(f"重複ワーカープロセス {pid} を停止しました")
+                    except:
+                        pass
+        except Exception as e:
+            self.log(f"重複プロセスチェックエラー: {e}")
+
         return True
     
     def restart_worker(self):
@@ -226,6 +246,25 @@ class CeleryMonitor:
                 if self.beat_process and self.beat_process.poll() is not None:
                     self.log("Celery Beatが終了しました。再起動します...")
                     self.start_beat()
+
+                # Beat重複プロセスをチェック
+                try:
+                    result = subprocess.run(['pgrep', '-f', 'celery.*beat'],
+                                          capture_output=True, text=True)
+                    beat_pids = result.stdout.strip().split('\n') if result.stdout.strip() else []
+
+                    if len(beat_pids) > 1:  # 1つのBeatプロセスのみ許可
+                        self.log(f"⚠️ 重複Celery Beatを検出: {len(beat_pids)}個のプロセス")
+                        # 重複プロセスを停止（自分のプロセス以外）
+                        for pid in beat_pids:
+                            try:
+                                if self.beat_process and int(pid) != self.beat_process.pid:
+                                    subprocess.run(['kill', '-TERM', pid], check=False)
+                                    self.log(f"重複Beatプロセス {pid} を停止しました")
+                            except:
+                                pass
+                except Exception as e:
+                    self.log(f"Beat重複プロセスチェックエラー: {e}")
                 
                 time.sleep(30)  # 30秒間隔でチェック
                 

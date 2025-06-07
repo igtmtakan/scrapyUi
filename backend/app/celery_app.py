@@ -46,13 +46,27 @@ celery_app.conf.update(
     broker_connection_retry_on_startup=True,
     broker_connection_retry=True,
     broker_connection_max_retries=10,
-    result_backend_transport_options={
-        'master_name': 'mymaster',
+    broker_transport_options={
         'visibility_timeout': 3600,
         'retry_policy': {
             'timeout': 5.0
         }
-    }
+    },
+    result_backend_transport_options={
+        'visibility_timeout': 3600,
+        'retry_policy': {
+            'timeout': 5.0
+        }
+    },
+    # ワーカーの安定性向上
+    worker_hijack_root_logger=False,
+    worker_log_color=False,
+    worker_redirect_stdouts=True,
+    worker_redirect_stdouts_level='INFO',
+    # Beat設定
+    beat_schedule_filename='celerybeat-schedule',
+    beat_sync_every=1,
+    beat_max_loop_interval=5
 )
 
 # 定期実行タスクの設定
