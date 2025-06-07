@@ -122,6 +122,42 @@ async def get_result(result_id: str, db: Session = Depends(get_db)):
     return result
 
 @router.get(
+    "/task/{task_id}/count",
+    summary="タスク結果数取得",
+    description="指定されたタスクの結果総数を取得します。"
+)
+async def get_task_results_count(task_id: str, db: Session = Depends(get_db)):
+    """
+    ## タスク結果数取得
+
+    指定されたタスクの結果総数を取得します。
+
+    ### パラメータ
+    - **task_id**: タスクID
+
+    ### レスポンス
+    - **200**: 結果総数を返します
+    - **404**: タスクが見つからない場合
+    - **500**: サーバーエラー
+    """
+
+    # タスクの存在確認
+    task = db.query(DBTask).filter(DBTask.id == task_id).first()
+    if not task:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found"
+        )
+
+    # 結果の総数を取得（効率的なカウント）
+    total_count = db.query(DBResult).filter(DBResult.task_id == task_id).count()
+
+    return {
+        "task_id": task_id,
+        "total_count": total_count
+    }
+
+@router.get(
     "/task/{task_id}/summary",
     summary="タスク結果サマリー",
     description="指定されたタスクの結果サマリーを取得します。"

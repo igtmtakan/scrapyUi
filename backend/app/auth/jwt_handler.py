@@ -4,6 +4,8 @@ from typing import Optional, Dict, Any
 import os
 import warnings
 from passlib.context import CryptContext
+from fastapi import HTTPException, status, Depends
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 # bcryptの警告を抑制
 warnings.filterwarnings("ignore", message=".*bcrypt version.*")
@@ -111,3 +113,50 @@ def create_tokens(user_data: Dict[str, Any]) -> Dict[str, str]:
         "refresh_token": refresh_token,
         "token_type": "bearer"
     }
+
+# HTTPBearer認証スキーム
+security = HTTPBearer()
+
+def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """現在のユーザーを取得"""
+    from ..database import SessionLocal, User as DBUser
+
+    token = credentials.credentials
+    payload = JWTHandler.verify_token(token)
+
+    if payload is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    user_id: str = payload.get("user_id")
+    if user_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    db = SessionLocal()
+    try:
+        user = db.query(DBUser).filter(DBUser.id == user_id).first()
+        if user is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User not found",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        return user
+    finally:
+        db.close()
+
+def get_current_admin_user(current_user = Depends(get_current_user)):
+    """現在の管理者ユーザーを取得"""
+    if not (current_user.is_superuser or current_user.role.value == "ADMIN"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin privileges required"
+        )
+    return current_user

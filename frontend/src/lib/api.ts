@@ -130,8 +130,14 @@ class ApiClient {
   private token: string | null = null;
 
   constructor(baseURL: string = '') {
-    // 直接バックエンドに接続（プロキシを使用しない）
-    this.baseURL = baseURL || 'http://localhost:8000';
+    // 環境に応じてベースURLを設定
+    if (typeof window !== 'undefined') {
+      // ブラウザ環境では、プロキシ経由でアクセス（相対パス）
+      this.baseURL = baseURL || '';
+    } else {
+      // サーバーサイドでは環境変数または直接バックエンドに接続
+      this.baseURL = baseURL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+    }
     this.loadToken();
   }
 
@@ -279,10 +285,30 @@ class ApiClient {
       tokenPreview: this.token ? `${this.token.slice(0, 10)}...` : 'none'
     });
 
-    const response = await fetch(url, {
-      ...options,
-      headers,
-    });
+    try {
+      const response = await fetch(url, {
+        ...options,
+        headers,
+      });
+
+      return await this.handleResponse(response, endpoint, options);
+    } catch (error) {
+      console.error('🚨 Network Error:', {
+        error: error.message,
+        url,
+        method: options.method || 'GET'
+      });
+
+      // ネットワークエラーの場合
+      if (error instanceof TypeError && error.message.includes('Failed to fetch')) {
+        throw new Error('ネットワークエラー: サーバーに接続できません。サーバーが起動しているか確認してください。');
+      }
+
+      throw error;
+    }
+  }
+
+  private async handleResponse<T>(response: Response, endpoint: string, options: RequestInit): Promise<T> {
 
     if (!response.ok) {
       if (response.status === 401) {
@@ -529,18 +555,9 @@ class ApiClient {
   // Health check
   async healthCheck(): Promise<any> {
     try {
-      const response = await fetch('/api/auth/health', {
+      return await this.request('/api/health', {
         method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
       });
-
-      if (!response.ok) {
-        throw new Error(`Health check failed: ${response.status}`);
-      }
-
-      return await response.json();
     } catch (error) {
       console.error('❌ Health check failed:', error);
       throw error;
@@ -1196,6 +1213,30 @@ class ApiClient {
     return this.request<Result>(`/api/results/${id}`);
   }
 
+  // 結果総数取得
+  async getResultsCount(taskId: string): Promise<{ task_id: string; total_count: number }> {
+    return this.request(`/api/results/task/${taskId}/count`);
+  }
+
+  // システム管理
+  async cleanupProcesses(): Promise<any> {
+    return this.request('/api/system/cleanup/processes', {
+      method: 'POST'
+    });
+  }
+
+  async cleanupZombieProcesses(): Promise<any> {
+    return this.request('/api/system/cleanup/zombies', {
+      method: 'POST'
+    });
+  }
+
+  async cleanupDuplicateProcesses(): Promise<any> {
+    return this.request('/api/system/cleanup/duplicates', {
+      method: 'POST'
+    });
+  }
+
   async downloadResult(resultId: string): Promise<Blob> {
     const headers: HeadersInit = {};
 
@@ -1746,6 +1787,94 @@ class ApiClient {
     return this.request<any>('/api/tasks/clear-workers', {
       method: 'POST',
     });
+  }
+
+  // Flower Integration methods
+  async getFlowerStats(source?: string): Promise<any> {
+    const params = source ? `?source=${source}` : '';
+    return this.request(`/api/flower/stats${params}`);
+  }
+
+  async getFlowerDashboardStats(): Promise<{
+    total_tasks: number;
+    pending_tasks: number;
+    running_tasks: number;
+    successful_tasks: number;
+    failed_tasks: number;
+    revoked_tasks: number;
+    total_workers: number;
+    active_workers: number;
+    offline_workers: number;
+    source: string;
+    flower_url?: string;
+    timestamp: string;
+    error?: string;
+  }> {
+    return this.request('/api/flower/dashboard');
+  }
+
+  async getFlowerServicesStatus(): Promise<{
+    embedded: {
+      running: boolean;
+      url?: string;
+    };
+    api: {
+      available: boolean;
+      url: string;
+    };
+    standalone: {
+      running: boolean;
+      process_id?: number;
+      url?: string;
+    };
+    timestamp: string;
+  }> {
+    return this.request('/api/flower/services/status');
+  }
+
+  async startFlowerServices(): Promise<{
+    message: string;
+    results: {
+      embedded: boolean;
+      api: boolean;
+      standalone: boolean;
+    };
+    timestamp: string;
+  }> {
+    return this.request('/api/flower/services/start', {
+      method: 'POST'
+    });
+  }
+
+  async stopFlowerServices(): Promise<{
+    message: string;
+    timestamp: string;
+  }> {
+    return this.request('/api/flower/services/stop', {
+      method: 'POST'
+    });
+  }
+
+  async getFlowerTaskDetails(taskId: string): Promise<any> {
+    return this.request(`/api/flower/tasks/${taskId}`);
+  }
+
+  async getFlowerWorkerDetails(workerName: string): Promise<any> {
+    return this.request(`/api/flower/workers/${workerName}`);
+  }
+
+  async getFlowerHealthCheck(): Promise<{
+    status: 'healthy' | 'unhealthy';
+    services: {
+      embedded: boolean;
+      api: boolean;
+      standalone: boolean;
+    };
+    message: string;
+    timestamp: string;
+    error?: string;
+  }> {
+    return this.request('/api/flower/health');
   }
 }
 

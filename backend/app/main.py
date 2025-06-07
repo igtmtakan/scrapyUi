@@ -28,7 +28,7 @@ from .middleware.error_middleware import (
     PerformanceLoggingMiddleware
 )
 
-from .api import projects, spiders, tasks, results, schedules, notifications, auth, proxies, ai, admin, script_runner, project_files, performance, system, settings, timezone, websocket_progress
+from .api import projects, spiders, tasks, results, schedules, notifications, auth, proxies, ai, admin, script_runner, project_files, performance, system, settings, timezone, websocket_progress, flower
 # from .api import extensions  # テンプレート管理API - 一時的に無効化
 # from .api import database_config  # 一時的に無効化
 # from .api import shell  # 一時的に無効化
@@ -462,6 +462,7 @@ app.include_router(nodejs_integration.router, prefix="/api/nodejs", tags=["nodej
 app.include_router(performance.router, prefix="/api", tags=["performance"])
 app.include_router(system.router, prefix="/api", tags=["system"])
 app.include_router(timezone.router, tags=["timezone"])
+app.include_router(flower.router, prefix="/api", tags=["flower"])
 # app.include_router(settings.router, prefix="/api/settings", tags=["settings"])
 
 # Terminal WebSocketエンドポイント（先に登録して優先度を上げる）
@@ -531,6 +532,15 @@ async def startup_event():
     try:
         logger.info("🚀 Starting ScrapyUI Application...")
 
+        # プロセスクリーンアップの実行
+        try:
+            from .services.process_cleanup_service import process_cleanup_service
+            logger.info("🧹 Running startup process cleanup...")
+            cleanup_results = process_cleanup_service.full_cleanup()
+            logger.info(f"✅ Startup cleanup completed: {cleanup_results}")
+        except Exception as e:
+            logger.warning(f"⚠️ Startup cleanup failed: {e}")
+
         from .services.scrapy_service import ScrapyPlaywrightService
         from .services.scheduler_service import scheduler_service
         from .services.task_sync_service import task_sync_service
@@ -559,6 +569,27 @@ async def startup_event():
         # リアルタイムWebSocket管理を開始
         realtime_websocket_manager.start()
         logger.info("📡 Realtime WebSocket Manager started")
+
+        # Flowerサービスの初期化
+        try:
+            from .services.flower_service import get_flower_service
+            flower_service = get_flower_service()
+
+            # 環境変数でFlowerの自動起動を制御
+            auto_start_flower = os.getenv('AUTO_START_FLOWER', 'true').lower() == 'true'
+            if auto_start_flower:
+                logger.info("🌸 Starting Flower services...")
+                results = flower_service.start_all_services()
+                logger.info(f"🌸 Flower services started: {results}")
+                print("🌸 Flower monitoring services initialized")
+            else:
+                logger.info("🌸 Flower auto-start disabled")
+                print("🌸 Flower auto-start disabled (set AUTO_START_FLOWER=true to enable)")
+
+        except Exception as flower_error:
+            logger.error(f"❌ Failed to initialize Flower services: {flower_error}")
+            print(f"⚠️ Flower services failed to start: {flower_error}")
+            # Flowerの失敗はアプリケーション全体の起動を止めない
 
         logger.info("✅ ScrapyUI Application started successfully")
         print("✅ ScrapyUI Application started successfully")
@@ -600,6 +631,17 @@ async def shutdown_event():
         from .services.task_executor import task_executor
         task_executor.stop()
         logger.info("🚀 Task executor stopped")
+
+        # Flowerサービスを停止
+        try:
+            from .services.flower_service import get_flower_service
+            flower_service = get_flower_service()
+            flower_service.stop_all_services()
+            logger.info("🌸 Flower services stopped")
+            print("🌸 Flower monitoring services stopped")
+        except Exception as flower_error:
+            logger.error(f"❌ Failed to stop Flower services: {flower_error}")
+            print(f"⚠️ Flower services stop failed: {flower_error}")
 
         logger.info("🛑 ScrapyUI Application shutdown completed")
         print("🛑 ScrapyUI Application shutdown completed")

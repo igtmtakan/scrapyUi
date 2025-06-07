@@ -6,21 +6,31 @@
 # - フロントエンド: 4000番ポート
 # - Node.js Puppeteer: 3001番ポート
 
-# ポート設定
-BACKEND_PORT=8000
-FRONTEND_PORT=4000
-NODEJS_PORT=3001
+# ポート設定（環境変数で上書き可能）
+BACKEND_PORT=${BACKEND_PORT:-8000}
+FRONTEND_PORT=${FRONTEND_PORT:-4000}
+NODEJS_PORT=${NODEJS_PORT:-3001}
+FLOWER_PORT=${FLOWER_PORT:-5556}
 
 echo "🛑 ScrapyUI サーバーを停止しています..."
+
+# プロセスクリーンアップの実行
+echo "🧹 プロセスクリーンアップを実行中..."
+if [ -f "./cleanup_processes.sh" ]; then
+    ./cleanup_processes.sh
+fi
 echo "📊 バックエンドポート: ${BACKEND_PORT}"
 echo "🌐 フロントエンドポート: ${FRONTEND_PORT}"
 echo "🤖 Node.js Puppeteerポート: ${NODEJS_PORT}"
+echo "🌸 Flowerポート: ${FLOWER_PORT}"
 
 # プロセスIDファイルから停止
 if [ -f .backend.pid ]; then
-    BACKEND_PID=$(cat .backend.pid)
-    echo "🔧 バックエンドプロセス (PID: ${BACKEND_PID}) を停止中..."
-    kill ${BACKEND_PID} 2>/dev/null || true
+    BACKEND_PID=$(cat .backend.pid 2>/dev/null || echo "")
+    if [ ! -z "$BACKEND_PID" ]; then
+        echo "🔧 バックエンドプロセス (PID: ${BACKEND_PID}) を停止中..."
+        kill ${BACKEND_PID} 2>/dev/null || true
+    fi
     rm -f .backend.pid
 fi
 
@@ -59,6 +69,13 @@ if [ -f .celery_monitor.pid ]; then
     rm -f .celery_monitor.pid
 fi
 
+if [ -f .flower.pid ]; then
+    FLOWER_PID=$(cat .flower.pid)
+    echo "🌸 Flowerプロセス (PID: ${FLOWER_PID}) を停止中..."
+    kill ${FLOWER_PID} 2>/dev/null || true
+    rm -f .flower.pid
+fi
+
 # プロセス名で停止
 echo "📋 関連プロセスを停止中..."
 pkill -f "uvicorn.*app.main:app" 2>/dev/null || true
@@ -68,14 +85,16 @@ pkill -f "node.*app.js" 2>/dev/null || true
 pkill -f "nodemon.*app.js" 2>/dev/null || true
 pkill -f "celery.*worker" 2>/dev/null || true
 pkill -f "celery.*beat" 2>/dev/null || true
+pkill -f "celery.*flower" 2>/dev/null || true
 pkill -f "start_celery_worker.py" 2>/dev/null || true
 pkill -f "celery_monitor.py" 2>/dev/null || true
 
 # ポートを使用しているプロセスを強制停止
-echo "🔧 ポート ${BACKEND_PORT}, ${FRONTEND_PORT}, ${NODEJS_PORT} を使用中のプロセスを停止中..."
+echo "🔧 ポート ${BACKEND_PORT}, ${FRONTEND_PORT}, ${NODEJS_PORT}, ${FLOWER_PORT} を使用中のプロセスを停止中..."
 lsof -ti:${BACKEND_PORT} | xargs kill -9 2>/dev/null || true
 lsof -ti:${FRONTEND_PORT} | xargs kill -9 2>/dev/null || true
 lsof -ti:${NODEJS_PORT} | xargs kill -9 2>/dev/null || true
+lsof -ti:${FLOWER_PORT} | xargs kill -9 2>/dev/null || true
 
 sleep 2
 
@@ -97,6 +116,12 @@ if lsof -i:${NODEJS_PORT} >/dev/null 2>&1; then
     echo "❌ ポート ${NODEJS_PORT} がまだ使用中です"
 else
     echo "✅ ポート ${NODEJS_PORT} が解放されました"
+fi
+
+if lsof -i:${FLOWER_PORT} >/dev/null 2>&1; then
+    echo "❌ ポート ${FLOWER_PORT} がまだ使用中です"
+else
+    echo "✅ ポート ${FLOWER_PORT} が解放されました"
 fi
 
 echo ""

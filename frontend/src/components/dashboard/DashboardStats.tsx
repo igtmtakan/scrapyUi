@@ -4,7 +4,8 @@ import { useEffect, useState } from 'react';
 import { useProjectStore } from '@/stores/projectStore';
 import { useTaskStore } from '@/stores/taskStore';
 import { useNotificationStore } from '@/stores/notificationStore';
-import { Activity, Database, Play, AlertCircle } from 'lucide-react';
+import { apiClient } from '@/lib/api';
+import { Activity, Database, Play, AlertCircle, CheckCircle, XCircle, Clock } from 'lucide-react';
 
 interface StatCard {
   title: string;
@@ -22,41 +23,96 @@ export default function DashboardStats() {
   const { tasks } = useTaskStore();
   const { unreadCount } = useNotificationStore();
   const [stats, setStats] = useState<StatCard[]>([]);
+  const [flowerStats, setFlowerStats] = useState<any>(null);
+  const [useFlowerData, setUseFlowerData] = useState(true);
+
+  // Flowerからの統計データを取得
+  useEffect(() => {
+    const fetchFlowerStats = async () => {
+      try {
+        const data = await apiClient.getFlowerDashboardStats();
+        setFlowerStats(data);
+        setUseFlowerData(true);
+      } catch (error) {
+        console.warn('Failed to fetch Flower stats, falling back to local data:', error);
+        setUseFlowerData(false);
+      }
+    };
+
+    fetchFlowerStats();
+
+    // 30秒ごとに更新
+    const interval = setInterval(fetchFlowerStats, 30000);
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
-    const runningTasks = tasks.filter(task => task.status === 'RUNNING').length;
-    const completedTasks = tasks.filter(task => task.status === 'FINISHED').length;
-    const failedTasks = tasks.filter(task => task.status === 'FAILED').length;
+    let newStats: StatCard[] = [];
 
-    const newStats: StatCard[] = [
-      {
-        title: 'Total Projects',
-        value: projects.length,
-        icon: <Database className="w-6 h-6" />,
-        color: 'bg-blue-500',
-      },
-      {
-        title: 'Running Tasks',
-        value: runningTasks,
-        icon: <Play className="w-6 h-6" />,
-        color: 'bg-green-500',
-      },
-      {
-        title: 'Completed Tasks',
-        value: completedTasks,
-        icon: <Activity className="w-6 h-6" />,
-        color: 'bg-purple-500',
-      },
-      {
-        title: 'Notifications',
-        value: unreadCount,
-        icon: <AlertCircle className="w-6 h-6" />,
-        color: 'bg-orange-500',
-      },
-    ];
+    if (useFlowerData && flowerStats && !flowerStats.error) {
+      // Flowerからの正確な統計を使用
+      newStats = [
+        {
+          title: 'Total Tasks',
+          value: flowerStats.total_tasks,
+          icon: <Database className="w-6 h-6" />,
+          color: 'bg-blue-500',
+        },
+        {
+          title: 'Pending Tasks',
+          value: flowerStats.pending_tasks,
+          icon: <Clock className="w-6 h-6" />,
+          color: 'bg-yellow-500',
+        },
+        {
+          title: 'Successful Tasks',
+          value: flowerStats.successful_tasks,
+          icon: <CheckCircle className="w-6 h-6" />,
+          color: 'bg-green-500',
+        },
+        {
+          title: 'Failed Tasks',
+          value: flowerStats.failed_tasks,
+          icon: <XCircle className="w-6 h-6" />,
+          color: 'bg-red-500',
+        },
+      ];
+    } else {
+      // フォールバック: ローカルタスクストアからの統計
+      const runningTasks = tasks.filter(task => task.status === 'RUNNING').length;
+      const completedTasks = tasks.filter(task => task.status === 'FINISHED').length;
+      const failedTasks = tasks.filter(task => task.status === 'FAILED').length;
+
+      newStats = [
+        {
+          title: 'Total Projects',
+          value: projects.length,
+          icon: <Database className="w-6 h-6" />,
+          color: 'bg-blue-500',
+        },
+        {
+          title: 'Running Tasks',
+          value: runningTasks,
+          icon: <Play className="w-6 h-6" />,
+          color: 'bg-green-500',
+        },
+        {
+          title: 'Completed Tasks',
+          value: completedTasks,
+          icon: <Activity className="w-6 h-6" />,
+          color: 'bg-purple-500',
+        },
+        {
+          title: 'Failed Tasks',
+          value: failedTasks,
+          icon: <XCircle className="w-6 h-6" />,
+          color: 'bg-red-500',
+        },
+      ];
+    }
 
     setStats(newStats);
-  }, [projects, tasks, unreadCount]);
+  }, [projects, tasks, unreadCount, flowerStats, useFlowerData]);
 
   return (
     <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">

@@ -1,10 +1,15 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, Depends
 from datetime import datetime, timezone
 import subprocess
 import psutil
 import redis
 import requests
 import os
+import logging
+from ..auth import get_current_user
+from ..database import User
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/system",
@@ -263,3 +268,120 @@ async def get_system_metrics():
             "error": f"Error getting system metrics: {str(e)}",
             "timestamp": datetime.now(timezone.utc).isoformat()
         }
+
+@router.post("/cleanup/processes")
+async def cleanup_processes(current_user: User = Depends(get_current_user)):
+    """
+    プロセスクリーンアップ実行
+
+    重複プロセスとゾンビプロセスをクリーンアップします。
+    管理者権限が必要です。
+    """
+
+    # 管理者権限チェック
+    if not (current_user.is_superuser or current_user.role.value == "ADMIN"):
+        raise HTTPException(
+            status_code=403,
+            detail="Administrator privileges required for process cleanup"
+        )
+
+    try:
+        from ..services.process_cleanup_service import process_cleanup_service
+
+        logger.info(f"🧹 Process cleanup requested by user {current_user.email}")
+
+        # 完全なクリーンアップを実行
+        cleanup_results = process_cleanup_service.full_cleanup()
+
+        logger.info(f"✅ Process cleanup completed: {cleanup_results}")
+
+        return {
+            "success": True,
+            "message": "プロセスクリーンアップが正常に完了しました",
+            "results": cleanup_results
+        }
+
+    except Exception as e:
+        logger.error(f"❌ Process cleanup failed: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Process cleanup failed: {str(e)}"
+        )
+
+@router.post("/cleanup/zombies")
+async def cleanup_zombie_processes(current_user: User = Depends(get_current_user)):
+    """
+    ゾンビプロセスクリーンアップ
+
+    ゾンビプロセスのみをクリーンアップします。
+    管理者権限が必要です。
+    """
+
+    # 管理者権限チェック
+    if not (current_user.is_superuser or current_user.role.value == "ADMIN"):
+        raise HTTPException(
+            status_code=403,
+            detail="Administrator privileges required for zombie cleanup"
+        )
+
+    try:
+        from ..services.process_cleanup_service import process_cleanup_service
+
+        logger.info(f"🧟 Zombie cleanup requested by user {current_user.email}")
+
+        # ゾンビプロセスクリーンアップを実行
+        zombie_results = process_cleanup_service.cleanup_zombie_processes()
+
+        logger.info(f"✅ Zombie cleanup completed: {zombie_results}")
+
+        return {
+            "success": True,
+            "message": "ゾンビプロセスクリーンアップが正常に完了しました",
+            "results": zombie_results
+        }
+
+    except Exception as e:
+        logger.error(f"❌ Zombie cleanup failed: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Zombie cleanup failed: {str(e)}"
+        )
+
+@router.post("/cleanup/duplicates")
+async def cleanup_duplicate_processes(current_user: User = Depends(get_current_user)):
+    """
+    重複プロセスクリーンアップ
+
+    重複プロセスのみをクリーンアップします。
+    管理者権限が必要です。
+    """
+
+    # 管理者権限チェック
+    if not (current_user.is_superuser or current_user.role.value == "ADMIN"):
+        raise HTTPException(
+            status_code=403,
+            detail="Administrator privileges required for duplicate cleanup"
+        )
+
+    try:
+        from ..services.process_cleanup_service import process_cleanup_service
+
+        logger.info(f"🔄 Duplicate cleanup requested by user {current_user.email}")
+
+        # 重複プロセスクリーンアップを実行
+        duplicate_results = process_cleanup_service.cleanup_duplicate_processes()
+
+        logger.info(f"✅ Duplicate cleanup completed: {duplicate_results}")
+
+        return {
+            "success": True,
+            "message": "重複プロセスクリーンアップが正常に完了しました",
+            "results": duplicate_results
+        }
+
+    except Exception as e:
+        logger.error(f"❌ Duplicate cleanup failed: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Duplicate cleanup failed: {str(e)}"
+        )

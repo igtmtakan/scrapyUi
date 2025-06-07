@@ -113,16 +113,33 @@ export const useAuthStore = create<AuthState>()(
       initialize: async () => {
         const state = get();
 
-        // 既に初期化済みの場合はスキップ
+        // 既に初期化済みまたは初期化中の場合はスキップ
         if (state.isInitialized) {
           console.log('🔄 Already initialized, skipping...');
+          return;
+        }
+
+        if (state.isLoading) {
+          console.log('⏳ Initialization already in progress, skipping...');
           return;
         }
 
         console.log('🚀 Initializing auth store...');
         set({ isLoading: true });
 
-        const token = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null;
+        // サーバーサイドレンダリング時は初期化をスキップ
+        if (typeof window === 'undefined') {
+          console.log('🖥️ Server-side rendering, skipping token check');
+          set({
+            user: null,
+            isAuthenticated: false,
+            isLoading: false,
+            isInitialized: true
+          });
+          return;
+        }
+
+        const token = localStorage.getItem('access_token');
         console.log('🔑 Token found:', !!token);
 
         if (!token) {
@@ -150,11 +167,10 @@ export const useAuthStore = create<AuthState>()(
           console.log('❌ Token invalid, removing:', error);
 
           // トークンが無効な場合は削除
-          if (typeof window !== 'undefined') {
-            localStorage.removeItem('access_token');
-            localStorage.removeItem('refresh_token');
-            localStorage.removeItem('auth-storage');
-          }
+          localStorage.removeItem('access_token');
+          localStorage.removeItem('refresh_token');
+          localStorage.removeItem('auth-storage');
+
           set({
             user: null,
             isAuthenticated: false,

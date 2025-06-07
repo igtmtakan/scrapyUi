@@ -12,18 +12,21 @@ interface AuthGuardProps {
 export default function AuthGuard({ children }: AuthGuardProps) {
   const router = useRouter();
   const pathname = usePathname();
-  const { isAuthenticated, isInitialized, initialize, checkAuthStatus } = useAuthStore();
+  const { isAuthenticated, isInitialized } = useAuthStore();
   const [isChecking, setIsChecking] = useState(true);
 
   // 認証が不要なページのリスト
   const publicPaths = ['/login', '/register', '/'];
 
   useEffect(() => {
-    const checkAuth = async () => {
-      console.log('🔍 AuthGuard: Checking authentication status...');
-      console.log('Current path:', pathname);
-      console.log('Is authenticated:', isAuthenticated);
-      console.log('Is initialized:', isInitialized);
+    const checkAuth = () => {
+      // ログレベルを下げて重複ログを減らす
+      if (process.env.NODE_ENV === 'development') {
+        console.log('🔍 AuthGuard: Checking authentication status...');
+        console.log('Current path:', pathname);
+        console.log('Is authenticated:', isAuthenticated);
+        console.log('Is initialized:', isInitialized);
+      }
 
       // パブリックページの場合は認証チェックをスキップ
       if (publicPaths.includes(pathname)) {
@@ -32,27 +35,28 @@ export default function AuthGuard({ children }: AuthGuardProps) {
         return;
       }
 
-      try {
-        // 初期化されていない場合は初期化
-        if (!isInitialized) {
-          console.log('🚀 Initializing auth store...');
-          await initialize();
+      // 初期化が完了していない場合は待機
+      if (!isInitialized) {
+        if (process.env.NODE_ENV === 'development') {
+          console.log('⏳ Waiting for initialization...');
         }
+        return;
+      }
 
+      try {
         // 認証状態をチェック
         const hasTokens = apiClient.hasValidTokens();
         const isAuth = apiClient.isAuthenticated();
 
         console.log('🔑 Token status:', { hasTokens, isAuth });
 
-        if (!hasTokens || !isAuth) {
-          console.warn('❌ No valid tokens, redirecting to login');
+        if (!hasTokens || !isAuth || !isAuthenticated) {
+          console.warn('❌ Not authenticated, redirecting to login');
           router.push('/login');
           return;
         }
 
-        // 認証状態を再確認
-        checkAuthStatus();
+        console.log('✅ Authentication verified');
 
       } catch (error) {
         console.error('❌ Auth check failed:', error);
@@ -63,7 +67,7 @@ export default function AuthGuard({ children }: AuthGuardProps) {
     };
 
     checkAuth();
-  }, [pathname, isAuthenticated, isInitialized, initialize, checkAuthStatus, router]);
+  }, [pathname, isAuthenticated, isInitialized, router]);
 
   // 認証チェック中の場合はローディング表示
   if (isChecking) {

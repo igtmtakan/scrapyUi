@@ -273,32 +273,35 @@ export default function TaskDetailPage() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Stats Cards */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-          <div className="bg-gray-800 rounded-lg p-6">
+          <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
             <div className="flex items-center">
               <Database className="h-8 w-8 text-blue-400" />
               <div className="ml-4">
-                <p className="text-sm font-medium text-gray-400">アイテム数</p>
+                <p className="text-sm font-medium text-gray-400">処理アイテム数</p>
                 <p className="text-2xl font-bold text-white">{task.items_count}</p>
+                <p className="text-xs text-gray-500 mt-1">Scrapyが処理したアイテム総数</p>
               </div>
             </div>
           </div>
 
-          <div className="bg-gray-800 rounded-lg p-6">
+          <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
             <div className="flex items-center">
               <Activity className="h-8 w-8 text-green-400" />
               <div className="ml-4">
-                <p className="text-sm font-medium text-gray-400">リクエスト数</p>
+                <p className="text-sm font-medium text-gray-400">HTTPリクエスト数</p>
                 <p className="text-2xl font-bold text-white">{task.requests_count}</p>
+                <p className="text-xs text-gray-500 mt-1">送信されたWebリクエスト総数</p>
               </div>
             </div>
           </div>
 
-          <div className="bg-gray-800 rounded-lg p-6">
+          <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
             <div className="flex items-center">
               <XCircle className="h-8 w-8 text-red-400" />
               <div className="ml-4">
                 <p className="text-sm font-medium text-gray-400">エラー数</p>
                 <p className="text-2xl font-bold text-white">{task.error_count}</p>
+                <p className="text-xs text-gray-500 mt-1">処理中に発生したエラー数</p>
               </div>
             </div>
           </div>

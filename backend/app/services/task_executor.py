@@ -147,8 +147,10 @@ class TaskExecutor:
                         )
                     )
 
-                    # 実行完了後の処理
-                    if result.get('success', False):
+                    # 実行完了後の処理（改善された成功判定）
+                    success = self._determine_task_success(task.id, result)
+
+                    if success:
                         logger.info(f"✅ Task {task.id[:8]} completed successfully")
                         print(f"✅ Task {task.id[:8]} completed successfully")
                         self._mark_task_completed(task.id, result)
@@ -254,6 +256,59 @@ class TaskExecutor:
         finally:
             db.close()
 
+    def _determine_task_success(self, task_id: str, result: Dict[str, Any]) -> bool:
+        """タスクの成功を総合的に判定"""
+        try:
+            # 1. 明示的な成功フラグをチェック
+            explicit_success = result.get('success', False)
+
+            # 2. アイテム数をチェック
+            items_processed = result.get('items_processed', 0)
+
+            # 3. 結果ファイルの存在をチェック
+            results_file_exists = self._check_results_file_exists(task_id)
+
+            # 4. エラーメッセージの有無をチェック
+            has_critical_error = bool(result.get('error')) and 'critical' in str(result.get('error', '')).lower()
+
+            # 成功判定ロジック
+            success_conditions = [
+                explicit_success,  # 明示的な成功フラグ
+                items_processed > 0,  # アイテムが処理された
+                results_file_exists,  # 結果ファイルが存在する
+            ]
+
+            # 失敗条件
+            failure_conditions = [
+                has_critical_error,  # 重大なエラーがある
+            ]
+
+            # いずれかの成功条件が満たされ、失敗条件がない場合は成功
+            is_success = any(success_conditions) and not any(failure_conditions)
+
+            logger.info(f"🔍 Task {task_id[:8]} success determination:")
+            logger.info(f"  - Explicit success: {explicit_success}")
+            logger.info(f"  - Items processed: {items_processed}")
+            logger.info(f"  - Results file exists: {results_file_exists}")
+            logger.info(f"  - Has critical error: {has_critical_error}")
+            logger.info(f"  - Final decision: {'SUCCESS' if is_success else 'FAILED'}")
+
+            return is_success
+
+        except Exception as e:
+            logger.error(f"Error determining task success: {e}")
+            # エラーが発生した場合は、アイテム数で判定
+            return result.get('items_processed', 0) > 0
+
+    def _check_results_file_exists(self, task_id: str) -> bool:
+        """結果ファイルの存在をチェック"""
+        try:
+            import os
+            results_file = f"results_{task_id}.jsonl"
+            return os.path.exists(results_file) and os.path.getsize(results_file) > 0
+        except Exception:
+            return False
+
     def _mark_task_completed(self, task_id: str, result: Dict[str, Any]):
         """タスクを完了としてマーク"""
         db = SessionLocal()
@@ -269,6 +324,12 @@ class TaskExecutor:
                 items_processed = result.get('items_processed', 0)
                 if items_processed > 0:
                     task.items_count = items_processed
+
+                # その他の統計情報も更新
+                if 'requests_count' in result:
+                    task.requests_count = result['requests_count']
+                if 'error_count' in result:
+                    task.error_count = result['error_count']
 
                 db.commit()
                 logger.info(f"✅ Marked task {task_id[:8]} as completed with {items_processed} items")
@@ -316,6 +377,73 @@ class TaskExecutor:
             "check_interval": self.check_interval,
             "last_check": self.last_check_time.isoformat() if self.last_check_time else None
         }
+
+    def fix_failed_tasks_with_results(self):
+        """結果があるのに失敗とマークされたタスクを修正"""
+        db = SessionLocal()
+        try:
+            from ..database import Task as DBTask, TaskStatus
+
+            # FAILEDステータスのタスクを取得
+            failed_tasks = db.query(DBTask).filter(DBTask.status == TaskStatus.FAILED).all()
+
+            fixed_count = 0
+            for task in failed_tasks:
+                # 結果ファイルをチェック
+                if self._check_results_file_exists(task.id):
+                    # 結果ファイルから統計情報を取得
+                    stats = self._get_task_stats_from_file(task.id)
+
+                    if stats['items_count'] > 0:
+                        # データがあるので成功に変更
+                        task.status = TaskStatus.FINISHED
+                        task.items_count = stats['items_count']
+                        task.requests_count = stats.get('requests_count', 0)
+                        task.error_count = 0
+                        task.error_message = None
+                        fixed_count += 1
+
+                        logger.info(f"🔧 Fixed task {task.id[:8]}: {stats['items_count']} items found, marked as FINISHED")
+                        print(f"🔧 Fixed task {task.id[:8]}: {stats['items_count']} items found, marked as FINISHED")
+
+            if fixed_count > 0:
+                db.commit()
+                logger.info(f"✅ Fixed {fixed_count} failed tasks that actually had results")
+                print(f"✅ Fixed {fixed_count} failed tasks that actually had results")
+            else:
+                logger.info("ℹ️ No failed tasks with results found to fix")
+                print("ℹ️ No failed tasks with results found to fix")
+
+        except Exception as e:
+            logger.error(f"Error fixing failed tasks: {e}")
+            db.rollback()
+        finally:
+            db.close()
+
+    def _get_task_stats_from_file(self, task_id: str) -> Dict[str, int]:
+        """結果ファイルから統計情報を取得"""
+        try:
+            import json
+            import os
+            results_file = f"results_{task_id}.jsonl"
+
+            if not os.path.exists(results_file):
+                return {'items_count': 0, 'requests_count': 0}
+
+            items_count = 0
+            with open(results_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    if line.strip():
+                        items_count += 1
+
+            return {
+                'items_count': items_count,
+                'requests_count': items_count,  # 簡易的な推定
+            }
+
+        except Exception as e:
+            logger.error(f"Error reading task stats from file: {e}")
+            return {'items_count': 0, 'requests_count': 0}
 
 
 # グローバルインスタンス

@@ -322,15 +322,19 @@ def run_spider_task(self, project_id: str, spider_id: str, settings: dict = None
         except Exception as log_error:
             print(f"Failed to save error log: {str(log_error)}")
 
-        # エラー通知（安全な方法で）
+        # エラー通知（安全な方法で）- データがある場合は成功として通知
+        final_items = current_items if 'current_items' in locals() else 0
+        notification_status = "FINISHED" if final_items > 0 else "FAILED"
+
         _safe_websocket_notify(task_id, {
-            "status": "FAILED",
+            "status": notification_status,
             "finished_at": datetime.now().isoformat(),
-            "error": error_details['error_message'],
-            "error_type": error_details['error_type'],
-            "items_count": current_items if 'current_items' in locals() else 0,
+            "error": error_details['error_message'] if final_items == 0 else None,
+            "error_type": error_details['error_type'] if final_items == 0 else None,
+            "items_count": final_items,
             "requests_count": current_requests if 'current_requests' in locals() else 0,
-            "error_count": 0  # 常に0（失敗ステータスは使用しない）
+            "error_count": 0,  # 常に0（失敗ステータスは使用しない）
+            "message": f"Task completed with {final_items} items" if final_items > 0 else "Task failed with no items"
         })
 
         # 詳細なエラー情報を含む例外を再発生
@@ -1101,11 +1105,71 @@ def cleanup_stuck_tasks():
         }
 
     except Exception as e:
+        print(f"❌ Cleanup stuck tasks error: {str(e)}")
         db.rollback()
         return {
             "timestamp": datetime.now().isoformat(),
-            "status": "error",
-            "error": str(e)
+            "error": str(e),
+            "status": "failed"
+        }
+    finally:
+        db.close()
+
+@celery_app.task
+def auto_repair_failed_tasks():
+    """
+    FAILEDステータスのタスクを自動修正
+    実際にデータが取得できているタスクをFINISHEDに変更
+    """
+    db = SessionLocal()
+    try:
+        # FAILEDステータスのタスクを取得
+        failed_tasks = db.query(DBTask).filter(DBTask.status == TaskStatus.FAILED).all()
+
+        fixed_count = 0
+        for task in failed_tasks:
+            # 実際のDB結果数を確認
+            from ..database import Result as DBResult
+            actual_db_count = db.query(DBResult).filter(DBResult.task_id == task.id).count()
+
+            if actual_db_count > 0:
+                # データがあるので成功に変更
+                task.status = TaskStatus.FINISHED
+                task.items_count = actual_db_count
+                task.requests_count = max(actual_db_count, task.requests_count or 1)
+                task.error_count = 0
+                fixed_count += 1
+
+                print(f"🔧 Auto-repaired task {task.id[:8]}...: FAILED → FINISHED ({actual_db_count} items)")
+
+                # WebSocket通知
+                _safe_websocket_notify(task.id, {
+                    "status": "FINISHED",
+                    "finished_at": datetime.now().isoformat(),
+                    "items_count": actual_db_count,
+                    "requests_count": task.requests_count,
+                    "error_count": 0,
+                    "message": f"Task auto-repaired: {actual_db_count} items found"
+                })
+
+        if fixed_count > 0:
+            db.commit()
+            print(f"✅ Auto-repaired {fixed_count} failed tasks")
+
+        return {
+            "timestamp": datetime.now().isoformat(),
+            "fixed_count": fixed_count,
+            "total_failed_tasks": len(failed_tasks),
+            "status": "completed"
+        }
+
+    except Exception as e:
+        print(f"❌ Auto-repair error: {str(e)}")
+        db.rollback()
+        return {
+            "timestamp": datetime.now().isoformat(),
+            "error": str(e),
+            "status": "failed"
         }
     finally:
         db.close()

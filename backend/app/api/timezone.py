@@ -76,7 +76,7 @@ async def set_timezone(
     current_user: DBUser = Depends(get_current_active_user)
 ):
     """タイムゾーンを設定（管理者のみ）"""
-    if not current_user.is_admin:
+    if not (current_user.is_superuser or current_user.role.value == "ADMIN"):
         raise HTTPException(status_code=403, detail="管理者権限が必要です")
     
     try:
@@ -187,7 +187,7 @@ async def update_timezone_settings(
     current_user: DBUser = Depends(get_current_active_user)
 ):
     """タイムゾーン設定を更新（管理者のみ）"""
-    if not current_user.is_admin:
+    if not (current_user.is_superuser or current_user.role.value == "ADMIN"):
         raise HTTPException(status_code=403, detail="管理者権限が必要です")
     
     try:

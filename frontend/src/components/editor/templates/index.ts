@@ -25,7 +25,8 @@ export const allTemplates: Template[] = [
 ]
 
 // 型定義とカテゴリもエクスポート
-export { Template, CATEGORIES } from './types'
+export type { Template } from './types'
+export { CATEGORIES } from './types'
 
 // カテゴリ別テンプレートもエクスポート
 export { basicTemplates } from './basic'

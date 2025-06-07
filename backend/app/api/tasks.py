@@ -3124,3 +3124,86 @@ async def cleanup_task_duplicates(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to cleanup duplicates: {str(e)}"
         )
+
+@router.post(
+    "/validate-statistics",
+    summary="タスク統計検証・修正",
+    description="FAILEDステータスのタスクでデータが存在する場合、ステータスをFINISHEDに修正します。"
+)
+async def validate_task_statistics(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    ## タスク統計検証・修正
+
+    FAILEDステータスのタスクを検証し、実際にデータが取得できている場合は
+    ステータスをFINISHEDに修正します。
+
+    ### レスポンス
+    - **200**: 検証・修正結果を返します
+    - **403**: 管理者権限が必要
+    - **500**: サーバーエラー
+    """
+    try:
+        # 管理者権限チェック
+        is_admin = (current_user.role == UserRole.ADMIN or
+                    current_user.role == "ADMIN" or
+                    current_user.role == "admin")
+        if not is_admin:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Admin privileges required"
+            )
+
+        # FAILEDステータスのタスクを取得
+        failed_tasks = db.query(DBTask).filter(DBTask.status == TaskStatus.FAILED).all()
+
+        fixed_count = 0
+        fixed_tasks = []
+
+        for task in failed_tasks:
+            # 実際のDB結果数を確認
+            actual_db_count = db.query(DBResult).filter(DBResult.task_id == task.id).count()
+
+            if actual_db_count > 0:
+                # データがあるので成功に変更
+                old_status = task.status.value
+                task.status = TaskStatus.FINISHED
+                task.items_count = actual_db_count
+                task.requests_count = max(actual_db_count, task.requests_count or 1)
+                task.error_count = 0
+
+                fixed_count += 1
+                fixed_tasks.append({
+                    "task_id": task.id,
+                    "old_status": old_status,
+                    "new_status": "FINISHED",
+                    "items_found": actual_db_count
+                })
+
+                print(f"🔧 Fixed task {task.id[:8]}...: FAILED → FINISHED ({actual_db_count} items)")
+
+        if fixed_count > 0:
+            db.commit()
+            print(f"✅ Fixed {fixed_count} failed tasks that actually had results")
+        else:
+            print("ℹ️ No failed tasks with results found to fix")
+
+        return {
+            "success": True,
+            "message": f"Validated and fixed {fixed_count} tasks",
+            "fixed_count": fixed_count,
+            "total_failed_tasks": len(failed_tasks),
+            "fixed_tasks": fixed_tasks
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Task validation error: {str(e)}")
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to validate tasks: {str(e)}"
+        )

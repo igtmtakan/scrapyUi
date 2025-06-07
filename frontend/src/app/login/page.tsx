@@ -17,13 +17,42 @@ export default function LoginPage() {
   });
   const [showPassword, setShowPassword] = useState(false);
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
+  const [initTimeout, setInitTimeout] = useState(false);
 
   // 初期化処理
   useEffect(() => {
+    console.log('🔍 Login page mount - isInitialized:', isInitialized);
+
     if (!isInitialized) {
       console.log('🚀 Initializing auth store from login page...');
-      initialize();
+      initialize().catch(error => {
+        console.error('❌ Initialization failed:', error);
+        // 初期化に失敗した場合でも初期化済みとしてマーク
+        useAuthStore.setState({
+          user: null,
+          isAuthenticated: false,
+          isLoading: false,
+          isInitialized: true,
+          error: 'Initialization failed'
+        });
+      });
     }
+
+    // 初期化タイムアウト（5秒）
+    const timeout = setTimeout(() => {
+      if (!isInitialized) {
+        console.warn('⏰ Initialization timeout, forcing initialization');
+        setInitTimeout(true);
+        useAuthStore.setState({
+          user: null,
+          isAuthenticated: false,
+          isLoading: false,
+          isInitialized: true
+        });
+      }
+    }, 5000);
+
+    return () => clearTimeout(timeout);
   }, [isInitialized, initialize]);
 
   // 認証済みユーザーのリダイレクト処理
@@ -88,12 +117,29 @@ export default function LoginPage() {
   };
 
   // 初期化中の場合はローディング表示
-  if (!isInitialized) {
+  if (!isInitialized && !initTimeout) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-gray-900 via-blue-900 to-gray-900 flex items-center justify-center px-4">
         <div className="text-center">
           <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-          <p className="text-white">Initializing...</p>
+          <p className="text-white">認証状態を確認中...</p>
+          <p className="text-gray-400 text-sm mt-2">しばらくお待ちください</p>
+
+          {/* 緊急ボタン */}
+          <button
+            onClick={() => {
+              console.log('🚨 Emergency initialization');
+              useAuthStore.setState({
+                user: null,
+                isAuthenticated: false,
+                isLoading: false,
+                isInitialized: true
+              });
+            }}
+            className="mt-4 px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-sm rounded-lg transition-colors"
+          >
+            スキップしてログインページを表示
+          </button>
         </div>
       </div>
     )
@@ -246,6 +292,33 @@ export default function LoginPage() {
               Demo: demo@example.com | demo12345
             </p>
           </div>
+
+          {/* デバッグボタン */}
+          {(error || initTimeout) && (
+            <div className="mt-3 pt-3 border-t border-gray-600">
+              <button
+                onClick={() => {
+                  console.log('🧹 Clearing auth cache...');
+                  if (typeof window !== 'undefined') {
+                    localStorage.removeItem('access_token');
+                    localStorage.removeItem('refresh_token');
+                    localStorage.removeItem('auth-storage');
+                  }
+                  useAuthStore.setState({
+                    user: null,
+                    isAuthenticated: false,
+                    isLoading: false,
+                    error: null,
+                    isInitialized: true
+                  });
+                  window.location.reload();
+                }}
+                className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white text-xs rounded transition-colors"
+              >
+                認証データをクリアして再読み込み
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>

@@ -15,7 +15,11 @@ import {
   Calendar,
   Clock,
   CheckCircle,
-  AlertCircle
+  AlertCircle,
+  BarChart3,
+  Globe,
+  AlertTriangle,
+  Info
 } from 'lucide-react';
 import { apiClient } from '@/lib/api';
 
@@ -66,6 +70,7 @@ export default function TaskResultsPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedResult, setSelectedResult] = useState<Result | null>(null);
   const [isDownloading, setIsDownloading] = useState<string | null>(null);
+  const [totalResultsCount, setTotalResultsCount] = useState<number>(0);
   // availableFormats は不要（固定で全形式対応）
 
   useEffect(() => {
@@ -82,8 +87,15 @@ export default function TaskResultsPage() {
 
       // エクスポート形式は固定で設定（全形式対応）
 
-      // 結果データを取得
-      let resultsData = await apiClient.getResults({ task_id: taskId });
+      // 結果総数を取得
+      const countData = await apiClient.getResultsCount(taskId);
+      setTotalResultsCount(countData.total_count);
+
+      // 結果データを取得（表示用に制限）
+      let resultsData = await apiClient.getResults({
+        task_id: taskId,
+        limit: 100  // 表示用に制限
+      });
 
       // 結果がない場合は、結果ファイルから読み込みを試行
       if (resultsData.length === 0 && taskData.items_count > 0) {
@@ -301,22 +313,104 @@ export default function TaskResultsPage() {
         {/* Task Summary */}
         {task && (
           <div className="bg-gray-800 rounded-lg border border-gray-700 p-6 mb-6">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <div className="text-center">
-                <div className="text-2xl font-bold text-blue-400">{task.items_count}</div>
-                <div className="text-sm text-gray-400">アイテム数</div>
+            <h3 className="text-lg font-semibold text-white mb-4 flex items-center">
+              <BarChart3 className="w-5 h-5 mr-2" />
+              タスク実行統計
+            </h3>
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-6">
+              <div className="bg-gray-900 rounded-lg p-4 border border-gray-600">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-2xl font-bold text-blue-400">{task.items_count}</div>
+                  <Database className="w-6 h-6 text-blue-400" />
+                </div>
+                <div className="text-sm text-gray-300 font-medium">処理アイテム数</div>
+                <div className="text-xs text-gray-500 mt-1">
+                  Scrapyが処理したアイテムの総数
+                </div>
               </div>
-              <div className="text-center">
-                <div className="text-2xl font-bold text-green-400">{task.requests_count}</div>
-                <div className="text-sm text-gray-400">リクエスト数</div>
+              <div className="bg-gray-900 rounded-lg p-4 border border-gray-600">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-2xl font-bold text-green-400">{task.requests_count}</div>
+                  <Globe className="w-6 h-6 text-green-400" />
+                </div>
+                <div className="text-sm text-gray-300 font-medium">HTTPリクエスト数</div>
+                <div className="text-xs text-gray-500 mt-1">
+                  送信されたWebリクエストの総数
+                </div>
               </div>
-              <div className="text-center">
-                <div className="text-2xl font-bold text-red-400">{task.error_count}</div>
-                <div className="text-sm text-gray-400">エラー数</div>
+              <div className="bg-gray-900 rounded-lg p-4 border border-gray-600">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-2xl font-bold text-red-400">{task.error_count}</div>
+                  <AlertTriangle className="w-6 h-6 text-red-400" />
+                </div>
+                <div className="text-sm text-gray-300 font-medium">エラー数</div>
+                <div className="text-xs text-gray-500 mt-1">
+                  処理中に発生したエラーの数
+                </div>
               </div>
-              <div className="text-center">
-                <div className="text-2xl font-bold text-purple-400">{results.length}</div>
-                <div className="text-sm text-gray-400">結果アイテム数</div>
+              <div className="bg-gray-900 rounded-lg p-4 border border-gray-600">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-2xl font-bold text-purple-400">{totalResultsCount}</div>
+                  <CheckCircle className="w-6 h-6 text-purple-400" />
+                </div>
+                <div className="text-sm text-gray-300 font-medium">保存済み結果数</div>
+                <div className="text-xs text-gray-500 mt-1">
+                  データベースに保存された結果の総数
+                </div>
+              </div>
+              <div className="bg-gray-900 rounded-lg p-4 border border-gray-600">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-2xl font-bold text-orange-400">
+                    {task.items_count > 0 ? Math.round(((task.items_count - totalResultsCount) / task.items_count) * 100) : 0}%
+                  </div>
+                  <Filter className="w-6 h-6 text-orange-400" />
+                </div>
+                <div className="text-sm text-gray-300 font-medium">重複除去率</div>
+                <div className="text-xs text-gray-500 mt-1">
+                  重複として除去されたデータの割合
+                </div>
+              </div>
+            </div>
+
+            {/* 統計の説明 */}
+            <div className="mt-6 p-4 bg-blue-900/20 border border-blue-500/30 rounded-lg">
+              <div className="flex items-start space-x-3">
+                <Info className="w-5 h-5 text-blue-400 mt-0.5 flex-shrink-0" />
+                <div className="text-sm text-blue-100">
+                  <div className="font-medium mb-2">統計の説明:</div>
+                  <ul className="space-y-1 text-xs text-blue-200">
+                    <li>• <strong>処理アイテム数</strong>: Scrapyが内部で処理したアイテムの総数（重複除去前）</li>
+                    <li>• <strong>HTTPリクエスト数</strong>: Webサイトに送信されたリクエストの総数</li>
+                    <li>• <strong>エラー数</strong>: ネットワークエラーや解析エラーなどの発生回数</li>
+                    <li>• <strong>保存済み結果数</strong>: 最終的にデータベースに保存された有効な結果の数</li>
+                    <li>• <strong>重複除去率</strong>: 同じ内容のデータとして除去された割合</li>
+                  </ul>
+                  {task.items_count !== totalResultsCount && (
+                    <div className="mt-3 p-3 bg-yellow-900/30 border border-yellow-500/30 rounded-lg">
+                      <div className="flex items-center space-x-2 mb-2">
+                        <AlertTriangle className="w-4 h-4 text-yellow-400" />
+                        <strong className="text-yellow-200">データ処理の詳細</strong>
+                      </div>
+                      <div className="text-sm text-yellow-100 space-y-1">
+                        <div className="flex justify-between">
+                          <span>Scrapyが処理したアイテム:</span>
+                          <span className="font-mono">{task.items_count}個</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>データベースに保存:</span>
+                          <span className="font-mono">{totalResultsCount}個</span>
+                        </div>
+                        <div className="flex justify-between border-t border-yellow-500/30 pt-1">
+                          <span>重複除去・フィルタリング:</span>
+                          <span className="font-mono text-yellow-300">-{task.items_count - totalResultsCount}個</span>
+                        </div>
+                      </div>
+                      <div className="mt-2 text-xs text-yellow-200">
+                        💡 同じ内容のデータは自動的に重複除去されます
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </div>
@@ -335,6 +429,19 @@ export default function TaskResultsPage() {
             />
           </div>
         </div>
+
+        {/* Results Count Info */}
+        {totalResultsCount > results.length && (
+          <div className="mb-4 p-3 bg-blue-900/20 border border-blue-500/30 rounded-lg">
+            <div className="flex items-center space-x-2 text-blue-200">
+              <Info className="w-4 h-4" />
+              <span className="text-sm">
+                データベースには{totalResultsCount}件の結果がありますが、表示は最新{results.length}件に制限されています。
+                全件を確認するには「DBエクスポート」をご利用ください。
+              </span>
+            </div>
+          </div>
+        )}
 
         {/* Results */}
         {filteredResults.length === 0 ? (

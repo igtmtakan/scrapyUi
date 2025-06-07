@@ -49,6 +49,7 @@ export default function TaskMonitor({ taskId, showAllTasks = false }: TaskMonito
 
   const [clientId, setClientId] = React.useState('')
   const [mounted, setMounted] = React.useState(false)
+  const [isAutoRefresh, setIsAutoRefresh] = React.useState(true)
 
   // クライアントサイドでのみ初期化
   React.useEffect(() => {
@@ -95,6 +96,23 @@ export default function TaskMonitor({ taskId, showAllTasks = false }: TaskMonito
       setTasks(formattedTasks)
     } catch (error) {
       console.error('Failed to load tasks:', error)
+
+      // エラーの詳細をログに出力
+      if (error instanceof Error) {
+        console.error('Error details:', {
+          message: error.message,
+          stack: error.stack,
+          name: error.name
+        });
+
+        // ネットワークエラーの場合は特別な処理
+        if (error.message.includes('Failed to fetch') || error.message.includes('ネットワークエラー')) {
+          console.warn('Network error detected in TaskMonitor - server may be down');
+          // ネットワークエラーの場合は自動更新を一時停止
+          setIsAutoRefresh(false);
+        }
+      }
+
       // エラーの場合は空の配列を設定
       setTasks([])
     } finally {
@@ -170,11 +188,13 @@ export default function TaskMonitor({ taskId, showAllTasks = false }: TaskMonito
   React.useEffect(() => {
     if (mounted && isInitialized && isAuthenticated && user) {
       loadTasks()
-      // 定期的にタスクデータを更新（WebSocket無効化のため頻度を上げる）
-      const interval = setInterval(loadTasks, 3000) // 3秒ごと
-      return () => clearInterval(interval)
+      // 自動更新が有効な場合のみ定期的にタスクデータを更新
+      if (isAutoRefresh) {
+        const interval = setInterval(loadTasks, 3000) // 3秒ごと
+        return () => clearInterval(interval)
+      }
     }
-  }, [mounted, isInitialized, isAuthenticated, user, showAllTasks])
+  }, [mounted, isInitialized, isAuthenticated, user, showAllTasks, isAutoRefresh])
 
   // WebSocket機能を無効化（HTTPポーリングのみ使用）
   const isConnected = false

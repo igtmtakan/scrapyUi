@@ -45,6 +45,31 @@ pip install scrapyui
 
 ### Start ScrapyUI Server
 
+#### **推奨: 統合管理システム**
+```bash
+# 初回起動（推奨）- 自動設定・ポート競合解決
+./scrapyui_manager.sh quick-start
+
+# 通常の起動・停止
+./scrapyui_manager.sh start
+./scrapyui_manager.sh stop
+./scrapyui_manager.sh restart
+
+# システム状態確認
+./scrapyui_manager.sh status
+
+# ポート競合解決
+./scrapyui_manager.sh ports resolve
+
+# 設定管理
+./scrapyui_manager.sh config show
+./scrapyui_manager.sh config validate
+
+# ヘルプ表示
+./scrapyui_manager.sh help
+```
+
+#### **従来の方法**
 ```bash
 # Start with default settings
 scrapyui start
