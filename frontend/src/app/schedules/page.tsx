@@ -178,14 +178,21 @@ export default function SchedulesPage() {
       setError(null)
 
       // キャッシュを無効化してデータを取得
+      console.log('📡 API呼び出し開始: scheduleService.getSchedules()')
       const data = await scheduleService.getSchedules(true) // forceRefresh = true
 
       // デバッグ用ログ出力
       console.log('🔍 スケジュールデータ受信:', data)
+      console.log('🔍 データ型:', typeof data)
+      console.log('🔍 データ長:', Array.isArray(data) ? data.length : 'Not an array')
+      console.log('🔍 生データ:', JSON.stringify(data, null, 2))
       data.forEach((schedule, index) => {
         console.log(`📅 スケジュール${index + 1}: ${schedule.name}`)
         console.log(`   間隔: ${schedule.interval_minutes}分`)
         console.log(`   ID: ${schedule.id}`)
+        console.log(`   ID型: ${typeof schedule.id}`)
+        console.log(`   IDが存在: ${!!schedule.id}`)
+        console.log(`   スケジュールオブジェクト:`, schedule)
         if (schedule.latest_task) {
           console.log(`   最新タスク: ${schedule.latest_task.status} - アイテム${schedule.latest_task.items_count}, リクエスト${schedule.latest_task.requests_count}`)
         } else {
@@ -194,10 +201,43 @@ export default function SchedulesPage() {
       })
 
       // データの整合性チェック
-      const validSchedules = data.filter(schedule => schedule && schedule.id)
+      const validSchedules = data.filter((schedule, index) => {
+        if (!schedule) {
+          console.error(`❌ スケジュール${index + 1}がnullまたはundefinedです`)
+          return false
+        }
+
+        // toggleScheduleのレスポンスかチェック
+        if (schedule.message && schedule.schedule_id) {
+          console.error(`❌ スケジュール${index + 1}がtoggleScheduleのレスポンスです:`, schedule)
+          return false
+        }
+
+        if (!schedule.id) {
+          console.error(`❌ スケジュール${index + 1}のIDが存在しません:`, schedule)
+          return false
+        }
+
+        if (typeof schedule.id !== 'string') {
+          console.error(`❌ スケジュール${index + 1}のIDが文字列ではありません:`, typeof schedule.id, schedule.id)
+          return false
+        }
+
+        // 必須フィールドのチェック
+        const requiredFields = ['name', 'cron_expression', 'project_id', 'spider_id']
+        for (const field of requiredFields) {
+          if (!schedule[field]) {
+            console.error(`❌ スケジュール${index + 1}の必須フィールド'${field}'が存在しません:`, schedule)
+            return false
+          }
+        }
+
+        return true
+      })
 
       if (validSchedules.length !== data.length) {
-        console.warn(`Filtered out ${data.length - validSchedules.length} invalid schedules`)
+        console.warn(`⚠️ ${data.length - validSchedules.length}個の無効なスケジュールをフィルタリングしました`)
+        console.warn('無効なスケジュール:', data.filter((_, index) => !validSchedules.includes(data[index])))
       }
 
       setSchedules(validSchedules)
@@ -533,9 +573,29 @@ export default function SchedulesPage() {
 
   const handleToggleSchedule = async (scheduleId: string) => {
     try {
+      console.log('🔄 スケジュール切り替え開始:', scheduleId)
+      console.log('🔄 スケジュールID型:', typeof scheduleId)
+      console.log('🔄 スケジュールID値:', scheduleId)
+
+      if (!scheduleId || scheduleId === 'undefined') {
+        console.error('❌ 無効なスケジュールID:', scheduleId)
+        alert('無効なスケジュールIDです')
+        return
+      }
+
       const updatedSchedule = await scheduleService.toggleSchedule(scheduleId)
+      console.log('🔄 更新されたスケジュール:', updatedSchedule)
+
+      // 更新されたスケジュールが有効なオブジェクトかチェック
+      if (!updatedSchedule || !updatedSchedule.id) {
+        console.error('❌ 無効な更新レスポンス:', updatedSchedule)
+        alert('スケジュールの更新に失敗しました。ページを更新してください。')
+        return
+      }
+
       setSchedules(prev => prev.map(s => s.id === scheduleId ? updatedSchedule : s))
     } catch (error: any) {
+      console.error('❌ スケジュール切り替えエラー:', error)
       alert(error.response?.data?.detail || 'スケジュールの切り替えに失敗しました')
     }
   }
@@ -878,9 +938,16 @@ export default function SchedulesPage() {
       {!loading && !error && (
         <div className="p-6">
           <div className="grid gap-6">
-            {filteredSchedules.map((schedule, index) => (
+            {filteredSchedules.map((schedule, index) => {
+              // スケジュールデータの安全性チェック
+              if (!schedule || !schedule.id) {
+                console.error(`❌ レンダリング時にスケジュール${index + 1}が無効です:`, schedule)
+                return null
+              }
+
+              return (
               <div
-                key={schedule.id || `schedule-${index}`}
+                key={schedule.id}
                 className="bg-gray-800 rounded-lg border border-gray-700 p-6 hover:border-gray-600 transition-colors"
               >
                 <div className="flex items-start justify-between">
@@ -1232,7 +1299,16 @@ export default function SchedulesPage() {
                     {/* 第1行: 制御ボタン */}
                     <div className="flex items-center space-x-2">
                       <button
-                        onClick={() => handleToggleSchedule(schedule.id)}
+                        onClick={() => {
+                          console.log('🔄 ボタンクリック - スケジュール:', schedule)
+                          console.log('🔄 ボタンクリック - ID:', schedule.id)
+                          if (schedule.id && schedule.id !== 'undefined') {
+                            handleToggleSchedule(schedule.id)
+                          } else {
+                            console.error('❌ 無効なスケジュールID:', schedule.id)
+                            alert('スケジュールIDが無効です。ページを更新してください。')
+                          }
+                        }}
                         className={`p-2 transition-colors ${
                           schedule.is_active
                             ? 'text-green-400 hover:text-red-400'
@@ -1244,7 +1320,14 @@ export default function SchedulesPage() {
                       </button>
 
                       <button
-                        onClick={() => handleEditSchedule(schedule)}
+                        onClick={() => {
+                          if (schedule.id && schedule.id !== 'undefined') {
+                            handleEditSchedule(schedule)
+                          } else {
+                            console.error('❌ 無効なスケジュールID (編集):', schedule.id)
+                            alert('スケジュールIDが無効です。ページを更新してください。')
+                          }
+                        }}
                         className="p-2 text-gray-400 hover:text-blue-400 transition-colors"
                         title="スケジュール編集"
                       >
@@ -1252,7 +1335,14 @@ export default function SchedulesPage() {
                       </button>
 
                       <button
-                        onClick={() => handleDeleteSchedule(schedule.id)}
+                        onClick={() => {
+                          if (schedule.id && schedule.id !== 'undefined') {
+                            handleDeleteSchedule(schedule.id)
+                          } else {
+                            console.error('❌ 無効なスケジュールID (削除):', schedule.id)
+                            alert('スケジュールIDが無効です。ページを更新してください。')
+                          }
+                        }}
                         className="p-2 text-gray-400 hover:text-red-400 transition-colors"
                         title="削除"
                       >
@@ -1297,7 +1387,8 @@ export default function SchedulesPage() {
                   </div>
                 </div>
               </div>
-            ))}
+              )
+            })}
 
             {/* 空の状態表示 */}
             {filteredSchedules.length === 0 && schedules.length === 0 && (

@@ -93,7 +93,18 @@ class ScheduleService {
       }
     } : {};
 
+    console.log('📡 scheduleService: API呼び出し開始')
+    console.log('📡 URL:', `/api/schedules/?${params.toString()}`)
+    console.log('📡 Config:', config)
+
     const response = await apiClient.get<Schedule[]>(`/api/schedules/?${params.toString()}`, config);
+
+    console.log('📡 scheduleService: APIレスポンス受信')
+    console.log('📡 Response:', response)
+    console.log('📡 Response.data:', response.data)
+    console.log('📡 Response.data type:', typeof response.data)
+    console.log('📡 Response.data length:', Array.isArray(response.data) ? response.data.length : 'Not an array')
+
     return response.data;
   }
 
@@ -128,7 +139,9 @@ class ScheduleService {
 
   // スケジュール有効/無効切り替え
   async toggleSchedule(scheduleId: string): Promise<Schedule> {
+    console.log('📡 scheduleService: toggleSchedule呼び出し', scheduleId)
     const response = await apiClient.post<Schedule>(`/api/schedules/${scheduleId}/toggle`);
+    console.log('📡 scheduleService: toggleScheduleレスポンス', response)
     return response.data;
   }
 

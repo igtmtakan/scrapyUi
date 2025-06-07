@@ -718,12 +718,31 @@ async def toggle_schedule(schedule_id: str, db: Session = Depends(get_db)):
 
     db_schedule.is_active = not db_schedule.is_active
     db.commit()
+    db.refresh(db_schedule)
 
-    return {
-        "message": f"Schedule {'activated' if db_schedule.is_active else 'deactivated'}",
-        "schedule_id": schedule_id,
-        "is_active": db_schedule.is_active
+    # プロジェクトとスパイダー情報を取得
+    project = db.query(DBProject).filter(DBProject.id == db_schedule.project_id).first()
+    spider = db.query(DBSpider).filter(DBSpider.id == db_schedule.spider_id).first()
+
+    # 完全なスケジュールオブジェクトを返す
+    schedule_dict = {
+        "id": db_schedule.id,
+        "name": db_schedule.name,
+        "description": db_schedule.description,
+        "cron_expression": db_schedule.cron_expression,
+        "project_id": db_schedule.project_id,
+        "spider_id": db_schedule.spider_id,
+        "is_active": db_schedule.is_active,
+        "last_run": db_schedule.last_run,
+        "next_run": db_schedule.next_run,
+        "created_at": db_schedule.created_at,
+        "updated_at": db_schedule.updated_at,
+        "settings": db_schedule.settings,
+        "project_name": project.name if project else "N/A",
+        "spider_name": spider.name if spider else "N/A"
     }
+
+    return schedule_dict
 
 @router.get(
     "/pending-tasks/count",
