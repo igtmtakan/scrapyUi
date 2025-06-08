@@ -15,8 +15,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Scrapy Web UI - Professional Web Scraping Platform",
-  description: "Powerful web interface for Scrapy with Playwright integration. Create, edit, and manage your web scrapers with ease.",
+  title: "Scrapy Web UI - プロフェッショナルWebスクレイピングプラットフォーム",
+  description: "Playwright統合によるScrapyの強力なWebインターフェース。Webスクレイパーの作成、編集、管理を簡単に行えます。",
 };
 
 export default function RootLayout({
@@ -25,7 +25,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="ja">
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >

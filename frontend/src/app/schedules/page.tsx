@@ -426,8 +426,14 @@ export default function SchedulesPage() {
         }
 
         ws.onerror = (error) => {
-          console.warn('SchedulesPage: WebSocket error (non-critical):', error)
-          // WebSocketエラーは非致命的 - ポーリングで代替
+          console.warn('SchedulesPage: WebSocket error (non-critical):', {
+            error,
+            url: 'ws://localhost:8000/ws/realtime-progress',
+            readyState: ws?.readyState,
+            timestamp: new Date().toISOString(),
+            message: 'WebSocketエラーは非致命的 - ポーリングで代替'
+          })
+          // WebSocketエラーは非致命的 - ページの動作は継続
         }
 
         ws.onclose = (event) => {

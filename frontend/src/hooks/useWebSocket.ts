@@ -118,8 +118,8 @@ export function useWebSocket({
               break
           }
         } catch (error) {
-          console.error('Failed to parse WebSocket message:', error)
-          onWebSocketError?.(error, { raw_data: event.data })
+          console.error('Failed to parse WebSocket message:', error, 'Raw data:', event.data)
+          onWebSocketError?.(error, { raw_data: event.data, error_type: 'parse_error' })
         }
       }
 
@@ -141,12 +141,20 @@ export function useWebSocket({
         const errorDetails = {
           url,
           readyState: ws.current?.readyState,
+          readyStateText: ws.current?.readyState === 0 ? 'CONNECTING' :
+                         ws.current?.readyState === 1 ? 'OPEN' :
+                         ws.current?.readyState === 2 ? 'CLOSING' :
+                         ws.current?.readyState === 3 ? 'CLOSED' : 'UNKNOWN',
           error: error,
           errorType: error.type,
-          errorMessage: error instanceof ErrorEvent ? error.message : 'Unknown error'
+          errorMessage: error instanceof ErrorEvent ? error.message :
+                       error instanceof Event ? `Event type: ${error.type}` :
+                       typeof error === 'object' ? JSON.stringify(error) :
+                       String(error) || 'Unknown error',
+          timestamp: new Date().toISOString()
         }
 
-        console.error('WebSocket error:', errorDetails)
+        console.warn('WebSocket error details (non-critical):', errorDetails)
         setConnectionStatus('error')
 
         // 汎用エラーコールバック
