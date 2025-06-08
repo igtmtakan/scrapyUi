@@ -289,40 +289,16 @@ class SchedulerService:
             print(f"🔍 Time comparison for {schedule.name}:")
             print(f"  Current: {current_time_rounded} ({current_time_rounded.strftime('%Y-%m-%d %H:%M:%S')})")
             print(f"  Next run: {schedule.next_run} ({schedule.next_run.strftime('%Y-%m-%d %H:%M:%S')})")
-            print(f"  Current >= Next: {current_time_rounded >= schedule.next_run}")
 
-            # 実行判定：現在時刻が次回実行時刻以降の場合
-            should_execute = current_time_rounded >= schedule.next_run
+            # 実行判定：現在時刻が次回実行時刻の1分以内の場合
+            time_diff = (current_time_rounded - schedule.next_run).total_seconds()
+            should_execute = -60 <= time_diff <= 60  # 1分の許容範囲
+
+            print(f"  Time difference: {time_diff} seconds")
+            print(f"  Should execute: {should_execute}")
 
             if should_execute:
-                # 重複実行を防ぐため、最後の実行から最低1分は空ける
-                if schedule.last_run:
-                    time_since_last = current_time - schedule.last_run
-                    if time_since_last.total_seconds() < 60:
-                        print(f"⏳ Skipping {schedule.name}: Last run was {time_since_last.total_seconds():.0f}s ago (< 60s)")
-                        should_execute = False
-
-                # 実行中タスクチェック（重複実行防止）
-                if should_execute:
-                    running_tasks = self._check_running_tasks(schedule)
-                    if running_tasks:
-                        print(f"⏳ Skipping {schedule.name}: {len(running_tasks)} running task(s) found")
-                        for task in running_tasks:
-                            elapsed = (current_time - task.started_at).total_seconds() if task.started_at else 0
-                            print(f"   - Task {task.id[:8]}... running for {elapsed:.0f}s")
-                        should_execute = False
-
-                if should_execute:
-                    print(f"✅ Should execute {schedule.name}: Current={current_time_rounded.strftime('%H:%M:%S')}, Next={schedule.next_run.strftime('%H:%M:%S')}")
-
-                    # 実行が決定したら、次回実行時刻を事前に計算
-                    print(f"🔄 Pre-calculating next_run for {schedule.name}")
-                    # 現在の次回実行時刻を基準にして次の実行時刻を計算
-                    cron = croniter(schedule.cron_expression, schedule.next_run)
-                    new_next_run = cron.get_next(datetime)
-                    print(f"🔧 Next execution will be: {new_next_run.strftime('%Y-%m-%d %H:%M:%S')}")
-
-                    return True
+                return True
 
             # 次回実行時刻が過去の場合は再計算（実行はしない）
             elif current_time_rounded > schedule.next_run:
