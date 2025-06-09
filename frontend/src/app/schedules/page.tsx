@@ -464,11 +464,34 @@ export default function SchedulesPage() {
   // 待機タスク情報を取得
   const loadPendingTasksInfo = async () => {
     try {
+      console.log('📡 Loading pending tasks info...')
       const response = await apiClient.get('/api/schedules/pending-tasks/count')
+      console.log('✅ Pending tasks info loaded:', response.data)
 
-      setPendingTasksInfo(response.data)
+      // レスポンスデータの検証
+      if (response.data && typeof response.data === 'object') {
+        setPendingTasksInfo({
+          total_pending: response.data.total_pending ?? 0,
+          old_pending: response.data.old_pending ?? 0,
+          recent_pending: response.data.recent_pending ?? 0
+        })
+      } else {
+        console.warn('⚠️ Invalid response data format:', response.data)
+        // デフォルト値を設定
+        setPendingTasksInfo({
+          total_pending: 0,
+          old_pending: 0,
+          recent_pending: 0
+        })
+      }
     } catch (error) {
-      console.error('Failed to load pending tasks info:', error)
+      console.error('❌ Failed to load pending tasks info:', error)
+      // エラー時もデフォルト値を設定
+      setPendingTasksInfo({
+        total_pending: 0,
+        old_pending: 0,
+        recent_pending: 0
+      })
     }
   }
 
@@ -795,29 +818,29 @@ export default function SchedulesPage() {
           {/* 待機タスク情報 */}
           <div className="bg-gray-700 rounded-lg p-4">
             <div className="flex items-center space-x-3 mb-3">
-              <Clock className={`w-8 h-8 ${pendingTasksInfo.total_pending > 0 ? 'text-yellow-400' : 'text-gray-400'}`} />
+              <Clock className={`w-8 h-8 ${(pendingTasksInfo.total_pending ?? 0) > 0 ? 'text-yellow-400' : 'text-gray-400'}`} />
               <div className="flex-1">
                 <p className="text-sm text-gray-400">待機タスク</p>
-                <p className={`text-2xl font-bold ${pendingTasksInfo.total_pending > 0 ? 'text-yellow-400' : 'text-gray-400'}`}>
-                  {pendingTasksInfo.total_pending}
+                <p className={`text-2xl font-bold ${(pendingTasksInfo.total_pending ?? 0) > 0 ? 'text-yellow-400' : 'text-gray-400'}`}>
+                  {pendingTasksInfo.total_pending ?? 0}
                 </p>
               </div>
             </div>
 
             {/* 詳細情報とリセットボタン */}
             <div className="space-y-2">
-              {pendingTasksInfo.old_pending > 0 && (
+              {(pendingTasksInfo.old_pending ?? 0) > 0 && (
                 <div className="flex items-center justify-between">
                   <p className="text-xs text-red-400">
-                    古いタスク: {pendingTasksInfo.old_pending} 個
+                    古いタスク: {pendingTasksInfo.old_pending ?? 0} 個
                   </p>
                 </div>
               )}
 
-              {pendingTasksInfo.recent_pending > 0 && (
+              {(pendingTasksInfo.recent_pending ?? 0) > 0 && (
                 <div className="flex items-center justify-between">
                   <p className="text-xs text-blue-400">
-                    最近のタスク: {pendingTasksInfo.recent_pending} 個
+                    最近のタスク: {pendingTasksInfo.recent_pending ?? 0} 個
                   </p>
                 </div>
               )}
@@ -828,13 +851,13 @@ export default function SchedulesPage() {
                   {/* 通常のリセットボタン */}
                   <button
                     onClick={() => handleResetPendingTasks(false)}
-                    disabled={isResettingTasks || pendingTasksInfo.total_pending === 0}
+                    disabled={isResettingTasks || (pendingTasksInfo.total_pending ?? 0) === 0}
                     className={`w-full flex items-center justify-center space-x-2 px-3 py-2 rounded text-sm transition-colors ${
-                      pendingTasksInfo.total_pending === 0
+                      (pendingTasksInfo.total_pending ?? 0) === 0
                         ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
                         : 'bg-red-600 hover:bg-red-700 disabled:bg-red-800'
                     }`}
-                    title={pendingTasksInfo.total_pending === 0
+                    title={(pendingTasksInfo.total_pending ?? 0) === 0
                       ? '待機タスクがありません'
                       : '古い待機タスクと孤立タスクをキャンセル'
                     }
@@ -848,9 +871,9 @@ export default function SchedulesPage() {
                       <>
                         <Trash2 className="w-4 h-4" />
                         <span>
-                          {pendingTasksInfo.total_pending === 0
+                          {(pendingTasksInfo.total_pending ?? 0) === 0
                             ? 'タスクなし'
-                            : `タスクリセット (${pendingTasksInfo.total_pending})`
+                            : `タスクリセット (${pendingTasksInfo.total_pending ?? 0})`
                           }
                         </span>
                       </>

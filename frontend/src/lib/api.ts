@@ -132,8 +132,8 @@ class ApiClient {
   constructor(baseURL: string = '') {
     // 環境に応じてベースURLを設定
     if (typeof window !== 'undefined') {
-      // ブラウザ環境では、プロキシ経由でアクセス（相対パス）
-      this.baseURL = baseURL || '';
+      // ブラウザ環境では、直接バックエンドに接続
+      this.baseURL = baseURL || 'http://localhost:8000';
     } else {
       // サーバーサイドでは環境変数または直接バックエンドに接続
       this.baseURL = baseURL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';

@@ -153,8 +153,36 @@ class ScheduleService {
 
   // スパイダー一覧取得
   async getSpiders(projectId?: string): Promise<Spider[]> {
-    const params = projectId ? `?project_id=${projectId}` : '';
-    const response = await apiClient.get<Spider[]>(`/api/spiders/${params}`);
+    if (projectId) {
+      // プロジェクトIDが指定された場合はクエリパラメータで取得
+      const response = await apiClient.get<Spider[]>(`/api/spiders/?project_id=${projectId}`);
+      return response.data;
+    } else {
+      // プロジェクトIDが指定されていない場合は全スパイダーを取得
+      const response = await apiClient.get<Spider[]>('/api/spiders/');
+      return response.data;
+    }
+  }
+
+  // 待機タスク数取得
+  async getPendingTasksCount(): Promise<number> {
+    const response = await apiClient.get<{count: number}>('/api/schedules/pending-tasks/count');
+    return response.data.count;
+  }
+
+  // タスクリセット
+  async resetTasks(): Promise<{message: string; cleared_count: number}> {
+    console.log('📡 scheduleService: resetTasks呼び出し')
+    const response = await apiClient.post<{message: string; cleared_count: number}>('/api/tasks/reset');
+    console.log('📡 scheduleService: resetTasksレスポンス', response)
+    return response.data;
+  }
+
+  // タスククリア（DELETE版）
+  async clearTasks(): Promise<{message: string; cleared_count: number}> {
+    console.log('📡 scheduleService: clearTasks呼び出し')
+    const response = await apiClient.delete<{message: string; cleared_count: number}>('/api/tasks/clear');
+    console.log('📡 scheduleService: clearTasksレスポンス', response)
     return response.data;
   }
 
