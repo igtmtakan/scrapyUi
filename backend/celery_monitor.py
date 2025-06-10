@@ -54,12 +54,12 @@ class CeleryMonitor:
             cmd = [
                 sys.executable, "-m", "celery", "-A", "app.celery_app", "worker",
                 "--loglevel=info",
-                "--concurrency=2",
+                "--concurrency=1",  # 同時実行数を1に削減
                 "--queues=scrapy,maintenance,monitoring",
                 "--pool=prefork",
                 "--optimization=fair",
-                "--max-tasks-per-child=200",  # タスク数制限を緩和
-                "--max-memory-per-child=500000",  # 500MB制限（メモリ制限緩和）
+                "--max-tasks-per-child=50",  # タスク数制限を50に削減
+                "--max-memory-per-child=300000",  # 300MB制限（メモリ制限強化）
                 "--time-limit=3600",  # 60分タイムアウト
                 "--soft-time-limit=3300",  # 55分ソフトタイムアウト
                 "--without-gossip",
@@ -126,7 +126,7 @@ class CeleryMonitor:
             process = psutil.Process(self.worker_process.pid)
             memory_mb = process.memory_info().rss / 1024 / 1024
             
-            if memory_mb > 200:  # 200MB制限
+            if memory_mb > 250:  # 250MB制限（少し緩和）
                 self.log(f"Celeryワーカーのメモリ使用量が制限を超えました: {memory_mb:.1f}MB")
                 return False
                 
@@ -163,35 +163,62 @@ class CeleryMonitor:
 
         return True
     
+    def force_cleanup_workers(self):
+        """強制的にすべてのCeleryワーカーをクリーンアップ"""
+        try:
+            # すべてのCeleryワーカープロセスを検索
+            result = subprocess.run(['pgrep', '-f', 'celery.*worker'],
+                                  capture_output=True, text=True)
+            worker_pids = result.stdout.strip().split('\n') if result.stdout.strip() else []
+
+            for pid in worker_pids:
+                try:
+                    if pid.strip():
+                        subprocess.run(['kill', '-KILL', pid.strip()], check=False)
+                        self.log(f"強制終了: ワーカープロセス {pid}")
+                except:
+                    pass
+
+            # 少し待機
+            time.sleep(2)
+
+        except Exception as e:
+            self.log(f"強制クリーンアップエラー: {e}")
+
     def restart_worker(self):
         """ワーカーを再起動"""
         # 再起動回数制限チェック
         now = datetime.now()
         self.restart_times = [t for t in self.restart_times if now - t < self.restart_window]
-        
+
         if len(self.restart_times) >= self.max_restarts:
             self.log(f"再起動回数が制限に達しました ({self.max_restarts}回/時間)")
             return False
-        
+
         self.log("Celeryワーカーを再起動中...")
-        
+
         # 既存プロセスを停止
         if self.worker_process:
             try:
                 self.worker_process.terminate()
-                self.worker_process.wait(timeout=10)
+                self.worker_process.wait(timeout=5)  # タイムアウトを短縮
             except subprocess.TimeoutExpired:
+                self.log("通常終了がタイムアウトしました。強制終了します...")
                 self.worker_process.kill()
+                # 強制クリーンアップを実行
+                self.force_cleanup_workers()
             except Exception as e:
                 self.log(f"ワーカー停止エラー: {e}")
-        
+                # エラー時も強制クリーンアップを実行
+                self.force_cleanup_workers()
+
         # 新しいワーカーを起動
         if self.start_worker():
             self.restart_times.append(now)
             self.restart_count += 1
             self.log(f"Celeryワーカーを再起動しました (再起動回数: {self.restart_count})")
             return True
-        
+
         return False
     
     def signal_handler(self, signum, frame):
@@ -266,7 +293,7 @@ class CeleryMonitor:
                 except Exception as e:
                     self.log(f"Beat重複プロセスチェックエラー: {e}")
                 
-                time.sleep(30)  # 30秒間隔でチェック
+                time.sleep(15)  # 15秒間隔でチェック（より頻繁な監視）
                 
             except KeyboardInterrupt:
                 break

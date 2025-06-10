@@ -282,7 +282,8 @@ class ApiClient {
       method: options.method || 'GET',
       url,
       hasToken: !!this.token,
-      tokenPreview: this.token ? `${this.token.slice(0, 10)}...` : 'none'
+      tokenPreview: this.token ? `${this.token.slice(0, 10)}...` : 'none',
+      headers: Object.fromEntries(Object.entries(headers).map(([k, v]) => [k, k === 'Authorization' ? `Bearer ${String(v).slice(7, 17)}...` : v]))
     });
 
     try {
@@ -294,9 +295,11 @@ class ApiClient {
       return await this.handleResponse(response, endpoint, options);
     } catch (error) {
       console.error('🚨 Network Error:', {
-        error: error.message,
+        error: error instanceof Error ? error.message : String(error),
         url,
-        method: options.method || 'GET'
+        method: options.method || 'GET',
+        errorType: error?.constructor?.name,
+        stack: error instanceof Error ? error.stack : undefined
       });
 
       // ネットワークエラーの場合
@@ -304,7 +307,13 @@ class ApiClient {
         throw new Error('ネットワークエラー: サーバーに接続できません。サーバーが起動しているか確認してください。');
       }
 
-      throw error;
+      // その他のネットワークエラー
+      if (error instanceof Error) {
+        throw error;
+      }
+
+      // 不明なエラーの場合
+      throw new Error(`ネットワークエラーが発生しました: ${String(error)}`);
     }
   }
 
@@ -1789,92 +1798,60 @@ class ApiClient {
     });
   }
 
-  // Flower Integration methods
-  async getFlowerStats(source?: string): Promise<any> {
-    const params = source ? `?source=${source}` : '';
-    return this.request(`/api/flower/stats${params}`);
-  }
-
-  async getFlowerDashboardStats(): Promise<{
-    total_tasks: number;
-    pending_tasks: number;
-    running_tasks: number;
-    successful_tasks: number;
-    failed_tasks: number;
-    revoked_tasks: number;
-    total_workers: number;
-    active_workers: number;
-    offline_workers: number;
-    source: string;
-    flower_url?: string;
-    timestamp: string;
-    error?: string;
-  }> {
-    return this.request('/api/flower/dashboard');
-  }
-
-  async getFlowerServicesStatus(): Promise<{
-    embedded: {
-      running: boolean;
-      url?: string;
-    };
-    api: {
-      available: boolean;
-      url: string;
-    };
-    standalone: {
-      running: boolean;
-      process_id?: number;
-      url?: string;
-    };
+  // Microservices Integration methods (Celery/Flower replacement)
+  async getMicroserviceStats(): Promise<{
+    scheduler: any;
+    spider_manager: any;
+    result_collector: any;
+    api_gateway: any;
     timestamp: string;
   }> {
-    return this.request('/api/flower/services/status');
+    return this.request('/api/microservices/stats');
   }
 
-  async startFlowerServices(): Promise<{
+  async getSpiderManagerStats(): Promise<{
+    running_processes: number;
+    max_concurrent: number;
+    queue_size: number;
+    watchdog_active: number;
+    service_status: string;
+  }> {
+    return this.request('/api/microservices/spider-manager/metrics');
+  }
+
+  async executeSpiderWithWatchdog(request: {
+    task_id: string;
+    project_id: string;
+    spider_id: string;
+    project_path: string;
+    spider_name: string;
+    output_file: string;
+    settings?: any;
+  }): Promise<{
     message: string;
-    results: {
-      embedded: boolean;
-      api: boolean;
-      standalone: boolean;
-    };
-    timestamp: string;
+    task_id: string;
+    result: any;
   }> {
-    return this.request('/api/flower/services/start', {
-      method: 'POST'
+    return this.request('/api/microservices/spider-manager/execute-watchdog', {
+      method: 'POST',
+      body: JSON.stringify(request)
     });
   }
 
-  async stopFlowerServices(): Promise<{
-    message: string;
-    timestamp: string;
+  async getActiveWatchdogTasks(): Promise<{
+    active_tasks: string[];
+    count: number;
   }> {
-    return this.request('/api/flower/services/stop', {
+    return this.request('/api/microservices/spider-manager/watchdog/active');
+  }
+
+  async stopWatchdogTask(taskId: string): Promise<{
+    message: string;
+    task_id: string;
+  }> {
+    return this.request(`/api/microservices/spider-manager/watchdog/${taskId}/stop`, {
       method: 'POST'
     });
-  }
-
-  async getFlowerTaskDetails(taskId: string): Promise<any> {
-    return this.request(`/api/flower/tasks/${taskId}`);
-  }
-
-  async getFlowerWorkerDetails(workerName: string): Promise<any> {
-    return this.request(`/api/flower/workers/${workerName}`);
-  }
-
-  async getFlowerHealthCheck(): Promise<{
-    status: 'healthy' | 'unhealthy';
-    services: {
-      embedded: boolean;
-      api: boolean;
-      standalone: boolean;
-    };
-    message: string;
-    timestamp: string;
-    error?: string;
-  }> {
-    return this.request('/api/flower/health');
   }
 }
 

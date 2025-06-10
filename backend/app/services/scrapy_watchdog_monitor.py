@@ -33,14 +33,23 @@ class JSONLWatchdogHandler(FileSystemEventHandler):
     def __init__(self, monitor):
         self.monitor = monitor
         self.last_size = 0
+        self.last_update_time = 0
+        self.update_interval = 10.0  # 10秒間隔に緩和
 
     def on_modified(self, event):
-        """ファイル変更時の処理"""
+        """ファイル変更時の処理（間隔制限付き）"""
         if event.is_directory:
             return
 
         # 監視対象のJSONLファイルかチェック
         if event.src_path == str(self.monitor.jsonl_file_path):
+            # 更新間隔をチェック（10秒以内の連続更新を制限）
+            current_time = time.time()
+            if current_time - self.last_update_time < self.update_interval:
+                return
+
+            self.last_update_time = current_time
+
             # 非同期処理をスレッドセーフに実行
             threading.Thread(
                 target=self._handle_file_change,
@@ -50,7 +59,7 @@ class JSONLWatchdogHandler(FileSystemEventHandler):
     def _handle_file_change(self):
         """ファイル変更の処理（進捗表示のみ、DBインサートなし）"""
         try:
-            print(f"📝 ファイル変更を検出しました")
+            print(f"📝 ファイル変更を検出しました（10秒間隔制限）")
             print(f"📊 watchdog監視で進捗表示を更新します")
 
             # 新しい行を進捗表示のみ（DBインサートなし）
@@ -75,8 +84,10 @@ class JSONLWatchdogHandler(FileSystemEventHandler):
 
                 self.monitor.last_file_size = current_size
 
-                # WebSocket通知を送信（進捗表示用）
-                if self.monitor.websocket_callback:
+                # WebSocket通知を送信（進捗表示用・頻度制限付き）
+                current_time = time.time()
+                if (self.monitor.websocket_callback and
+                    current_time - self.monitor.last_websocket_time >= self.monitor.websocket_interval):
                     try:
                         import requests
                         response = requests.post(
@@ -90,9 +101,12 @@ class JSONLWatchdogHandler(FileSystemEventHandler):
                             timeout=5
                         )
                         if response.status_code == 200:
-                            print(f"📡 WebSocket進捗通知送信完了")
+                            self.monitor.last_websocket_time = current_time
+                            print(f"📡 WebSocket進捗通知送信完了（15秒間隔制限）")
                     except Exception as ws_error:
                         print(f"📡 WebSocket通知エラー: {ws_error}")
+                else:
+                    print(f"🔍 WebSocket通知スキップ（15秒間隔制限）")
 
         except Exception as e:
             print(f"❌ ファイル変更処理エラー: {e}")
@@ -119,6 +133,10 @@ class ScrapyWatchdogMonitor:
         self.is_monitoring = False
         self.observer = None
         self.loop = None
+
+        # WebSocket通知の頻度制限
+        self.last_websocket_time = 0
+        self.websocket_interval = 15.0  # 15秒間隔に制限
         self.processed_lines = 0
         self.last_file_size = 0
 
@@ -492,19 +510,22 @@ class ScrapyWatchdogMonitor:
                 self.processed_lines += len(new_lines)
                 print(f"📊 総処理済みアイテム数: {self.processed_lines}（進捗表示のみ）")
 
-                # WebSocket通知（進捗表示のみ）
+                # WebSocket通知（進捗表示のみ・頻度制限付き）
                 try:
-                    if self.websocket_callback and len(new_lines) > 0:
-                        # 同期的にWebSocket通知を送信
+                    current_time = time.time()
+                    if (self.websocket_callback and len(new_lines) > 0 and
+                        current_time - self.last_websocket_time >= self.websocket_interval):
+                        # 15秒間隔でWebSocket通知を送信
                         self._safe_websocket_notify_threading({
                             'type': 'items_update',
                             'task_id': self.task_id,
                             'new_items': len(new_lines),
                             'total_items': self.processed_lines
                         })
-                        print(f"📡 WebSocket進捗通知送信完了")
+                        self.last_websocket_time = current_time
+                        print(f"📡 WebSocket進捗通知送信完了（15秒間隔制限）")
                     else:
-                        print(f"🔍 WebSocket通知スキップ: callback={self.websocket_callback is not None}, new_lines={len(new_lines)}")
+                        print(f"🔍 WebSocket通知スキップ: callback={self.websocket_callback is not None}, new_lines={len(new_lines)}, interval_ok={current_time - self.last_websocket_time >= self.websocket_interval}")
                 except Exception as ws_error:
                     print(f"📡 WebSocket通知エラー: {ws_error}")
                     import traceback
@@ -561,21 +582,24 @@ class ScrapyWatchdogMonitor:
 
                 print(f"✅ 直接DB挿入完了: {successful_inserts}/{len(new_lines)}件")
 
-                # WebSocket通知（同期的に）
+                # WebSocket通知（同期的・頻度制限付き）
                 print(f"🔍 WebSocket通知開始...")
                 try:
-                    if self.websocket_callback and successful_inserts > 0:
+                    current_time = time.time()
+                    if (self.websocket_callback and successful_inserts > 0 and
+                        current_time - self.last_websocket_time >= self.websocket_interval):
                         print(f"🔍 WebSocket通知実行中...")
-                        # 同期的にWebSocket通知を送信
+                        # 15秒間隔でWebSocket通知を送信
                         self._safe_websocket_notify({
                             'type': 'items_update',
                             'task_id': self.task_id,
                             'new_items': successful_inserts,
                             'total_items': self.processed_lines
                         })
-                        print(f"✅ WebSocket通知完了")
+                        self.last_websocket_time = current_time
+                        print(f"✅ WebSocket通知完了（15秒間隔制限）")
                     else:
-                        print(f"🔍 WebSocket通知スキップ: callback={self.websocket_callback is not None}, inserts={successful_inserts}")
+                        print(f"🔍 WebSocket通知スキップ: callback={self.websocket_callback is not None}, inserts={successful_inserts}, interval_ok={current_time - self.last_websocket_time >= self.websocket_interval}")
                 except Exception as ws_error:
                     print(f"📡 WebSocket通知エラー: {ws_error}")
                     import traceback
@@ -1254,9 +1278,10 @@ class ScrapyWatchdogMonitor:
             print(f"❌ タスク統計更新エラー: {e}")
 
     def _update_task_statistics_safe(self):
-        """安全なタスク統計更新（別のセッションで）"""
+        """安全なタスク統計更新（強化版）"""
         try:
             from ..database import SessionLocal, Task, Result
+            from .task_statistics_validator import task_validator
 
             db = SessionLocal()
             try:
@@ -1266,17 +1291,28 @@ class ScrapyWatchdogMonitor:
                     # 結果数を取得
                     result_count = db.query(Result).filter(Result.task_id == self.task_id).count()
 
-                    # タスク統計を更新（重複防止：最大値のみ更新）
-                    task.items_count = max(result_count, task.items_count or 0)
+                    # ファイルベースの統計も確認
+                    file_items, file_requests = task_validator._get_file_statistics(task)
 
-                    # リクエスト数は推定値と現在値の最大値
-                    estimated_requests = result_count + 15
-                    task.requests_count = max(estimated_requests, task.requests_count or 0)
+                    # より正確な統計を使用
+                    final_items = max(result_count, file_items, task.items_count or 0)
+                    final_requests = max(file_requests, result_count + 15, task.requests_count or 0)
+
+                    # タスク統計を更新
+                    task.items_count = final_items
+                    task.requests_count = final_requests
+
+                    # ステータスの自動修正
+                    if final_items > 0 and task.status.name == 'FAILED':
+                        from ..database import TaskStatus
+                        task.status = TaskStatus.FINISHED
+                        task.error_count = 0
+                        print(f"🔧 Status auto-corrected: {self.task_id[:8]}... FAILED → FINISHED")
 
                     task.updated_at = datetime.now()
 
                     db.commit()
-                    print(f"📊 タスク統計更新: {self.task_id[:8]}... - アイテム数: {result_count}")
+                    print(f"📊 Enhanced task statistics updated: {self.task_id[:8]}... - Items: {final_items}, Requests: {final_requests}")
 
             except Exception as e:
                 db.rollback()

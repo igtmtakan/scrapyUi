@@ -12,6 +12,32 @@ export interface LatestTask {
   created_at: string;
 }
 
+// Task interface for schedule history
+export interface ScheduleTask {
+  id: string;
+  status: string;
+  items_count: number;
+  requests_count: number;
+  error_count: number;
+  started_at?: string;
+  finished_at?: string;
+  created_at: string;
+  updated_at?: string;
+  log_level: string;
+  settings?: Record<string, any>;
+  celery_task_id?: string;
+  error_message?: string;
+}
+
+// Schedule tasks response
+export interface ScheduleTasksResponse {
+  tasks: ScheduleTask[];
+  total_count: number;
+  limit: number;
+  offset: number;
+  schedule_id: string;
+}
+
 // Schedule interfaces
 export interface Schedule {
   id: string;
@@ -110,8 +136,19 @@ class ScheduleService {
 
   // スケジュール詳細取得
   async getSchedule(scheduleId: string): Promise<Schedule> {
-    const response = await apiClient.get<Schedule>(`/api/schedules/${scheduleId}`);
-    return response.data;
+    try {
+      console.log('📡 scheduleService: getSchedule呼び出し', scheduleId);
+      const response = await apiClient.get<Schedule>(`/api/schedules/${scheduleId}`);
+      console.log('📡 scheduleService: getScheduleレスポンス', response);
+      return response.data;
+    } catch (error) {
+      console.error('❌ scheduleService: getScheduleエラー', {
+        scheduleId,
+        error: error instanceof Error ? error.message : String(error),
+        errorType: error?.constructor?.name
+      });
+      throw error;
+    }
   }
 
   // スケジュール作成
@@ -142,6 +179,24 @@ class ScheduleService {
     console.log('📡 scheduleService: toggleSchedule呼び出し', scheduleId)
     const response = await apiClient.post<Schedule>(`/api/schedules/${scheduleId}/toggle`);
     console.log('📡 scheduleService: toggleScheduleレスポンス', response)
+    return response.data;
+  }
+
+  // スケジュール実行履歴取得
+  async getScheduleTasks(
+    scheduleId: string,
+    limit: number = 20,
+    offset: number = 0,
+    status?: string
+  ): Promise<ScheduleTasksResponse> {
+    const params = new URLSearchParams();
+    params.append('limit', limit.toString());
+    params.append('offset', offset.toString());
+    if (status) params.append('status', status);
+
+    const response = await apiClient.get<ScheduleTasksResponse>(
+      `/api/schedules/${scheduleId}/tasks?${params.toString()}`
+    );
     return response.data;
   }
 

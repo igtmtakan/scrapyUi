@@ -118,11 +118,18 @@ class TaskStatisticsValidator:
                 result["requests_changed"] = True
                 needs_fix = True
 
-            # ステータスの修正（アイテムがあるのにFAILEDの場合）
+            # ステータスの修正（改善版）
             if file_items > 0 and task.status == TaskStatus.FAILED:
                 logger.info(f"📊 Task {task.id}: Status correction - FAILED → FINISHED (has {file_items} items)")
                 task.status = TaskStatus.FINISHED
                 task.error_count = 0
+                result["status_changed"] = True
+                needs_fix = True
+            elif file_items == 0 and task.status == TaskStatus.FINISHED:
+                # アイテムが0なのに完了になっている場合は失敗に変更
+                logger.info(f"📊 Task {task.id}: Status correction - FINISHED → FAILED (no items)")
+                task.status = TaskStatus.FAILED
+                task.error_count = 1
                 result["status_changed"] = True
                 needs_fix = True
 
@@ -143,7 +150,7 @@ class TaskStatisticsValidator:
             return result
 
     def _get_file_statistics(self, task: DBTask) -> Tuple[int, int]:
-        """結果ファイルから統計情報を取得"""
+        """結果ファイルから統計情報を取得（改善版）"""
         try:
             # プロジェクト情報を取得
             db = SessionLocal()
@@ -155,36 +162,70 @@ class TaskStatisticsValidator:
             finally:
                 db.close()
 
-            # 結果ファイルのパス
-            result_file = self.base_projects_dir / project_path / f"results_{task.id}.json"
+            project_dir = self.base_projects_dir / project_path
+            items_count = 0
+            requests_count = 0
 
-            if not result_file.exists():
-                return 0, 0
+            # 1. 統計ファイルを確認（最優先）
+            stats_file = project_dir / f"stats_{task.id}.json"
+            if stats_file.exists():
+                try:
+                    with open(stats_file, 'r', encoding='utf-8') as f:
+                        stats = json.load(f)
+                        items_count = stats.get('item_scraped_count', 0)
+                        requests_count = stats.get('downloader/request_count', 0)
 
-            # ファイルサイズチェック
-            file_size = result_file.stat().st_size
-            if file_size < 50:  # 50バイト未満は空ファイル
-                return 0, 0
+                        logger.info(f"📊 Stats file found for task {task.id}: items={items_count}, requests={requests_count}")
+                        return items_count, requests_count
+                except Exception as e:
+                    logger.warning(f"⚠️ Error reading stats file for task {task.id}: {str(e)}")
 
-            # JSONファイルを読み込み
-            try:
-                with open(result_file, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
+            # 2. JSONLファイルを確認
+            jsonl_file = project_dir / f"results_{task.id}.jsonl"
+            if jsonl_file.exists():
+                try:
+                    with open(jsonl_file, 'r', encoding='utf-8') as f:
+                        items_count = sum(1 for _ in f)
 
-                if isinstance(data, list):
-                    items_count = len(data)
-                    requests_count = max(items_count + 10, 20)
+                    # リクエスト数を推定（アイテム数 + 初期リクエスト）
+                    if items_count > 0:
+                        requests_count = max(items_count // 20 + 1, 1)  # ページ数を推定
+
+                    logger.info(f"📊 JSONL file found for task {task.id}: items={items_count}, estimated_requests={requests_count}")
                     return items_count, requests_count
-                else:
-                    return 1, 10
+                except Exception as e:
+                    logger.warning(f"⚠️ Error reading JSONL file for task {task.id}: {str(e)}")
 
-            except json.JSONDecodeError:
-                # JSONエラーでもファイルサイズから推定
-                if file_size > 5000:  # 5KB以上
-                    estimated_items = max(file_size // 100, 10)
-                    estimated_requests = estimated_items + 10
-                    return estimated_items, estimated_requests
-                return 0, 0
+            # 3. JSONファイルを確認（フォールバック）
+            json_file = project_dir / f"results_{task.id}.json"
+            if json_file.exists():
+                try:
+                    file_size = json_file.stat().st_size
+                    if file_size < 50:  # 50バイト未満は空ファイル
+                        return 0, 0
+
+                    with open(json_file, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+
+                    if isinstance(data, list):
+                        items_count = len(data)
+                        requests_count = max(items_count + 10, 20)
+                        logger.info(f"📊 JSON file found for task {task.id}: items={items_count}, requests={requests_count}")
+                        return items_count, requests_count
+                    else:
+                        return 1, 10
+
+                except json.JSONDecodeError:
+                    # JSONエラーでもファイルサイズから推定
+                    if file_size > 5000:  # 5KB以上
+                        estimated_items = max(file_size // 100, 10)
+                        estimated_requests = estimated_items + 10
+                        return estimated_items, estimated_requests
+                except Exception as e:
+                    logger.warning(f"⚠️ Error reading JSON file for task {task.id}: {str(e)}")
+
+            logger.info(f"📊 No result files found for task {task.id}")
+            return 0, 0
 
         except Exception as e:
             logger.error(f"❌ Error getting file statistics for task {task.id}: {str(e)}")

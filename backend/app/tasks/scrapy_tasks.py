@@ -45,6 +45,36 @@ def _safe_websocket_notify(task_id: str, data: dict):
     except Exception as e:
         print(f"📡 WebSocket notification error: {str(e)}")
 
+def _send_task_completion_notification(task_id: str, db_task):
+    """タスク完了時の包括的なWebSocket通知を送信"""
+    try:
+        # 経過時間を計算
+        elapsed_time = 0
+        if db_task.started_at and db_task.finished_at:
+            elapsed_time = int((db_task.finished_at - db_task.started_at).total_seconds())
+
+        # 完了通知データを構築
+        completion_data = {
+            "type": "task_update",
+            "taskId": task_id,
+            "status": str(db_task.status),
+            "itemsScraped": db_task.items_count or 0,
+            "requestsCount": db_task.requests_count or 0,
+            "errorCount": db_task.error_count or 0,
+            "elapsedTime": elapsed_time,
+            "progressPercentage": 100.0,
+            "message": f"Task completed - {db_task.items_count or 0} items scraped",
+            "finished_at": db_task.finished_at.isoformat() if db_task.finished_at else None,
+            "final_status": True
+        }
+
+        # WebSocket通知を送信
+        _safe_websocket_notify(task_id, completion_data)
+        print(f"🎉 Task completion notification sent: {task_id} - {db_task.status} - {elapsed_time}s")
+
+    except Exception as e:
+        print(f"❌ Failed to send task completion notification: {e}")
+
 @celery_app.task(bind=True, soft_time_limit=3300, time_limit=3600)  # 55分のソフトタイムアウト、60分のハードタイムアウト
 def run_spider_task(self, project_id: str, spider_id: str, settings: dict = None):
     """
@@ -302,6 +332,9 @@ def run_spider_task(self, project_id: str, spider_id: str, settings: dict = None
             db_task.settings['error_details'] = error_details
 
             db.commit()
+
+            # タスク完了通知を送信
+            _send_task_completion_notification(task_id, db_task)
 
             print(f"✅ Task {task_id} completed with error details (but marked as successful):")
             print(f"   Error Type: {error_details['error_type']}")
@@ -697,13 +730,11 @@ def scheduled_spider_run(schedule_id: str):
                 db_task.requests_count = max(final_db_results, result.get('items_processed', 0), 1)
                 db_task.error_count = 0
 
-                # 成功通知
-                _safe_websocket_notify(task_id, {
-                    "status": "FINISHED",
-                    "finished_at": datetime.now().isoformat(),
-                    "items_processed": result.get('items_processed', 0),
-                    "message": f"Scheduled spider {spider.name} completed successfully with watchdog monitoring"
-                })
+                # データベースをコミットしてから通知を送信
+                db.commit()
+
+                # タスク完了通知を送信
+                _send_task_completion_notification(task_id, db_task)
 
                 print(f"✅ Scheduled spider execution completed with watchdog: {spider.name} - {final_db_results} items processed")
 
@@ -730,6 +761,10 @@ def scheduled_spider_run(schedule_id: str):
             db_task.error_count = 0
             print(f"✅ FORCED SUCCESS: Even with exception, task marked as successful")
             db.commit()
+
+            # タスク完了通知を送信
+            _send_task_completion_notification(task_id, db_task)
+
             # 例外は再発生させない（失敗ステータス回避）
             return {"task_id": task_id, "result": {"success": True, "error": str(e)}}
 
@@ -990,13 +1025,11 @@ def run_spider_with_watchdog_task(self, project_id: str, spider_id: str, setting
             db_task.requests_count = max(final_db_results, result.get('items_processed', 0), 1)
             db_task.error_count = 0
 
-            # 成功通知
-            _safe_websocket_notify(task_id, {
-                "status": "FINISHED",
-                "finished_at": datetime.now().isoformat(),
-                "items_processed": result.get('items_processed', 0),
-                "message": f"Spider {spider.name} completed successfully with watchdog monitoring"
-            })
+            # データベースをコミットしてから通知を送信
+            db.commit()
+
+            # タスク完了通知を送信
+            _send_task_completion_notification(task_id, db_task)
 
             print(f"✅ Watchdog spider task completed: {spider.name} - {final_db_results} items processed")
 
@@ -1046,6 +1079,10 @@ def run_spider_with_watchdog_task(self, project_id: str, spider_id: str, setting
             db_task.settings['error_details'] = error_details
 
             db.commit()
+
+            # タスク完了通知を送信
+            _send_task_completion_notification(task_id, db_task)
+
             print(f"✅ FORCED SUCCESS: Even with exception, task marked as successful")
 
         # 成功通知（失敗ステータス回避）
@@ -1118,58 +1155,74 @@ def cleanup_stuck_tasks():
 @celery_app.task
 def auto_repair_failed_tasks():
     """
-    FAILEDステータスのタスクを自動修正
+    FAILEDステータスのタスクを自動修正（強化版）
     実際にデータが取得できているタスクをFINISHEDに変更
     """
-    db = SessionLocal()
     try:
-        # FAILEDステータスのタスクを取得
-        failed_tasks = db.query(DBTask).filter(DBTask.status == TaskStatus.FAILED).all()
+        from ..services.task_auto_repair import task_auto_repair
 
-        fixed_count = 0
-        for task in failed_tasks:
-            # 実際のDB結果数を確認
-            from ..database import Result as DBResult
-            actual_db_count = db.query(DBResult).filter(DBResult.task_id == task.id).count()
+        print("🔧 Enhanced auto-repair: Starting comprehensive task repair...")
 
-            if actual_db_count > 0:
-                # データがあるので成功に変更
-                task.status = TaskStatus.FINISHED
-                task.items_count = actual_db_count
-                task.requests_count = max(actual_db_count, task.requests_count or 1)
-                task.error_count = 0
-                fixed_count += 1
+        # 強化された自動修復サービスを使用
+        result = task_auto_repair.repair_failed_tasks(hours_back=24)
 
-                print(f"🔧 Auto-repaired task {task.id[:8]}...: FAILED → FINISHED ({actual_db_count} items)")
+        if "error" in result:
+            print(f"❌ Auto-repair failed: {result['error']}")
+        else:
+            repaired_count = result.get('repaired_count', 0)
+            total_failed = result.get('total_failed_tasks', 0)
+            success_rate = result.get('success_rate', 0)
 
-                # WebSocket通知
-                _safe_websocket_notify(task.id, {
-                    "status": "FINISHED",
-                    "finished_at": datetime.now().isoformat(),
-                    "items_count": actual_db_count,
-                    "requests_count": task.requests_count,
-                    "error_count": 0,
-                    "message": f"Task auto-repaired: {actual_db_count} items found"
-                })
+            print(f"✅ Enhanced auto-repair completed:")
+            print(f"   - Repaired: {repaired_count}/{total_failed} tasks")
+            print(f"   - Success rate: {success_rate:.1f}%")
 
-        if fixed_count > 0:
-            db.commit()
-            print(f"✅ Auto-repaired {fixed_count} failed tasks")
-
-        return {
-            "timestamp": datetime.now().isoformat(),
-            "fixed_count": fixed_count,
-            "total_failed_tasks": len(failed_tasks),
-            "status": "completed"
-        }
+        return result
 
     except Exception as e:
-        print(f"❌ Auto-repair error: {str(e)}")
-        db.rollback()
+        print(f"❌ Enhanced auto-repair error: {str(e)}")
         return {
             "timestamp": datetime.now().isoformat(),
             "error": str(e),
             "status": "failed"
         }
-    finally:
-        db.close()
+
+
+@celery_app.task
+def validate_task_statistics():
+    """
+    タスク統計の定期検証・修正
+    """
+    try:
+        from ..services.task_statistics_validator import validate_recent_tasks
+
+        print("🔍 Starting periodic task statistics validation...")
+
+        # 過去2時間のタスクを検証
+        result = validate_recent_tasks(hours_back=2)
+
+        if "error" in result:
+            print(f"❌ Task validation error: {result['error']}")
+            return result
+
+        # 結果の詳細ログ
+        summary = result.get("summary", {})
+        fixed_tasks = result.get("fixed_tasks", [])
+
+        if len(fixed_tasks) > 0:
+            print(f"🔧 Task validation completed: {len(fixed_tasks)} tasks fixed")
+            print(f"   - Items fixed: {summary.get('items_fixed', 0)}")
+            print(f"   - Requests fixed: {summary.get('requests_fixed', 0)}")
+            print(f"   - Status fixed: {summary.get('status_fixed', 0)}")
+        else:
+            print(f"✅ Task validation completed: All {result.get('total_checked', 0)} tasks are accurate")
+
+        return result
+
+    except Exception as e:
+        print(f"❌ Error in task statistics validation: {str(e)}")
+        return {
+            "timestamp": datetime.now().isoformat(),
+            "error": str(e),
+            "status": "failed"
+        }

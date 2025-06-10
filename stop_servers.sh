@@ -10,7 +10,6 @@
 BACKEND_PORT=${BACKEND_PORT:-8000}
 FRONTEND_PORT=${FRONTEND_PORT:-4000}
 NODEJS_PORT=${NODEJS_PORT:-3001}
-FLOWER_PORT=${FLOWER_PORT:-5556}
 
 echo "🛑 ScrapyUI サーバーを停止しています..."
 
@@ -22,7 +21,6 @@ fi
 echo "📊 バックエンドポート: ${BACKEND_PORT}"
 echo "🌐 フロントエンドポート: ${FRONTEND_PORT}"
 echo "🤖 Node.js Puppeteerポート: ${NODEJS_PORT}"
-echo "🌸 Flowerポート: ${FLOWER_PORT}"
 
 # プロセスIDファイルから停止
 if [ -f .backend.pid ]; then
@@ -48,12 +46,26 @@ if [ -f .nodejs.pid ]; then
     rm -f .nodejs.pid
 fi
 
-if [ -f .celery.pid ]; then
-    CELERY_PID=$(cat .celery.pid)
-    echo "⚙️ Celeryワーカープロセス (PID: ${CELERY_PID}) を停止中..."
-    kill ${CELERY_PID} 2>/dev/null || true
-    rm -f .celery.pid
+# Celery関連は廃止済み（マイクロサービス化により不要）
+echo "🗑️ 廃止済みCelery関連PIDファイルをクリーンアップ中..."
+rm -f .celery.pid .celery_beat.pid .celery_monitor.pid .celery_beat_monitor.pid .flower.pid
+
+# マイクロサービス停止
+if [ -f .test_service.pid ]; then
+    TEST_SERVICE_PID=$(cat .test_service.pid)
+    echo "🧪 テストサービスプロセス (PID: ${TEST_SERVICE_PID}) を停止中..."
+    kill ${TEST_SERVICE_PID} 2>/dev/null || true
+    rm -f .test_service.pid
 fi
+
+# マイクロサービスポート停止
+echo "🚀 マイクロサービスポートを停止中..."
+for port in 8001 8002 8003 8004 8005; do
+    if lsof -ti:${port} >/dev/null 2>&1; then
+        echo "🔧 ポート ${port} を使用中のプロセスを停止中..."
+        lsof -ti:${port} | xargs kill -9 2>/dev/null || true
+    fi
+done
 
 if [ -f .scheduler.pid ]; then
     SCHEDULER_PID=$(cat .scheduler.pid)
@@ -62,19 +74,7 @@ if [ -f .scheduler.pid ]; then
     rm -f .scheduler.pid
 fi
 
-if [ -f .celery_monitor.pid ]; then
-    CELERY_MONITOR_PID=$(cat .celery_monitor.pid)
-    echo "🔍 Celery監視プロセス (PID: ${CELERY_MONITOR_PID}) を停止中..."
-    kill ${CELERY_MONITOR_PID} 2>/dev/null || true
-    rm -f .celery_monitor.pid
-fi
 
-if [ -f .flower.pid ]; then
-    FLOWER_PID=$(cat .flower.pid)
-    echo "🌸 Flowerプロセス (PID: ${FLOWER_PID}) を停止中..."
-    kill ${FLOWER_PID} 2>/dev/null || true
-    rm -f .flower.pid
-fi
 
 # プロセス名で停止
 echo "📋 関連プロセスを停止中..."
@@ -83,18 +83,13 @@ pkill -f "next.*dev" 2>/dev/null || true
 pkill -f "npm.*dev" 2>/dev/null || true
 pkill -f "node.*app.js" 2>/dev/null || true
 pkill -f "nodemon.*app.js" 2>/dev/null || true
-pkill -f "celery.*worker" 2>/dev/null || true
 pkill -f "scheduler_service" 2>/dev/null || true
-pkill -f "celery.*flower" 2>/dev/null || true
-pkill -f "start_celery_worker.py" 2>/dev/null || true
-pkill -f "celery_monitor.py" 2>/dev/null || true
 
 # ポートを使用しているプロセスを強制停止
-echo "🔧 ポート ${BACKEND_PORT}, ${FRONTEND_PORT}, ${NODEJS_PORT}, ${FLOWER_PORT} を使用中のプロセスを停止中..."
+echo "🔧 ポート ${BACKEND_PORT}, ${FRONTEND_PORT}, ${NODEJS_PORT} を使用中のプロセスを停止中..."
 lsof -ti:${BACKEND_PORT} | xargs kill -9 2>/dev/null || true
 lsof -ti:${FRONTEND_PORT} | xargs kill -9 2>/dev/null || true
 lsof -ti:${NODEJS_PORT} | xargs kill -9 2>/dev/null || true
-lsof -ti:${FLOWER_PORT} | xargs kill -9 2>/dev/null || true
 
 sleep 2
 
@@ -118,11 +113,7 @@ else
     echo "✅ ポート ${NODEJS_PORT} が解放されました"
 fi
 
-if lsof -i:${FLOWER_PORT} >/dev/null 2>&1; then
-    echo "❌ ポート ${FLOWER_PORT} がまだ使用中です"
-else
-    echo "✅ ポート ${FLOWER_PORT} が解放されました"
-fi
+
 
 echo ""
 echo "🎉 ScrapyUI サーバーが停止しました！"

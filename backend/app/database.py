@@ -167,6 +167,7 @@ class Task(Base):
     log_level = Column(String(20), default="INFO")
     settings = Column(JSON)
     celery_task_id = Column(String(255), nullable=True)  # CeleryタスクIDとの関連付け
+    error_message = Column(String(2000), nullable=True)  # エラーメッセージフィールドを追加
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 

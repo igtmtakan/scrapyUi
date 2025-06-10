@@ -1,0 +1,22 @@
+[Unit]
+Description=ScrapyUI Application
+After=network.target mysql.service
+Wants=mysql.service
+
+[Service]
+Type=forking
+User=igtmtakan
+Group=igtmtakan
+WorkingDirectory=/home/igtmtakan/workplace/python/scrapyUI
+Environment=PATH=/home/igtmtakan/workplace/python/scrapyUI/venv/bin
+Environment=PYTHONPATH=/home/igtmtakan/workplace/python/scrapyUI
+ExecStart=/home/igtmtakan/workplace/python/scrapyUI/start_servers.sh
+ExecStop=/home/igtmtakan/workplace/python/scrapyUI/stop_servers.sh
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

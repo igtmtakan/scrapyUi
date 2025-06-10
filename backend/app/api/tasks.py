@@ -22,7 +22,8 @@ from ..services.scrapy_service import ScrapyPlaywrightService
 from ..services.result_sync_service import result_sync_service
 from .auth import get_current_active_user
 from ..websocket.manager import manager
-from ..celery_app import celery_app
+# Celery廃止済み - マイクロサービス対応
+# from ..celery_app import celery_app
 from datetime import datetime
 
 router = APIRouter(

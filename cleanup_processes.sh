@@ -120,37 +120,38 @@ cleanup_zombie_processes() {
     fi
 }
 
-# 重複Celeryプロセスクリーンアップ関数
-cleanup_duplicate_celery() {
-    log_cleanup "Checking for duplicate Celery processes..."
-    
-    # Celeryワーカーの重複チェック
+# 重複プロセスクリーンアップ関数（Celery関連は廃止済み）
+cleanup_duplicate_processes() {
+    log_cleanup "Checking for duplicate processes..."
+
+    # Celery関連プロセスは廃止済みのため、残存プロセスがあれば削除
     local worker_count=$(pgrep -f "celery.*worker" 2>/dev/null | wc -l || echo "0")
     local beat_count=$(pgrep -f "celery.*beat" 2>/dev/null | wc -l || echo "0")
-    
-    if [ "$worker_count" -gt 2 ]; then
-        log_warning "Found $worker_count Celery worker processes (expected: 1-2)"
-        safe_kill_processes "celery.*worker" "Celery worker"
-    fi
-    
-    if [ "$beat_count" -gt 1 ]; then
-        log_warning "Found $beat_count Celery beat processes (expected: 1)"
-        safe_kill_processes "celery.*beat" "Celery beat"
-    fi
-    
-    # Flowerプロセスの重複チェック
     local flower_count=$(pgrep -f "celery.*flower" 2>/dev/null | wc -l || echo "0")
-    if [ "$flower_count" -gt 1 ]; then
-        log_warning "Found $flower_count Flower processes (expected: 0-1)"
-        safe_kill_processes "celery.*flower" "Flower"
+
+    if [ "$worker_count" -gt 0 ]; then
+        log_warning "Found $worker_count obsolete Celery worker processes (should be 0)"
+        safe_kill_processes "celery.*worker" "obsolete Celery worker"
     fi
+
+    if [ "$beat_count" -gt 0 ]; then
+        log_warning "Found $beat_count obsolete Celery beat processes (should be 0)"
+        safe_kill_processes "celery.*beat" "obsolete Celery beat"
+    fi
+
+    if [ "$flower_count" -gt 0 ]; then
+        log_warning "Found $flower_count obsolete Flower processes (should be 0)"
+        safe_kill_processes "celery.*flower" "obsolete Flower"
+    fi
+
+    log_success "Duplicate process cleanup completed"
 }
 
 # ポート占有プロセスクリーンアップ関数
 cleanup_port_conflicts() {
     log_cleanup "Checking for port conflicts..."
     
-    local ports=("8000" "4000" "3001" "5556")
+    local ports=("8000" "4000" "3001")
     
     for port in "${ports[@]}"; do
         local pid=$(lsof -ti:$port 2>/dev/null || true)
@@ -159,7 +160,7 @@ cleanup_port_conflicts() {
             log_warning "Port $port is occupied by PID $pid ($process_name)"
             
             # ScrapyUI関連プロセス以外は警告のみ
-            if echo "$process_name" | grep -qE "(python|node|uvicorn|celery|flower)"; then
+            if echo "$process_name" | grep -qE "(python|node|uvicorn)"; then
                 log_cleanup "  Stopping process on port $port (PID: $pid)"
                 kill -TERM "$pid" 2>/dev/null || true
                 sleep 2
@@ -184,8 +185,9 @@ cleanup_old_logs() {
     
     # 7日以上古いログファイルを削除
     find . -name "*.log" -type f -mtime +7 -delete 2>/dev/null || true
-    find . -name "celerybeat-schedule*" -type f -mtime +7 -delete 2>/dev/null || true
-    find . -name "flower.db-*" -type f -mtime +7 -delete 2>/dev/null || true
+    # Celery関連ファイルは廃止済みだが、残存ファイルがあれば削除
+    find . -name "celerybeat-schedule*" -type f -delete 2>/dev/null || true
+    find . -name "flower.db-*" -type f -delete 2>/dev/null || true
     
     log_success "Old log files cleaned up"
 }
@@ -216,8 +218,8 @@ main() {
     cleanup_zombie_processes
     echo ""
     
-    # 2. 重複Celeryプロセスのクリーンアップ
-    cleanup_duplicate_celery
+    # 2. 重複プロセスのクリーンアップ
+    cleanup_duplicate_processes
     echo ""
     
     # 3. ポート競合の解決

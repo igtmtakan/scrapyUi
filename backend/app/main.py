@@ -28,7 +28,7 @@ from .middleware.error_middleware import (
     PerformanceLoggingMiddleware
 )
 
-from .api import projects, spiders, tasks, results, schedules, notifications, auth, proxies, ai, admin, script_runner, project_files, performance, system, settings, timezone, websocket_progress, flower
+from .api import projects, spiders, tasks, results, schedules, notifications, auth, proxies, ai, admin, script_runner, project_files, performance, system, settings, timezone, websocket_progress, microservices, lightweight_progress
 # from .api import extensions  # テンプレート管理API - 一時的に無効化
 # from .api import database_config  # 一時的に無効化
 # from .api import shell  # 一時的に無効化
@@ -462,7 +462,8 @@ app.include_router(nodejs_integration.router, prefix="/api/nodejs", tags=["nodej
 app.include_router(performance.router, prefix="/api", tags=["performance"])
 app.include_router(system.router, prefix="/api", tags=["system"])
 app.include_router(timezone.router, tags=["timezone"])
-app.include_router(flower.router, prefix="/api", tags=["flower"])
+app.include_router(microservices.router, tags=["microservices"])
+app.include_router(lightweight_progress.router, tags=["lightweight-progress"])
 # app.include_router(settings.router, prefix="/api/settings", tags=["settings"])
 
 # Terminal WebSocketエンドポイント（先に登録して優先度を上げる）
@@ -570,26 +571,22 @@ async def startup_event():
         realtime_websocket_manager.start()
         logger.info("📡 Realtime WebSocket Manager started")
 
-        # Flowerサービスの初期化
+        # マイクロサービスの初期化
         try:
-            from .services.flower_service import get_flower_service
-            flower_service = get_flower_service()
+            from .services.microservice_client import microservice_client
 
-            # 環境変数でFlowerの自動起動を制御
-            auto_start_flower = os.getenv('AUTO_START_FLOWER', 'true').lower() == 'true'
-            if auto_start_flower:
-                logger.info("🌸 Starting Flower services...")
-                results = flower_service.start_all_services()
-                logger.info(f"🌸 Flower services started: {results}")
-                print("🌸 Flower monitoring services initialized")
+            # マイクロサービスの可用性チェック
+            if microservice_client.is_microservice_available():
+                logger.info("🚀 Microservices are available")
+                print("🚀 Microservices monitoring services initialized")
             else:
-                logger.info("🌸 Flower auto-start disabled")
-                print("🌸 Flower auto-start disabled (set AUTO_START_FLOWER=true to enable)")
+                logger.warning("⚠️ Microservices not available, using legacy execution")
+                print("⚠️ Microservices not available (start microservices for enhanced features)")
 
-        except Exception as flower_error:
-            logger.error(f"❌ Failed to initialize Flower services: {flower_error}")
-            print(f"⚠️ Flower services failed to start: {flower_error}")
-            # Flowerの失敗はアプリケーション全体の起動を止めない
+        except Exception as microservice_error:
+            logger.error(f"❌ Failed to initialize microservices: {microservice_error}")
+            print(f"⚠️ Microservices initialization failed: {microservice_error}")
+            # マイクロサービスの初期化に失敗してもアプリケーションは継続
 
         logger.info("✅ ScrapyUI Application started successfully")
         print("✅ ScrapyUI Application started successfully")
@@ -632,16 +629,14 @@ async def shutdown_event():
         task_executor.stop()
         logger.info("🚀 Task executor stopped")
 
-        # Flowerサービスを停止
+        # マイクロサービスのクリーンアップ
         try:
-            from .services.flower_service import get_flower_service
-            flower_service = get_flower_service()
-            flower_service.stop_all_services()
-            logger.info("🌸 Flower services stopped")
-            print("🌸 Flower monitoring services stopped")
-        except Exception as flower_error:
-            logger.error(f"❌ Failed to stop Flower services: {flower_error}")
-            print(f"⚠️ Flower services stop failed: {flower_error}")
+            from .services.microservice_client import microservice_client
+            logger.info("🚀 Microservices cleanup completed")
+            print("🚀 Microservices cleanup completed")
+        except Exception as microservice_error:
+            logger.error(f"❌ Failed to cleanup microservices: {microservice_error}")
+            print(f"⚠️ Microservices cleanup failed: {microservice_error}")
 
         logger.info("🛑 ScrapyUI Application shutdown completed")
         print("🛑 ScrapyUI Application shutdown completed")

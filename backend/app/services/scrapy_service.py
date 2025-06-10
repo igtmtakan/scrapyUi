@@ -402,12 +402,12 @@ class JSONLMonitor:
         def polling_loop():
             while self.is_monitoring:
                 self.process_new_lines()
-                time.sleep(1)
+                time.sleep(10)  # 10秒間隔に緩和
 
         polling_thread = threading.Thread(target=polling_loop, daemon=True)
         polling_thread.start()
 
-        print(f"🔄 ポーリング監視開始: {self.jsonl_file_path}")
+        print(f"🔄 ポーリング監視開始（10秒間隔）: {self.jsonl_file_path}")
 
     def stop_monitoring(self):
         """監視を停止"""
@@ -547,6 +547,13 @@ class Command(ScrapyCommand):
         print(f"   Output: {opts.output}")
         print(f"   DB Path: {opts.db_path}")
         print(f"   Watchdog Available: {'Yes' if WATCHDOG_AVAILABLE else 'No (using polling)'}")
+
+        # データベースにタスクを作成（根本対応）
+        self._ensure_task_exists_for_crawlwithwatchdog(task_id, spider_name)
+
+        # Rich Progress Extension用の環境変数を設定
+        os.environ['SCRAPY_TASK_ID'] = task_id
+        print(f"🔧 Set SCRAPY_TASK_ID environment variable: {task_id}")
 
         # watchdog監視を開始
         monitor = JSONLMonitor(
@@ -1376,19 +1383,47 @@ project = {project_path}
             for key, value in final_settings.items():
                 cmd.extend(["-s", f"{key}={value}"])
 
-            # 結果をJSONファイルに出力
-            output_file = full_path / f"results_{task_id}.json"
-            cmd.extend(["-o", str(output_file)])
+            # 結果をJSONLファイルに出力（FeedExporterエラー回避）
+            output_file = full_path / f"results_{task_id}.jsonl"
+            cmd.extend(["-o", str(output_file) + ":jsonlines"])
 
             self.logger.info(f"Executing spider command: {' '.join(cmd)} in {full_path}")
 
             # 手動実行と同じ環境でプロセスを開始
             env = os.environ.copy()
-            env['PYTHONPATH'] = str(full_path)
+
+            # Rich Progress Extension用にPYTHONPATHを完全設定（根本対応）
+            scrapyui_root = self.base_projects_dir.parent  # scrapy_projects/../ = scrapyUI root
+            backend_path = scrapyui_root / "backend"  # backendディレクトリ
+            backend_app_path = backend_path / "app"  # backend/appディレクトリ
+
+            # 絶対パスで確実に設定
+            current_pythonpath = env.get('PYTHONPATH', '')
+            pythonpath_components = [
+                str(scrapyui_root.absolute()),  # ScrapyUIルート
+                str(backend_path.absolute()),   # backendディレクトリ
+                str(backend_app_path.absolute())  # backend/appディレクトリ
+            ]
+
+            if current_pythonpath:
+                pythonpath_components.append(current_pythonpath)
+
+            env['PYTHONPATH'] = ":".join(pythonpath_components)
+
+            # Rich Progress Extension用の追加環境変数
+            env['SCRAPYUI_ROOT'] = str(scrapyui_root.absolute())
+            env['SCRAPYUI_BACKEND'] = str(backend_path.absolute())
+
             project_name = full_path.name  # プロジェクト名を取得
             env['SCRAPY_SETTINGS_MODULE'] = f'{project_name}.settings'
             # Rich progressエクステンション用のタスクID環境変数を設定
             env['SCRAPY_TASK_ID'] = task_id
+
+            print(f"🔧 PYTHONPATH set to: {env['PYTHONPATH']}")
+            print(f"🔧 SCRAPYUI_ROOT: {env['SCRAPYUI_ROOT']}")
+            print(f"🔧 SCRAPYUI_BACKEND: {env['SCRAPYUI_BACKEND']}")
+            print(f"🔧 SCRAPY_SETTINGS_MODULE: {env['SCRAPY_SETTINGS_MODULE']}")
+            print(f"🔧 SCRAPY_TASK_ID: {env['SCRAPY_TASK_ID']}")
 
             try:
                 # 手動実行と同じ設定でプロセスを開始
@@ -1739,12 +1774,20 @@ project = {project_path}
                 task = temp_db.query(TempTask).filter(TempTask.id == task_id).first()
                 if task and task.project:
                     project_path = self.base_projects_dir / task.project.path
-                    # 複数のパターンで検索
+                    # 複数のパターンで検索（JSONLファイルを優先）
                     patterns = [
+                        # resultsディレクトリ内のJSONLファイル（最優先）
+                        f"results/{task_id}.jsonl",
+                        f"results/{task_id}.json",
+                        f"results/results_{task_id}.jsonl",
+                        # プロジェクトルートのファイル
+                        f"results_{task_id}.jsonl",
                         f"results_{task_id}.json",
                         f"results_{task_id}*.json",
                         f"*{task_id}*.json",
-                        "results_*.json"
+                        f"*{task_id}*.jsonl",
+                        "results_*.json",
+                        "results_*.jsonl"
                     ]
 
                     for pattern in patterns:
@@ -1957,6 +2000,67 @@ project = {project_path}
 
         except Exception as e:
             print(f"❌ Error storing results to DB for task {task_id}: {str(e)}")
+
+    def _ensure_task_exists_for_crawlwithwatchdog(self, task_id: str, spider_name: str):
+        """crawlwithwatchdog用のタスク作成（根本対応）"""
+        try:
+            from ..database import SessionLocal, Task as DBTask, TaskStatus, Project as DBProject, Spider as DBSpider
+            from datetime import datetime
+            import pytz
+
+            db = SessionLocal()
+            try:
+                # タスクの存在確認
+                existing_task = db.query(DBTask).filter(DBTask.id == task_id).first()
+
+                if existing_task:
+                    print(f"✅ Task {task_id} already exists")
+                    return task_id
+
+                print(f"🔧 Creating task for crawlwithwatchdog: {task_id}")
+
+                # スパイダーを検索
+                spider = db.query(DBSpider).filter(DBSpider.name == spider_name).first()
+                if not spider:
+                    print(f"❌ Spider {spider_name} not found in database")
+                    return task_id
+
+                # プロジェクトを取得
+                project = db.query(DBProject).filter(DBProject.id == spider.project_id).first()
+                if not project:
+                    print(f"❌ Project for spider {spider_name} not found")
+                    return task_id
+
+                # タスクを作成
+                jst = pytz.timezone('Asia/Tokyo')
+                current_time = datetime.now(jst).replace(tzinfo=None)
+
+                new_task = DBTask(
+                    id=task_id,
+                    project_id=project.id,
+                    spider_id=spider.id,
+                    status=TaskStatus.RUNNING,
+                    items_count=0,
+                    requests_count=0,
+                    error_count=0,
+                    created_at=current_time,
+                    started_at=current_time,
+                    updated_at=current_time,
+                    user_id=1  # システムユーザー
+                )
+
+                db.add(new_task)
+                db.commit()
+
+                print(f"✅ Created task for crawlwithwatchdog: {task_id}")
+                return task_id
+
+            finally:
+                db.close()
+
+        except Exception as e:
+            print(f"❌ Error creating task for crawlwithwatchdog: {e}")
+            return task_id
 
     @performance_monitor
     @jit_optimizer.hot_function
@@ -2546,20 +2650,12 @@ project = {project_path}
             print(f"Error in health check: {str(e)}")
 
     def _auto_fix_failed_tasks(self):
-        """失敗したタスクを自動修復"""
+        """失敗したタスクを自動修復（無効化）"""
         try:
-            from ..database import SessionLocal, Task as DBTask, TaskStatus
-            import json
-            from pathlib import Path
-
-            db = SessionLocal()
-            try:
-                # 失敗ステータスは使用しないため、自動修復は不要
-                print("🔧 Auto-fix: No failed tasks to fix (failure status disabled)")
-                return
-
-            finally:
-                db.close()
+            # 自動修復機能を無効化
+            # 理由: Scrapyの実際のステータスを尊重し、独自判定による誤った修正を防ぐ
+            print("🔧 Auto-fix disabled to respect Scrapy's actual task status")
+            return
 
         except Exception as e:
             print(f"Error in auto-fix: {str(e)}")
@@ -3156,67 +3252,12 @@ project = {project_path}
             print(f"Error checking task timeouts: {str(e)}")
 
     def _perform_health_check(self):
-        """タスクシステムのヘルスチェック"""
+        """タスクシステムのヘルスチェック（無効化）"""
         try:
-            from ..database import SessionLocal, Task as DBTask, TaskStatus
-
-            db = SessionLocal()
-            try:
-                # データベースとプロセスの整合性チェック
-                running_tasks_db = db.query(DBTask).filter(DBTask.status == TaskStatus.RUNNING).all()
-
-                for task in running_tasks_db:
-                    if task.id not in self.running_processes:
-                        # データベースでは実行中だが、プロセスが存在しない
-                        print(f"Health check: Task {task.id} marked as running but no process found")
-
-                        # 結果ファイルをチェックして完了判定
-                        if self._verify_task_results(task.id):
-                            print(f"Health check: Task {task.id} has results, marking as completed")
-
-                            # 統計情報を更新
-                            actual_items, actual_requests = self._get_task_statistics(task.id, task.project_id)
-
-                            # データが取得されていれば成功とみなす
-                            if actual_items > 0:
-                                task.status = TaskStatus.FINISHED
-                                task.items_count = actual_items
-                                task.requests_count = actual_requests
-                                task.error_count = 0
-                                print(f"Health check: Task {task.id} completed successfully with {actual_items} items")
-                            else:
-                                # ファイルはあるがデータがない場合
-                                task.status = TaskStatus.FAILED
-                                task.error_count = 1
-                                print(f"Health check: Task {task.id} has empty results, marking as failed")
-
-                            task.finished_at = datetime.now()
-                        else:
-                            # 結果ファイルもない場合は失敗とする
-                            print(f"Health check: Task {task.id} has no results, marking as failed")
-                            task.status = TaskStatus.FAILED
-                            task.finished_at = datetime.now()
-                            task.error_count = 1
-
-                # プロセスは存在するがデータベースで完了している場合
-                for task_id, process in list(self.running_processes.items()):
-                    task = db.query(DBTask).filter(DBTask.id == task_id).first()
-                    if task and task.status in [TaskStatus.FINISHED, TaskStatus.FAILED, TaskStatus.CANCELLED]:
-                        print(f"Health check: Process {task_id} still running but DB shows {task.status}")
-                        try:
-                            process.terminate()
-                            time.sleep(2)
-                            if process.poll() is None:
-                                process.kill()
-                            del self.running_processes[task_id]
-                            print(f"Health check: Cleaned up orphaned process {task_id}")
-                        except Exception as e:
-                            print(f"Health check: Error cleaning up process {task_id}: {str(e)}")
-
-                db.commit()
-
-            finally:
-                db.close()
+            # ヘルスチェック機能を無効化
+            # 理由: Scrapyプロセスの状態判定が不正確で、正常なタスクを誤ってFAILEDにマークしてしまう
+            print("🔧 Health check disabled to prevent incorrect task status changes")
+            return
 
         except Exception as e:
             print(f"Error in health check: {str(e)}")
@@ -3314,13 +3355,29 @@ project = {project_path}
             finally:
                 db.close()
 
-            # 結果ファイルのパスを構築（相対パス使用）
-            result_file = self.base_projects_dir / project_path / f"results_{task_id}.json"
+            # 結果ファイルのパスを構築（複数のパターンを試行）
+            possible_result_files = [
+                # 新しい形式（results/ディレクトリ内）
+                self.base_projects_dir / project_path / "results" / f"{task_id}.jsonl",
+                self.base_projects_dir / project_path / "results" / f"{task_id}.json",
+                # 従来の形式（プロジェクトルート）
+                self.base_projects_dir / project_path / f"results_{task_id}.jsonl",
+                self.base_projects_dir / project_path / f"results_{task_id}.json",
+                # その他の可能性
+                self.base_projects_dir / project_path / f"{task_id}.jsonl",
+                self.base_projects_dir / project_path / f"output_{task_id}.jsonl"
+            ]
 
-            print(f"📁 Checking result file: {result_file}")
+            result_file = None
+            for path in possible_result_files:
+                print(f"📁 Checking result file: {path}")
+                if path.exists():
+                    result_file = path
+                    print(f"✅ Found result file: {result_file}")
+                    break
 
-            if not result_file.exists():
-                print(f"❌ Result file not found: {result_file}")
+            if not result_file:
+                print(f"❌ No result file found for task {task_id}")
                 return 0, 0
 
             # ファイルサイズチェック
@@ -3331,13 +3388,34 @@ project = {project_path}
                 print(f"⚠️ File too small: {file_size} bytes")
                 return 0, 0
 
-            # JSONファイルを読み込み
+            # ファイル形式に応じて読み込み
             try:
                 with open(result_file, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
+                    content = f.read().strip()
 
-                if isinstance(data, list):
-                    items_count = len(data)
+                items_count = 0
+
+                # JSONLファイルの場合（1行1JSON）
+                if result_file.suffix == '.jsonl' or '\n' in content:
+                    lines = content.split('\n')
+                    items_count = len([line for line in lines if line.strip()])
+                    print(f"✅ JSONL file detected: {items_count} lines")
+                else:
+                    # 通常のJSONファイルの場合
+                    try:
+                        data = json.loads(content)
+                        if isinstance(data, list):
+                            items_count = len(data)
+                        else:
+                            items_count = 1
+                        print(f"✅ JSON file detected: {items_count} items")
+                    except json.JSONDecodeError:
+                        # JSONパースエラーの場合、行数で推定
+                        lines = content.split('\n')
+                        items_count = len([line for line in lines if line.strip()])
+                        print(f"⚠️ JSON parse error, counting lines: {items_count}")
+
+                if items_count > 0:
                     # リクエスト数をScrapy統計から取得（正確な値）
                     requests_count = self._get_scrapy_requests_count(task_id, project_id)
                     if requests_count == 0:
@@ -3347,13 +3425,12 @@ project = {project_path}
                     print(f"✅ Accurate stats from file: items={items_count}, requests={requests_count}")
                     return items_count, requests_count
                 else:
-                    # 単一オブジェクトの場合
-                    print(f"✅ Single item found in file")
-                    return 1, 10
+                    print(f"⚠️ No items found in file")
+                    return 0, 0
 
-            except json.JSONDecodeError as e:
-                print(f"❌ JSON decode error: {e}")
-                # JSONエラーでもファイルサイズが大きければ推定値を返す
+            except Exception as e:
+                print(f"❌ File read error: {e}")
+                # ファイル読み込みエラーでもファイルサイズが大きければ推定値を返す
                 if file_size > 5000:  # 5KB以上
                     estimated_items = max(file_size // 100, 10)
                     estimated_requests = estimated_items + 10
@@ -3438,8 +3515,6 @@ project = {project_path}
         try:
             from ..database import SessionLocal, Project as DBProject, Task as DBTask
             import json
-            from pathlib import Path
-            import time
 
             # プロジェクト情報を取得
             db = SessionLocal()

@@ -1,0 +1,23 @@
+[Unit]
+Description=ScrapyUI Auto File Cleanup Scheduler
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=igtmtakan
+Group=igtmtakan
+WorkingDirectory=/home/igtmtakan/workplace/python/scrapyUI/backend
+Environment=PATH=/home/igtmtakan/.pyenv/versions/3.13.2/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PYTHONPATH=/home/igtmtakan/workplace/python/scrapyUI/backend
+ExecStart=/home/igtmtakan/.pyenv/versions/3.13.2/bin/python auto_file_cleanup_scheduler.py --start
+Restart=always
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+
+# ログローテーション設定
+SyslogIdentifier=scrapyui-auto-cleanup
+
+[Install]
+WantedBy=multi-user.target

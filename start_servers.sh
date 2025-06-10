@@ -1,356 +1,143 @@
 #!/bin/bash
 
-# ScrapyUI サーバー起動スクリプト
-# 固定ポート設定:
-# - バックエンド: 8000番ポート
-# - フロントエンド: 4000番ポート
-# - Node.js Puppeteer: 3001番ポート
+# ScrapyUI サーバー起動スクリプト（根本的書き直し版）
+# シンプルで確実な起動を保証
 
-# ポート設定（環境変数で上書き可能）
-BACKEND_PORT=${BACKEND_PORT:-8000}
-FRONTEND_PORT=${FRONTEND_PORT:-4000}
-NODEJS_PORT=${NODEJS_PORT:-3001}
-FLOWER_PORT=${FLOWER_PORT:-5556}
+set -e  # エラー時に停止
 
-# ポート競合回避機能
-check_port_available() {
-    local port=$1
-    if lsof -i:$port >/dev/null 2>&1; then
-        return 1  # ポートが使用中
-    else
-        return 0  # ポートが利用可能
-    fi
-}
+# 固定ポート設定
+BACKEND_PORT=8000
+FRONTEND_PORT=4000
+NODEJS_PORT=3001
 
-# 代替ポートを見つける関数
-find_alternative_port() {
-    local base_port=$1
-    local max_attempts=10
-
-    for ((i=0; i<max_attempts; i++)); do
-        local test_port=$((base_port + i))
-        if check_port_available $test_port; then
-            echo $test_port
-            return 0
-        fi
-    done
-
-    echo $base_port  # 見つからない場合は元のポートを返す
-    return 1
-}
-
-# プロセスクリーンアップの実行
-echo "🧹 プロセスクリーンアップを実行中..."
-if [ -f "./cleanup_processes.sh" ]; then
-    ./cleanup_processes.sh
-else
-    echo "⚠️ cleanup_processes.sh が見つかりません。手動クリーンアップを実行します..."
-    # 基本的なクリーンアップ
-    pkill -f "celery.*worker" 2>/dev/null || true
-    pkill -f "celery.*beat" 2>/dev/null || true
-    pkill -f "celery.*flower" 2>/dev/null || true
-    pkill -f "uvicorn.*app.main:app" 2>/dev/null || true
-    pkill -f "next.*dev" 2>/dev/null || true
-    pkill -f "node.*app.js" 2>/dev/null || true
-
-    # ゾンビプロセスの親プロセスにSIGCHLDを送信
-    ps aux | awk '$8 ~ /^Z/ { print $2 }' | while read zombie_pid; do
-        if [ -n "$zombie_pid" ]; then
-            parent_pid=$(ps -o ppid= -p "$zombie_pid" 2>/dev/null | tr -d ' ' || true)
-            if [ -n "$parent_pid" ] && [ "$parent_pid" != "1" ]; then
-                kill -CHLD "$parent_pid" 2>/dev/null || true
-            fi
-        fi
-    done
-fi
-
-# ポート競合チェックと自動調整
-echo "🔍 ポート競合をチェック中..."
-if ! check_port_available $BACKEND_PORT; then
-    NEW_BACKEND_PORT=$(find_alternative_port $BACKEND_PORT)
-    echo "⚠️ ポート $BACKEND_PORT が使用中です。代替ポート $NEW_BACKEND_PORT を使用します。"
-    BACKEND_PORT=$NEW_BACKEND_PORT
-fi
-
-if ! check_port_available $FRONTEND_PORT; then
-    NEW_FRONTEND_PORT=$(find_alternative_port $FRONTEND_PORT)
-    echo "⚠️ ポート $FRONTEND_PORT が使用中です。代替ポート $NEW_FRONTEND_PORT を使用します。"
-    FRONTEND_PORT=$NEW_FRONTEND_PORT
-fi
-
-if ! check_port_available $NODEJS_PORT; then
-    NEW_NODEJS_PORT=$(find_alternative_port $NODEJS_PORT)
-    echo "⚠️ ポート $NODEJS_PORT が使用中です。代替ポート $NEW_NODEJS_PORT を使用します。"
-    NODEJS_PORT=$NEW_NODEJS_PORT
-fi
-
-if ! check_port_available $FLOWER_PORT; then
-    NEW_FLOWER_PORT=$(find_alternative_port $FLOWER_PORT)
-    echo "⚠️ ポート $FLOWER_PORT が使用中です。代替ポート $NEW_FLOWER_PORT を使用します。"
-    FLOWER_PORT=$NEW_FLOWER_PORT
-fi
-
-# Flower設定
-FLOWER_MODE=${FLOWER_MODE:-"all"}  # all, embedded, api, standalone
-AUTO_START_FLOWER=${AUTO_START_FLOWER:-"true"}
-
-# 設定管理システムの統合
-if [ -f "./config_manager.sh" ]; then
-    echo "🔧 設定を初期化中..."
-    ./config_manager.sh init
-
-    # 設定検証
-    if ! ./config_manager.sh validate; then
-        echo "⚠️ 設定に問題があります。続行しますか? (y/N)"
-        read -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            echo "❌ 起動をキャンセルしました"
-            exit 1
-        fi
-    fi
-fi
-
-# ポート管理システムの統合
-if [ -f "./port_manager.sh" ]; then
-    echo "🔍 ポート競合をチェック中..."
-    if ! ./port_manager.sh check >/dev/null 2>&1; then
-        echo "⚠️ ポート競合が検出されました。自動解決を実行しますか? (y/N)"
-        read -n 1 -r
-        echo
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
-            ./port_manager.sh resolve
-            # 解決されたポート設定を読み込み
-            if [ -f ".env.ports" ]; then
-                source .env.ports
-            fi
-        fi
-    fi
-fi
+# 作業ディレクトリの確認
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
 
 echo "🚀 ScrapyUI サーバーを起動しています..."
 echo "📊 バックエンドポート: ${BACKEND_PORT}"
 echo "🌐 フロントエンドポート: ${FRONTEND_PORT}"
 echo "🤖 Node.js Puppeteerポート: ${NODEJS_PORT}"
-echo "🌸 Flowerポート: ${FLOWER_PORT}"
-echo "🔧 Flowerモード: ${FLOWER_MODE}"
 
-# 既存のプロセスを停止
-echo "📋 既存のプロセスを確認中..."
+# 既存プロセスの完全停止
+echo "🧹 既存プロセスを停止中..."
 pkill -f "uvicorn.*app.main:app" 2>/dev/null || true
 pkill -f "next.*dev" 2>/dev/null || true
 pkill -f "npm.*dev" 2>/dev/null || true
 pkill -f "node.*app.js" 2>/dev/null || true
-pkill -f "nodemon.*app.js" 2>/dev/null || true
-pkill -f "celery.*worker" 2>/dev/null || true
-pkill -f "celery.*beat" 2>/dev/null || true
-pkill -f "celery.*flower" 2>/dev/null || true
-pkill -f "start_celery_worker.py" 2>/dev/null || true
-pkill -f "celery_monitor.py" 2>/dev/null || true
+pkill -f "scheduler_service" 2>/dev/null || true
 
-# ポートが使用中の場合は強制停止
-echo "🔧 ポート ${BACKEND_PORT}, ${FRONTEND_PORT}, ${NODEJS_PORT}, ${FLOWER_PORT} をクリアしています..."
+# ポートの強制解放
+echo "🔧 ポートをクリア中..."
 lsof -ti:${BACKEND_PORT} | xargs kill -9 2>/dev/null || true
 lsof -ti:${FRONTEND_PORT} | xargs kill -9 2>/dev/null || true
 lsof -ti:${NODEJS_PORT} | xargs kill -9 2>/dev/null || true
-lsof -ti:${FLOWER_PORT} | xargs kill -9 2>/dev/null || true
 
-sleep 3
+sleep 2
 
-# バックエンドサーバーを起動
-echo "🔧 バックエンドサーバーを起動中 (ポート: ${BACKEND_PORT})..."
-cd backend
-python3 -m uvicorn app.main:app --host 0.0.0.0 --port ${BACKEND_PORT} --reload --reload-dir app --reload-dir database &
+# バックエンドサーバーを起動（フォアグラウンドで確認）
+echo "🔧 バックエンドサーバーを起動中..."
+python3 -m uvicorn backend.app.main:app --host 0.0.0.0 --port ${BACKEND_PORT} --reload &
 BACKEND_PID=$!
-cd ..
 
-sleep 3
+# バックエンドの起動確認
+echo "⏳ バックエンドの起動を待機中..."
+sleep 5
 
-# Celeryワーカーを起動（安定性向上設定）
-echo "⚙️ Celeryワーカーを起動中（安定性向上設定）..."
+# バックエンドの起動確認
+for i in {1..10}; do
+    if curl -s http://localhost:${BACKEND_PORT}/health >/dev/null 2>&1; then
+        echo "✅ バックエンドが正常に起動しました"
+        break
+    fi
+    echo "⏳ バックエンドの起動を待機中... ($i/10)"
+    sleep 2
+done
+
+# 統合スケジューラーを起動（根本対応版）
+echo "🕐 統合スケジューラーを起動中..."
 cd backend
-python3 -m celery -A app.celery_app worker \
-    --loglevel=info \
-    --concurrency=2 \
-    --queues=scrapy,maintenance,monitoring \
-    --pool=prefork \
-    --optimization=fair \
-    --max-tasks-per-child=200 \
-    --max-memory-per-child=500000 \
-    --time-limit=3600 \
-    --soft-time-limit=3300 \
-    --without-gossip \
-    --without-mingle \
-    --without-heartbeat \
-    --prefetch-multiplier=1 &
-CELERY_PID=$!
-cd ..
 
-sleep 3
+# 既存のスケジューラープロセスをクリーンアップ
+pkill -f "start_unified_scheduler.py" 2>/dev/null || true
+sleep 2
 
-# 統一スケジューラーサービスを起動（根本対応版）
-echo "📅 統一スケジューラーサービスを起動中（根本対応版）..."
-cd backend
-python3 -c "
-from app.services.scheduler_service import scheduler_service
-import signal
-import sys
-
-def signal_handler(sig, frame):
-    print('\\n🛑 統一スケジューラーを停止中...')
-    scheduler_service.stop()
-    print('✅ 統一スケジューラーが停止しました')
-    sys.exit(0)
-
-signal.signal(signal.SIGINT, signal_handler)
-signal.signal(signal.SIGTERM, signal_handler)
-
-print('🚀 統一スケジューラーを起動中...')
-scheduler_service.start()
-print('✅ 統一スケジューラーが起動しました')
-
-try:
-    while True:
-        import time
-        time.sleep(1)
-except KeyboardInterrupt:
-    signal_handler(None, None)
-" &
+# 堅牢性を強化したスケジューラーを起動
+nohup python3 start_unified_scheduler.py > unified_scheduler.log 2>&1 &
 SCHEDULER_PID=$!
-cd ..
+echo "統合スケジューラー PID: $SCHEDULER_PID"
 
+# スケジューラーの起動確認
 sleep 3
-
-# Flower監視サービスを起動
-if [ "$AUTO_START_FLOWER" = "true" ]; then
-    echo "🌸 Flower監視サービスを起動中..."
-
-    # Flower起動関数
-    start_flower_service() {
-        local mode=$1
-        case $mode in
-            "standalone"|"all")
-                echo "🌸 スタンドアロンFlowerを起動中 (ポート: ${FLOWER_PORT})..."
-                cd backend
-                FLOWER_UNAUTHENTICATED_API=true python3 -m celery -A app.celery_app flower \
-                    --port=${FLOWER_PORT} \
-                    --address=127.0.0.1 \
-                    --url_prefix=/flower \
-                    --persistent=True \
-                    --db=flower.db \
-                    --max_tasks=10000 \
-                    --enable_events \
-                    --auto_refresh=True \
-                    --loglevel=info &
-                FLOWER_PID=$!
-                cd ..
-                echo "✅ スタンドアロンFlower起動完了 (PID: $FLOWER_PID)"
-                ;;
-            "embedded")
-                echo "🌸 埋め込みFlowerは自動起動されます（バックエンド内）"
-                ;;
-            "api")
-                echo "🌸 外部FlowerAPIを使用します"
-                ;;
-        esac
-    }
-
-    # Flowerモードに応じて起動
-    start_flower_service "$FLOWER_MODE"
-
-    sleep 3
+if ps -p $SCHEDULER_PID > /dev/null; then
+    echo "✅ 統合スケジューラーが正常に起動しました"
 else
-    echo "🌸 Flower自動起動が無効です (AUTO_START_FLOWER=false)"
+    echo "❌ 統合スケジューラーの起動に失敗しました"
+    echo "ログを確認してください: backend/unified_scheduler.log"
 fi
 
+cd ..
+
 # Node.js Puppeteerサービスを起動
-echo "🤖 Node.js Puppeteerサービスを起動中 (ポート: ${NODEJS_PORT})..."
+echo "🤖 Node.js Puppeteerサービスを起動中..."
 cd nodejs-service
 npm start &
 NODEJS_PID=$!
 cd ..
 
+# Node.jsの起動確認
+echo "⏳ Node.jsサービスの起動を待機中..."
 sleep 5
 
-# フロントエンドサーバーを起動（最後）
-echo "🎨 フロントエンドサーバーを起動中 (ポート: ${FRONTEND_PORT})..."
+for i in {1..10}; do
+    if curl -s http://localhost:${NODEJS_PORT}/api/health >/dev/null 2>&1; then
+        echo "✅ Node.jsサービスが正常に起動しました"
+        break
+    fi
+    echo "⏳ Node.jsサービスの起動を待機中... ($i/10)"
+    sleep 2
+done
+
+# フロントエンドサーバーを起動
+echo "🎨 フロントエンドサーバーを起動中..."
 cd frontend
 npm run dev -- --port ${FRONTEND_PORT} &
 FRONTEND_PID=$!
 cd ..
 
-sleep 5
+# フロントエンドの起動確認
+echo "⏳ フロントエンドの起動を待機中..."
+sleep 8
 
-# Celery監視・自動復旧を起動
-echo "🔍 Celery監視・自動復旧を起動中..."
-cd backend
-python3 celery_monitor.py &
-CELERY_MONITOR_PID=$!
-cd ..
+# 最終起動確認
+echo "✅ 全サーバーの起動状況を確認中..."
 
-sleep 3
-
-# 起動確認
-echo "✅ サーバー起動状況を確認中..."
 echo "📊 バックエンド (http://localhost:${BACKEND_PORT}):"
-curl -s "http://localhost:${BACKEND_PORT}/health" | jq . || echo "❌ バックエンドが応答しません"
-
-echo "⚙️ Celeryワーカー:"
-ps aux | grep -E "(celery.*worker|start_celery_worker)" | grep -v grep | head -1 && echo "✅ Celeryワーカーが動作中" || echo "❌ Celeryワーカーが動作していません"
-
-echo "📅 統一スケジューラーサービス:"
-ps aux | grep -E "scheduler_service" | grep -v grep | head -1 && echo "✅ 統一スケジューラーが動作中" || echo "❌ 統一スケジューラーが動作していません"
-
-echo "🔍 Celery監視システム:"
-ps aux | grep -E "celery_monitor.py" | grep -v grep | head -1 && echo "✅ Celery監視が動作中" || echo "❌ Celery監視が動作していません"
-
-echo "🌸 Flower監視サービス:"
-if [ "$AUTO_START_FLOWER" = "true" ]; then
-    case $FLOWER_MODE in
-        "standalone"|"all")
-            ps aux | grep -E "celery.*flower" | grep -v grep | head -1 && echo "✅ スタンドアロンFlowerが動作中" || echo "❌ スタンドアロンFlowerが動作していません"
-            curl -s "http://localhost:${FLOWER_PORT}/flower/api/workers" >/dev/null 2>&1 && echo "✅ Flower APIが応答中" || echo "❌ Flower APIが応答しません"
-            ;;
-        "embedded")
-            curl -s "http://localhost:${BACKEND_PORT}/api/flower/health" | jq . 2>/dev/null && echo "✅ 埋め込みFlowerが動作中" || echo "❌ 埋め込みFlowerが動作していません"
-            ;;
-        "api")
-            curl -s "http://localhost:${BACKEND_PORT}/api/flower/health" | jq . 2>/dev/null && echo "✅ Flower APIサービスが動作中" || echo "❌ Flower APIサービスが動作していません"
-            ;;
-    esac
+if curl -s http://localhost:${BACKEND_PORT}/health >/dev/null 2>&1; then
+    echo "✅ バックエンドが正常に動作中"
 else
-    echo "⚪ Flower自動起動が無効です"
+    echo "❌ バックエンドが応答しません"
 fi
 
 echo "🤖 Node.js Puppeteer (http://localhost:${NODEJS_PORT}):"
-curl -s "http://localhost:${NODEJS_PORT}/api/health" | jq . || echo "❌ Node.jsサービスが応答しません"
+if curl -s http://localhost:${NODEJS_PORT}/api/health >/dev/null 2>&1; then
+    echo "✅ Node.jsサービスが正常に動作中"
+else
+    echo "❌ Node.jsサービスが応答しません"
+fi
 
 echo "🌐 フロントエンド (http://localhost:${FRONTEND_PORT}):"
-curl -s -I "http://localhost:${FRONTEND_PORT}" | head -1 || echo "❌ フロントエンドが応答しません"
-
-echo "🔄 プロキシ経由 (http://localhost:${FRONTEND_PORT}/api/health):"
-curl -s "http://localhost:${FRONTEND_PORT}/api/health" | jq . || echo "❌ プロキシが動作していません"
+if curl -s -I http://localhost:${FRONTEND_PORT} >/dev/null 2>&1; then
+    echo "✅ フロントエンドが正常に動作中"
+else
+    echo "❌ フロントエンドが応答しません"
+fi
 
 echo ""
 echo "🎉 ScrapyUI サーバーが起動しました！"
 echo "📊 バックエンド: http://localhost:${BACKEND_PORT}"
 echo "🌐 フロントエンド: http://localhost:${FRONTEND_PORT}"
 echo "🤖 Node.js Puppeteer: http://localhost:${NODEJS_PORT}"
-
-# Flower URL表示
-if [ "$AUTO_START_FLOWER" = "true" ]; then
-    case $FLOWER_MODE in
-        "standalone"|"all")
-            echo "🌸 Flower監視: http://localhost:${FLOWER_PORT}/flower"
-            ;;
-        "embedded"|"api")
-            echo "🌸 Flower統合: http://localhost:${FRONTEND_PORT}/flower"
-            ;;
-    esac
-    echo "🌸 Flower API: http://localhost:${BACKEND_PORT}/api/flower/stats"
-fi
-
-echo "📋 プロジェクト: http://localhost:${FRONTEND_PORT}/projects/9b9dd8cc-65c1-48c1-b819-36ff5db2f36f/spiders"
 echo ""
 echo "🛑 サーバーを停止するには Ctrl+C を押してください"
 
@@ -358,35 +145,21 @@ echo "🛑 サーバーを停止するには Ctrl+C を押してください"
 echo $BACKEND_PID > .backend.pid
 echo $FRONTEND_PID > .frontend.pid
 echo $NODEJS_PID > .nodejs.pid
-echo $CELERY_PID > .celery.pid
 echo $SCHEDULER_PID > .scheduler.pid
-echo $CELERY_MONITOR_PID > .celery_monitor.pid
-
-# FlowerプロセスIDを保存（存在する場合）
-if [ ! -z "$FLOWER_PID" ]; then
-    echo $FLOWER_PID > .flower.pid
-fi
 
 # 終了シグナルをキャッチしてプロセスを停止
 cleanup_processes() {
+    echo ""
     echo "🛑 サーバーを停止中..."
 
     # 全プロセスを停止
-    kill $BACKEND_PID $FRONTEND_PID $NODEJS_PID $CELERY_PID $SCHEDULER_PID $CELERY_MONITOR_PID 2>/dev/null
-
-    # Flowerプロセスも停止
-    if [ ! -z "$FLOWER_PID" ]; then
-        kill $FLOWER_PID 2>/dev/null
-    fi
-
-    # Flower関連プロセスを強制停止
-    pkill -f "celery.*flower" 2>/dev/null || true
+    kill $BACKEND_PID $FRONTEND_PID $NODEJS_PID $SCHEDULER_PID 2>/dev/null || true
 
     # PIDファイルを削除
-    rm -f .backend.pid .frontend.pid .nodejs.pid .celery.pid .scheduler.pid .celery_monitor.pid .flower.pid
+    rm -f .backend.pid .frontend.pid .nodejs.pid .scheduler.pid
 
     echo "✅ 全サーバーが停止しました"
-    exit
+    exit 0
 }
 
 trap cleanup_processes INT TERM

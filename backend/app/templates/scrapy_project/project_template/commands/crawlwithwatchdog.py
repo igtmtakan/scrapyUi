@@ -82,16 +82,16 @@ class JSONLMonitor:
     def _start_polling_monitoring(self):
         """ポーリング監視（フォールバック）"""
         self.is_monitoring = True
-        
+
         def polling_loop():
             while self.is_monitoring:
                 self.process_new_lines()
-                time.sleep(1)
-        
+                time.sleep(10)  # 10秒間隔に緩和
+
         polling_thread = threading.Thread(target=polling_loop, daemon=True)
         polling_thread.start()
-        
-        print(f"🔄 ポーリング監視開始: {self.jsonl_file_path}")
+
+        print(f"🔄 ポーリング監視開始（10秒間隔）: {self.jsonl_file_path}")
     
     def stop_monitoring(self):
         """監視を停止"""

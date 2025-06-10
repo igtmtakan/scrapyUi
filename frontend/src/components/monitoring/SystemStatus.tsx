@@ -24,10 +24,10 @@ interface SystemStatusData {
   timestamp: string
   services: {
     redis: ServiceStatus
-    celery_worker: ServiceStatus
-    celery_scheduler: ServiceStatus
     fastapi_backend: ServiceStatus
     scheduler: ServiceStatus
+    spider_manager: ServiceStatus
+    result_collector: ServiceStatus
     nodejs_puppeteer: ServiceStatus
     nextjs_frontend: ServiceStatus
   }
@@ -149,14 +149,14 @@ export default function SystemStatus() {
     switch (serviceName) {
       case 'redis':
         return <Database className="w-5 h-5 text-red-400" />
-      case 'celery_worker':
-        return <Activity className="w-5 h-5 text-green-400" />
-      case 'celery_scheduler':
-        return <Clock className="w-5 h-5 text-orange-400" />
       case 'fastapi_backend':
         return <Server className="w-5 h-5 text-blue-400" />
       case 'scheduler':
         return <Clock className="w-5 h-5 text-purple-400" />
+      case 'spider_manager':
+        return <Activity className="w-5 h-5 text-green-400" />
+      case 'result_collector':
+        return <Database className="w-5 h-5 text-orange-400" />
       case 'nodejs_puppeteer':
         return <Globe className="w-5 h-5 text-yellow-400" />
       case 'nextjs_frontend':
@@ -170,14 +170,14 @@ export default function SystemStatus() {
     switch (serviceName) {
       case 'redis':
         return 'Redis Cache'
-      case 'celery_worker':
-        return 'Celery Worker'
-      case 'celery_scheduler':
-        return 'Celery Scheduler'
       case 'fastapi_backend':
         return 'FastAPI Backend'
       case 'scheduler':
         return 'Task Scheduler'
+      case 'spider_manager':
+        return 'Spider Manager'
+      case 'result_collector':
+        return 'Result Collector'
       case 'nodejs_puppeteer':
         return 'Node.js Puppeteer'
       case 'nextjs_frontend':
@@ -293,9 +293,9 @@ export default function SystemStatus() {
         {[
           'fastapi_backend',
           'redis',
-          'celery_worker',
-          'celery_scheduler',
           'scheduler',
+          'spider_manager',
+          'result_collector',
           'nodejs_puppeteer',
           'nextjs_frontend'
         ].filter(serviceName => systemStatus.services[serviceName as keyof typeof systemStatus.services])

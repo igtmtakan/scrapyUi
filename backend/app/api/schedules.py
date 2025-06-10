@@ -6,11 +6,14 @@ from datetime import datetime
 from croniter import croniter
 from pydantic import BaseModel
 
-from ..database import get_db, Schedule as DBSchedule, Project as DBProject, Spider as DBSpider, Task as DBTask, User as DBUser, UserRole, TaskStatus
+from ..database import get_db, Schedule as DBSchedule, Project as DBProject, Spider as DBSpider, Task as DBTask, Result as DBResult, User as DBUser, UserRole, TaskStatus
 from ..models.schemas import Schedule, ScheduleCreate, ScheduleUpdate
-from ..tasks.scrapy_tasks import scheduled_spider_run
+# Celery廃止済み - マイクロサービス対応
+# from ..tasks.scrapy_tasks import scheduled_spider_run
 from ..services.scheduler_service import scheduler_service
+from ..services.realtime_websocket_manager import realtime_websocket_manager
 from .auth import get_current_active_user
+import asyncio
 
 # リクエストモデル
 class ResetTasksRequest(BaseModel):
@@ -80,7 +83,7 @@ async def get_schedules(
     schedules = []
     for schedule, project_name, spider_name in results:
         # スケジュール実行による最新のタスクを取得（実行中を優先）
-        # まず実行中・待機中のタスクを確認
+        # まず実行中・待機中のタスクを確認（Celery Workerの実際の状態も考慮）
         active_task = db.query(DBTask).filter(
             DBTask.project_id == schedule.project_id,
             DBTask.spider_id == schedule.spider_id,
@@ -88,15 +91,55 @@ async def get_schedules(
             DBTask.status.in_(['RUNNING', 'PENDING'])
         ).order_by(DBTask.created_at.desc()).first()
 
+        # マイクロサービス対応: 実行中タスクの状態確認
+        if active_task:
+            try:
+                from ..services.microservice_client import microservice_client
+
+                # マイクロサービスが利用可能かチェック
+                if not microservice_client.is_microservice_available():
+                    print(f"⚠️ Microservice not available. Marking task {active_task.id} as failed.")
+                    try:
+                        active_task.status = 'FAILED'
+                        active_task.finished_at = datetime.now()
+                        db.commit()
+                        active_task = None  # 実行中タスクとして扱わない
+                    except Exception as db_error:
+                        print(f"⚠️ Database error when updating task status: {db_error}")
+                        db.rollback()
+                        active_task = None
+
+            except Exception as e:
+                print(f"⚠️ Error checking microservice status: {e}")
+                # エラーの場合は安全側に倒して、実行中タスクとして扱わない
+                if active_task:
+                    try:
+                        active_task.status = 'FAILED'
+                        active_task.finished_at = datetime.now()
+                        db.commit()
+                        active_task = None
+                    except Exception as db_error:
+                        print(f"⚠️ Database error when updating task status: {db_error}")
+                        db.rollback()
+                        active_task = None
+
         # 実行中・待機中のタスクがあればそれを使用、なければ最新の完了タスク
         if active_task:
             latest_task = active_task
         else:
+            # スケジュール実行のタスクを優先、なければ手動実行も含める
             latest_task = db.query(DBTask).filter(
                 DBTask.project_id == schedule.project_id,
                 DBTask.spider_id == schedule.spider_id,
                 DBTask.schedule_id == schedule.id  # スケジュール実行のタスクのみ
             ).order_by(DBTask.created_at.desc()).first()
+
+            # スケジュール実行のタスクがない場合は、手動実行も含めて最新タスクを取得
+            if not latest_task:
+                latest_task = db.query(DBTask).filter(
+                    DBTask.project_id == schedule.project_id,
+                    DBTask.spider_id == schedule.spider_id
+                ).order_by(DBTask.created_at.desc()).first()
 
         # Cron式から間隔（分）を推定
         interval_minutes = None
@@ -125,32 +168,29 @@ async def get_schedules(
             # Scrapyの統計ファイルから全パラメータを取得
             full_stats = scrapy_service._get_scrapy_full_stats(latest_task.id, latest_task.project_id)
 
-            # 基本統計情報（優先順位：データベース値 > Scrapy統計 > 0）
-            # Rich progress extensionが正確にデータベースに記録した値を優先
-            final_items = (latest_task.items_count or 0) if (latest_task.items_count or 0) > 0 else (full_stats.get('items_count', 0) if full_stats else 0)
-            final_requests = (latest_task.requests_count or 0) if (latest_task.requests_count or 0) > 0 else (full_stats.get('requests_count', 0) if full_stats else 0)
+            # 実際のDB結果数を確認してタスクのカウントを同期
+            actual_db_count = db.query(DBResult).filter(DBResult.task_id == latest_task.id).count()
+
+            # タスクのアイテム数が実際のDB結果数と異なる場合は同期
+            if latest_task.items_count != actual_db_count and actual_db_count > 0:
+                print(f"🔧 Syncing task {latest_task.id[:8]}... items count: {latest_task.items_count} → {actual_db_count}")
+                latest_task.items_count = actual_db_count
+                latest_task.requests_count = max(actual_db_count, latest_task.requests_count or 1)
+                db.commit()
+
+            # 基本統計情報（優先順位：Rich統計 > 実際のDB結果数 > データベース値 > 0）
+            # Rich progress extensionの統計情報を最優先
+            final_items = full_stats.get('items_count', 0) if full_stats and full_stats.get('items_count', 0) > 0 else (actual_db_count if actual_db_count > 0 else (latest_task.items_count or 0))
+            final_requests = full_stats.get('requests_count', 0) if full_stats and full_stats.get('requests_count', 0) > 0 else (max(actual_db_count, latest_task.requests_count or 0) if actual_db_count > 0 else (latest_task.requests_count or 0))
             final_responses = full_stats.get('responses_count', 0) if full_stats else 0
             final_errors = (latest_task.error_count or 0) if (latest_task.error_count or 0) >= 0 else (full_stats.get('errors_count', 0) if full_stats else 0)
 
-            # Rich progress統計情報に基づくステータス再判定
-            original_status = latest_task.status.value if hasattr(latest_task.status, 'value') else latest_task.status
-            corrected_status = original_status
-
-            # 失敗と判定されているタスクでも、アイテムが取得できていれば成功に修正
-            if original_status == 'FAILED' and final_items > 0:
-                corrected_status = 'FINISHED'
-                print(f"🔧 Schedule status correction: Task {latest_task.id[:8]}... FAILED → FINISHED (items: {final_items})")
-
-            # キャンセルされたタスクでも、アイテムが取得できていれば成功に修正
-            elif original_status == 'CANCELLED' and final_items > 0:
-                corrected_status = 'FINISHED'
-                print(f"🔧 Schedule status correction: Task {latest_task.id[:8]}... CANCELLED → FINISHED (items: {final_items})")
+            # Scrapyの実際のステータスをそのまま使用（独自判定を削除）
+            actual_status = latest_task.status.value if hasattr(latest_task.status, 'value') else latest_task.status
 
             latest_task_dict = {
                 "id": latest_task.id,
-                "status": corrected_status,
-                "original_status": original_status,
-                "status_corrected": (corrected_status != original_status),
+                "status": actual_status,  # Scrapyの実際のステータスを使用
                 "items_count": final_items,
                 "requests_count": final_requests,
                 "responses_count": final_responses,
@@ -608,34 +648,80 @@ async def run_schedule_now(schedule_id: str, db: Session = Depends(get_db), curr
     )
     db.add(db_task)
 
-    # Celeryタスクでリアルタイム実行（scrapy crawlwithwatchdog）を開始
+    # マイクロサービス経由でwatchdog実行を開始
     import os
     if not os.getenv("TESTING", False):
-        from ..tasks.scrapy_tasks import run_spider_with_watchdog_task
+        from ..services.microservice_client import microservice_client
 
-        # Celeryタスクとして実行（スケジュール実行と同じ方式）
-        try:
-            celery_task = run_spider_with_watchdog_task.delay(
-                project_id=project.id,
-                spider_id=spider.id,
-                settings=db_schedule.settings or {},
-                task_id=task_id
-            )
+        # マイクロサービスが利用可能かチェック
+        if microservice_client.is_microservice_available():
+            try:
+                # マイクロサービス経由で実行
+                result = microservice_client.execute_spider_with_watchdog_sync(
+                    project_id=str(project.id),
+                    spider_id=str(spider.id),
+                    project_path=project.path,
+                    spider_name=spider.name,
+                    task_id=task_id,
+                    settings=db_schedule.settings or {}
+                )
 
-            # CeleryタスクIDをデータベースに保存
-            db_task.celery_task_id = celery_task.id
-            print(f"🚀 Manual execution started with Celery task: {celery_task.id}")
-            print(f"   Project ID: {project.id}")
-            print(f"   Spider ID: {spider.id}")
-            print(f"   Task ID: {task_id}")
+                if result["success"]:
+                    print(f"🚀 Microservice execution started for task: {task_id}")
+                    print(f"   Project: {project.name}")
+                    print(f"   Spider: {spider.name}")
+                    print(f"   Task ID: {task_id}")
+                else:
+                    print(f"❌ Microservice execution failed: {result.get('error')}")
+                    raise Exception(f"Microservice execution failed: {result.get('error')}")
 
-        except Exception as e:
-            print(f"❌ Failed to start Celery task for manual execution: {e}")
-            # フォールバック: 直接実行
+            except Exception as e:
+                print(f"❌ Failed to start microservice task for manual execution: {e}")
+                # フォールバック: 直接実行
+                from ..services.scrapy_service import ScrapyPlaywrightService
+                scrapy_service = ScrapyPlaywrightService()
+
+                # バックグラウンドでリアルタイム実行を開始
+                import threading
+                def run_spider_background():
+                    try:
+                        import asyncio
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+
+                        # WebSocketコールバック関数
+                        def websocket_callback(data: dict):
+                            try:
+                                from ..api.websocket_progress import broadcast_rich_progress_update
+                                asyncio.create_task(broadcast_rich_progress_update(task_id, data))
+                            except Exception as e:
+                                print(f"⚠️ WebSocket callback error in schedule run: {e}")
+
+                        # watchdog監視付きで実行
+                        result = loop.run_until_complete(
+                            scrapy_service.run_spider_with_watchdog(
+                                project_path=project.path,
+                                spider_name=spider.name,
+                                task_id=task_id,
+                                settings=db_schedule.settings or {},
+                                websocket_callback=websocket_callback
+                            )
+                        )
+                        print(f"✅ Fallback spider execution completed: {result}")
+                    except Exception as e:
+                        print(f"❌ Fallback spider execution error: {e}")
+                    finally:
+                        loop.close()
+
+                thread = threading.Thread(target=run_spider_background, daemon=True)
+                thread.start()
+                print(f"🔄 Fallback execution started for task: {task_id}")
+        else:
+            print("⚠️ Microservice not available, using legacy execution")
+            # 従来のバックグラウンド実行を使用
             from ..services.scrapy_service import ScrapyPlaywrightService
             scrapy_service = ScrapyPlaywrightService()
 
-            # バックグラウンドでリアルタイム実行を開始
             import threading
             def run_spider_background():
                 try:
@@ -643,15 +729,13 @@ async def run_schedule_now(schedule_id: str, db: Session = Depends(get_db), curr
                     loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(loop)
 
-                    # WebSocketコールバック関数
                     def websocket_callback(data: dict):
                         try:
                             from ..api.websocket_progress import broadcast_rich_progress_update
                             asyncio.create_task(broadcast_rich_progress_update(task_id, data))
                         except Exception as e:
-                            print(f"⚠️ WebSocket callback error in schedule run: {e}")
+                            print(f"⚠️ WebSocket callback error: {e}")
 
-                    # watchdog監視付きで実行
                     result = loop.run_until_complete(
                         scrapy_service.run_spider_with_watchdog(
                             project_path=project.path,
@@ -661,14 +745,20 @@ async def run_schedule_now(schedule_id: str, db: Session = Depends(get_db), curr
                             websocket_callback=websocket_callback
                         )
                     )
-                    print(f"✅ Schedule spider execution completed: {result}")
+
+                    print(f"✅ Legacy spider execution completed: {task_id}")
+
                 except Exception as e:
-                    print(f"❌ Background schedule spider execution error: {e}")
+                    print(f"❌ Legacy spider execution error: {e}")
                 finally:
                     loop.close()
 
             thread = threading.Thread(target=run_spider_background, daemon=True)
             thread.start()
+            print(f"🔄 Legacy execution started for task: {task_id}")
+
+    else:
+        print(f"🧪 Testing mode: Skipping actual spider execution for task: {task_id}")
 
     # 最終実行時刻を更新
     db_schedule.last_run = datetime.now()
@@ -743,6 +833,144 @@ async def toggle_schedule(schedule_id: str, db: Session = Depends(get_db)):
     }
 
     return schedule_dict
+
+@router.get(
+    "/{schedule_id}/tasks",
+    summary="スケジュール実行履歴取得",
+    description="指定されたスケジュールの実行履歴（タスク一覧）を取得します。"
+)
+async def get_schedule_tasks(
+    schedule_id: str,
+    limit: int = 20,
+    offset: int = 0,
+    status: str = None,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_active_user)
+):
+    """
+    ## スケジュール実行履歴取得
+
+    指定されたスケジュールの実行履歴（タスク一覧）を取得します。
+
+    ### パラメータ
+    - **schedule_id**: スケジュールID
+    - **limit**: 取得件数の制限 (デフォルト: 20)
+    - **offset**: オフセット (デフォルト: 0)
+    - **status**: ステータスでフィルタリング (optional)
+
+    ### レスポンス
+    - **200**: タスクのリストを返します
+    - **404**: スケジュールが見つからない場合
+    - **500**: サーバーエラー
+    """
+    try:
+        print(f"🔍 Getting schedule tasks for schedule_id: {schedule_id}")
+        print(f"🔍 Parameters: limit={limit}, offset={offset}, status={status}")
+        print(f"🔍 User: {current_user.email if current_user else 'None'}")
+
+        # スケジュールの存在確認
+        schedule = db.query(DBSchedule).filter(DBSchedule.id == schedule_id).first()
+        if not schedule:
+            print(f"❌ Schedule not found: {schedule_id}")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Schedule not found"
+            )
+
+        print(f"✅ Schedule found: {schedule.name}")
+
+        # 権限チェック
+        is_admin = (current_user.role == UserRole.ADMIN or
+                    current_user.role == "ADMIN" or
+                    current_user.role == "admin")
+
+        print(f"🔍 User role: {current_user.role}, is_admin: {is_admin}")
+
+        if not is_admin:
+            # 一般ユーザーは自分のプロジェクトのスケジュールのみアクセス可能
+            project = db.query(DBProject).filter(DBProject.id == schedule.project_id).first()
+            if not project or project.user_id != current_user.id:
+                print(f"❌ Access denied for user {current_user.email}")
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Access denied"
+                )
+
+        # タスク一覧を取得
+        query = db.query(DBTask).filter(DBTask.schedule_id == schedule_id)
+        print(f"🔍 Base query created for schedule_id: {schedule_id}")
+
+        if status:
+            status_list = [s.strip().upper() for s in status.split(',')]
+            query = query.filter(DBTask.status.in_(status_list))
+            print(f"🔍 Status filter applied: {status_list}")
+
+        # 総件数を取得
+        total_count = query.count()
+        print(f"🔍 Total count: {total_count}")
+
+        # ページネーション適用
+        tasks = query.order_by(DBTask.created_at.desc()).offset(offset).limit(limit).all()
+        print(f"🔍 Retrieved {len(tasks)} tasks")
+
+        # レスポンス形式に変換
+        task_list = []
+        for task in tasks:
+            try:
+                # ステータスを文字列に変換
+                status_str = task.status
+                if hasattr(task.status, 'value'):
+                    status_str = task.status.value
+                elif hasattr(task.status, 'name'):
+                    status_str = task.status.name
+                else:
+                    status_str = str(task.status)
+
+                task_dict = {
+                    "id": task.id,
+                    "status": status_str,
+                    "items_count": task.items_count or 0,
+                    "requests_count": task.requests_count or 0,
+                    "error_count": task.error_count or 0,
+                    "started_at": task.started_at.isoformat() if task.started_at else None,
+                    "finished_at": task.finished_at.isoformat() if task.finished_at else None,
+                    "created_at": task.created_at.isoformat() if task.created_at else None,
+                    "updated_at": task.updated_at.isoformat() if task.updated_at else None,
+                    "log_level": task.log_level,
+                    "settings": task.settings,
+                    "celery_task_id": task.celery_task_id,
+                    "error_message": getattr(task, 'error_message', None)
+                }
+                task_list.append(task_dict)
+                print(f"✅ Successfully converted task {task.id}: {status_str}")
+            except Exception as e:
+                print(f"❌ Error converting task {task.id}: {str(e)}")
+                import traceback
+                traceback.print_exc()
+                # エラーが発生したタスクはスキップして続行
+                continue
+
+        response = {
+            "tasks": task_list,
+            "total_count": total_count,
+            "limit": limit,
+            "offset": offset,
+            "schedule_id": schedule_id
+        }
+
+        print(f"✅ Successfully returning {len(task_list)} tasks")
+        return response
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Unexpected error in get_schedule_tasks: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get schedule tasks: {str(e)}"
+        )
 
 @router.get(
     "/pending-tasks/count",
@@ -1019,4 +1247,97 @@ async def scheduler_health_check(db: Session = Depends(get_db)):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to perform health check: {str(e)}"
+        )
+
+@router.post(
+    "/clear-cache",
+    summary="WebUIキャッシュクリア",
+    description="WebUIの表示キャッシュをクリアし、最新の状態を強制更新します。"
+)
+async def clear_webui_cache(
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_active_user)
+):
+    """
+    ## WebUIキャッシュクリア
+
+    WebUIの表示キャッシュをクリアし、最新の状態を強制更新します。
+
+    ### 機能
+    - ブラウザキャッシュの無効化指示
+    - WebSocket接続の再同期
+    - 最新のタスク状態を取得
+
+    ### レスポンス
+    - **200**: キャッシュクリアが正常に完了した場合
+    - **500**: サーバーエラー
+    """
+    try:
+        # 最新のスケジュール情報を取得
+        schedules = db.query(DBSchedule).filter(DBSchedule.is_active == True).all()
+
+        # 各スケジュールの最新タスク状態を確認
+        cache_clear_data = {
+            "timestamp": datetime.now().isoformat(),
+            "schedules_count": len(schedules),
+            "active_tasks": [],
+            "completed_tasks": []
+        }
+
+        for schedule in schedules:
+            # 実行中タスクを確認
+            active_task = db.query(DBTask).filter(
+                DBTask.schedule_id == schedule.id,
+                DBTask.status.in_(['RUNNING', 'PENDING'])
+            ).order_by(DBTask.created_at.desc()).first()
+
+            if active_task:
+                cache_clear_data["active_tasks"].append({
+                    "schedule_id": schedule.id,
+                    "schedule_name": schedule.name,
+                    "task_id": active_task.id,
+                    "status": active_task.status.value if hasattr(active_task.status, 'value') else active_task.status
+                })
+
+            # 最新の完了タスクを確認
+            completed_task = db.query(DBTask).filter(
+                DBTask.schedule_id == schedule.id,
+                DBTask.status.in_(['SUCCESS', 'FAILURE', 'REVOKED'])
+            ).order_by(DBTask.created_at.desc()).first()
+
+            if completed_task:
+                cache_clear_data["completed_tasks"].append({
+                    "schedule_id": schedule.id,
+                    "schedule_name": schedule.name,
+                    "task_id": completed_task.id,
+                    "status": completed_task.status.value if hasattr(completed_task.status, 'value') else completed_task.status,
+                    "items_count": completed_task.items_count or 0,
+                    "requests_count": completed_task.requests_count or 0,
+                    "finished_at": completed_task.finished_at
+                })
+
+        # WebSocket経由でキャッシュクリア通知を送信
+        try:
+            await realtime_websocket_manager.broadcast_message({
+                "type": "cache_clear",
+                "data": cache_clear_data,
+                "message": "WebUIキャッシュがクリアされました。ページを更新してください。"
+            })
+        except Exception as ws_error:
+            print(f"WebSocket broadcast error: {ws_error}")
+
+        return {
+            "message": "WebUIキャッシュクリアが完了しました",
+            "cache_clear_data": cache_clear_data,
+            "instructions": [
+                "ブラウザでF5キーまたはCtrl+F5を押してページを更新してください",
+                "WebSocket接続が自動的に再同期されます",
+                "最新のタスク状態が表示されます"
+            ]
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"キャッシュクリア中にエラーが発生しました: {str(e)}"
         )

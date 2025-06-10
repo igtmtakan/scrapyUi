@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import {
   Calendar,
   Clock,
@@ -114,8 +114,15 @@ export default function SchedulesPage() {
   const [richStatsData, setRichStatsData] = useState<{[scheduleId: string]: RichStats}>({})
   const [selectedScheduleStats, setSelectedScheduleStats] = useState<{schedule: Schedule, richStats: RichStats} | null>(null)
 
+  // 待機タスク情報の型定義
+  interface PendingTasksInfo {
+    total_pending: number;
+    old_pending: number;
+    recent_pending: number;
+  }
+
   // 待機タスク情報
-  const [pendingTasksInfo, setPendingTasksInfo] = useState({
+  const [pendingTasksInfo, setPendingTasksInfo] = useState<PendingTasksInfo>({
     total_pending: 0,
     old_pending: 0,
     recent_pending: 0
@@ -171,6 +178,42 @@ export default function SchedulesPage() {
       loadTaskProgress()
     }
   }, [schedules, isAuthenticated, user])
+
+  // キャッシュクリア機能
+  const clearCache = async () => {
+    try {
+      setLoading(true)
+      setError(null)
+
+      console.log('🧹 キャッシュクリア開始...')
+
+      // ローカルストレージとセッションストレージをクリア
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('schedules_cache')
+        sessionStorage.removeItem('schedules_cache')
+        localStorage.removeItem('task_progress_cache')
+        sessionStorage.removeItem('task_progress_cache')
+      }
+
+      // 状態をリセット
+      setSchedules([])
+      setTaskProgress({})
+      setPendingTasksInfo({})
+
+      // 強制的にデータを再取得
+      await loadSchedules()
+      await loadTaskProgress()
+      await loadPendingTasksInfo()
+
+      console.log('✅ キャッシュクリア完了')
+
+    } catch (error) {
+      console.error('❌ キャッシュクリア失敗:', error)
+      setError('キャッシュクリアに失敗しました')
+    } finally {
+      setLoading(false)
+    }
+  }
 
   const loadSchedules = async () => {
     try {
@@ -299,7 +342,38 @@ export default function SchedulesPage() {
 
             console.log(`📊 Schedule ${schedule.name}: Found ACTIVE ${task.status} task ${task.id.slice(0, 8)}`)
           } else {
-            console.log(`📊 Schedule ${schedule.name}: No active tasks found`)
+            // アクティブなタスクがない場合は、最新の完了タスクを取得
+            try {
+              const allTasks = await apiClient.getTasks({
+                project_id: schedule.project_id,
+                spider_id: schedule.spider_id,
+                limit: 1
+              })
+
+              if (allTasks.length > 0) {
+                const task = allTasks[0]
+                console.log(`📊 Schedule ${schedule.name}: Found LATEST ${task.status} task ${task.id.slice(0, 8)}`)
+
+                // 最新タスクの情報を保存（表示用）
+                progressData[schedule.id] = {
+                  taskId: task.id,
+                  status: task.status.toLowerCase(),
+                  itemsScraped: task.items_count || 0,
+                  requestsCount: task.requests_count || 0,
+                  responsesCount: task.responses_count || 0,
+                  errorsCount: task.errors_count || 0,
+                  startedAt: task.started_at,
+                  finishedAt: task.finished_at,
+                  elapsedTime: 0, // 完了タスクなので経過時間は0
+                  richStats: task.rich_stats || null,
+                  scrapyStatsUsed: task.scrapy_stats_used || false
+                }
+              } else {
+                console.log(`📊 Schedule ${schedule.name}: No tasks found`)
+              }
+            } catch (latestTaskError) {
+              console.error(`Failed to get latest task for schedule ${schedule.name}:`, latestTaskError)
+            }
           }
         } catch (error) {
           // ネットワークエラーやその他のエラー
@@ -338,7 +412,7 @@ export default function SchedulesPage() {
     const total = schedules.length
     const active = schedules.filter(s => s.is_active).length
     const inactive = total - active
-    const running = Object.keys(taskProgress).length // 実行中のタスク数
+    const running = Object.values(taskProgress).filter(task => task.status === 'RUNNING').length // 実際に実行中のタスク数のみ
 
     setStats({ total, active, inactive, running })
   }
@@ -461,39 +535,47 @@ export default function SchedulesPage() {
     }
   }, [isAuthenticated, user])
 
-  // 待機タスク情報を取得
-  const loadPendingTasksInfo = async () => {
+  // APIレスポンスの検証関数
+  const validatePendingTasksResponse = (data: any): PendingTasksInfo => {
+    if (!data || typeof data !== 'object') {
+      console.warn('⚠️ Invalid response data format:', data)
+      return { total_pending: 0, old_pending: 0, recent_pending: 0 }
+    }
+
+    return {
+      total_pending: typeof data.total_pending === 'number' ? data.total_pending : 0,
+      old_pending: typeof data.old_pending === 'number' ? data.old_pending : 0,
+      recent_pending: typeof data.recent_pending === 'number' ? data.recent_pending : 0
+    }
+  }
+
+  // 待機タスク情報を取得（メモ化）
+  const loadPendingTasksInfo = useCallback(async () => {
     try {
       console.log('📡 Loading pending tasks info...')
       const response = await apiClient.get('/api/schedules/pending-tasks/count')
       console.log('✅ Pending tasks info loaded:', response.data)
 
-      // レスポンスデータの検証
-      if (response.data && typeof response.data === 'object') {
-        setPendingTasksInfo({
-          total_pending: response.data.total_pending ?? 0,
-          old_pending: response.data.old_pending ?? 0,
-          recent_pending: response.data.recent_pending ?? 0
-        })
-      } else {
-        console.warn('⚠️ Invalid response data format:', response.data)
-        // デフォルト値を設定
-        setPendingTasksInfo({
-          total_pending: 0,
-          old_pending: 0,
-          recent_pending: 0
-        })
-      }
+      // レスポンスデータの検証と設定
+      const validatedData = validatePendingTasksResponse(response.data)
+      setPendingTasksInfo(validatedData)
+
     } catch (error) {
       console.error('❌ Failed to load pending tasks info:', error)
-      // エラー時もデフォルト値を設定
-      setPendingTasksInfo({
-        total_pending: 0,
-        old_pending: 0,
-        recent_pending: 0
-      })
+
+      // エラーの詳細をログに記録
+      if (error instanceof Error) {
+        console.error('❌ Error details:', {
+          message: error.message,
+          name: error.name,
+          stack: error.stack
+        })
+      }
+
+      // エラー時はデフォルト値を設定
+      setPendingTasksInfo({ total_pending: 0, old_pending: 0, recent_pending: 0 })
     }
-  }
+  }, [])
 
   // 待機タスクをリセット
   const handleResetPendingTasks = async (resetAll: boolean = false) => {
@@ -764,6 +846,16 @@ export default function SchedulesPage() {
             </button>
 
             <button
+              onClick={clearCache}
+              disabled={loading}
+              className="flex items-center space-x-2 bg-orange-600 hover:bg-orange-700 disabled:bg-orange-800 px-3 py-2 rounded-lg transition-colors"
+              title="キャッシュをクリアして最新状態を表示"
+            >
+              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+              <span>キャッシュクリア</span>
+            </button>
+
+            <button
               onClick={handleCreateSchedule}
               className="flex items-center space-x-2 bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg transition-colors"
             >
@@ -829,20 +921,30 @@ export default function SchedulesPage() {
 
             {/* 詳細情報とリセットボタン */}
             <div className="space-y-2">
-              {(pendingTasksInfo.old_pending ?? 0) > 0 && (
-                <div className="flex items-center justify-between">
-                  <p className="text-xs text-red-400">
-                    古いタスク: {pendingTasksInfo.old_pending ?? 0} 個
+              {(pendingTasksInfo.total_pending ?? 0) === 0 ? (
+                <div className="text-center py-2">
+                  <p className="text-xs text-gray-500">
+                    待機中のタスクはありません
                   </p>
                 </div>
-              )}
+              ) : (
+                <>
+                  {(pendingTasksInfo.old_pending ?? 0) > 0 && (
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs text-red-400">
+                        古いタスク: {pendingTasksInfo.old_pending ?? 0} 個
+                      </p>
+                    </div>
+                  )}
 
-              {(pendingTasksInfo.recent_pending ?? 0) > 0 && (
-                <div className="flex items-center justify-between">
-                  <p className="text-xs text-blue-400">
-                    最近のタスク: {pendingTasksInfo.recent_pending ?? 0} 個
-                  </p>
-                </div>
+                  {(pendingTasksInfo.recent_pending ?? 0) > 0 && (
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs text-blue-400">
+                        最近のタスク: {pendingTasksInfo.recent_pending ?? 0} 個
+                      </p>
+                    </div>
+                  )}
+                </>
               )}
 
               {/* リセットボタン（管理者のみ表示） */}
@@ -852,7 +954,7 @@ export default function SchedulesPage() {
                   <button
                     onClick={() => handleResetPendingTasks(false)}
                     disabled={isResettingTasks || (pendingTasksInfo.total_pending ?? 0) === 0}
-                    className={`w-full flex items-center justify-center space-x-2 px-3 py-2 rounded text-sm transition-colors ${
+                    className={`w-full flex items-center justify-center space-x-2 px-3 py-2 rounded text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 focus:ring-offset-gray-800 ${
                       (pendingTasksInfo.total_pending ?? 0) === 0
                         ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
                         : 'bg-red-600 hover:bg-red-700 disabled:bg-red-800'
@@ -860,6 +962,10 @@ export default function SchedulesPage() {
                     title={(pendingTasksInfo.total_pending ?? 0) === 0
                       ? '待機タスクがありません'
                       : '古い待機タスクと孤立タスクをキャンセル'
+                    }
+                    aria-label={(pendingTasksInfo.total_pending ?? 0) === 0
+                      ? '待機タスクがありません'
+                      : `${pendingTasksInfo.total_pending}個の待機タスクをリセット`
                     }
                   >
                     {isResettingTasks ? (
@@ -884,8 +990,9 @@ export default function SchedulesPage() {
                   <button
                     onClick={() => handleResetPendingTasks(true)}
                     disabled={isResettingTasks}
-                    className="w-full flex items-center justify-center space-x-2 px-3 py-2 rounded text-sm transition-colors bg-red-800 hover:bg-red-900 disabled:bg-red-900"
+                    className="w-full flex items-center justify-center space-x-2 px-3 py-2 rounded text-sm transition-colors bg-red-800 hover:bg-red-900 disabled:bg-red-900 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 focus:ring-offset-gray-800"
                     title="全ての実行中・待機中タスクを強制キャンセル"
+                    aria-label="全ての実行中・待機中タスクを強制キャンセル"
                   >
                     {isResettingTasks ? (
                       <>
@@ -1046,7 +1153,7 @@ export default function SchedulesPage() {
                     </div>
 
                     {/* 実行状況表示 */}
-                    {taskProgress[schedule.id] ? (
+                    {taskProgress[schedule.id] && taskProgress[schedule.id].status === 'RUNNING' ? (
                       <div className="mt-4 p-4 bg-gray-700 rounded-lg border border-blue-500">
                         <div className="flex items-center justify-between mb-2">
                           <div className="flex items-center space-x-2">
@@ -1080,7 +1187,13 @@ export default function SchedulesPage() {
                                 )}
                               </span>
                               <span className="text-sm font-bold text-blue-400">
-                                {taskProgress[schedule.id].requestsCount.toLocaleString()}
+                                {(() => {
+                                  const count = taskProgress[schedule.id].requestsCount || 0;
+                                  if (count === 0) {
+                                    return <span className="text-gray-500">未実行</span>;
+                                  }
+                                  return count.toLocaleString();
+                                })()}
                               </span>
                             </div>
                             <div className="w-full bg-gray-700 rounded-full h-2">
@@ -1105,7 +1218,13 @@ export default function SchedulesPage() {
                                 )}
                               </span>
                               <span className="text-sm font-bold text-green-400">
-                                {taskProgress[schedule.id].itemsScraped.toLocaleString()}
+                                {(() => {
+                                  const count = taskProgress[schedule.id].itemsScraped || 0;
+                                  if (count === 0) {
+                                    return <span className="text-gray-500">未取得</span>;
+                                  }
+                                  return count.toLocaleString();
+                                })()}
                               </span>
                             </div>
                             <div className="w-full bg-gray-700 rounded-full h-2">
@@ -1180,7 +1299,7 @@ export default function SchedulesPage() {
                         </div>
 
                         {/* 全体プログレス */}
-                        {taskProgress[schedule.id].status === 'running' && (
+                        {taskProgress[schedule.id].status === 'RUNNING' && (
                           <div className="mt-2">
                             <div className="flex justify-between items-center mb-1">
                               <span className="text-xs text-gray-400">全体進行状況</span>
@@ -1207,25 +1326,40 @@ export default function SchedulesPage() {
 
 
                       </div>
-                    ) : schedule.latest_task ? (
-                      /* 最新タスクの表示（実行中を優先） */
-                      <div className="mt-4 p-3 bg-gray-700/50 rounded-lg border border-gray-600">
-                        <div className="flex items-center justify-between mb-3">
-                          <div className="flex items-center space-x-2">
-                            <div className={`w-3 h-3 rounded-full ${
-                              schedule.latest_task.status === 'RUNNING' ? 'bg-green-400 animate-pulse' :
-                              schedule.latest_task.status === 'PENDING' ? 'bg-yellow-400 animate-pulse' :
-                              'bg-blue-400'
-                            }`}></div>
-                            <span className="text-sm font-medium text-gray-300">
-                              {schedule.latest_task.status === 'RUNNING' ? '🔄 実行中' :
-                               schedule.latest_task.status === 'PENDING' ? '⏳ 待機中' :
-                               '✅ 最新実行完了'}
-                            </span>
-                            <span className="text-xs text-gray-400">
-                              (タスクID: {schedule.latest_task.id.slice(0, 8)}...)
-                            </span>
-                          </div>
+                    ) : (schedule.latest_task || taskProgress[schedule.id]) ? (
+                      /* 最新タスクの表示（実行中を優先、taskProgressも考慮） */
+                      (() => {
+                        const latestTask = schedule.latest_task
+                        const progressTask = taskProgress[schedule.id]
+                        const displayTask = progressTask || latestTask
+
+                        if (!displayTask) return null
+
+                        const taskStatus = progressTask?.status || latestTask?.status || 'unknown'
+                        const taskId = progressTask?.taskId || latestTask?.id || 'unknown'
+                        const itemsCount = progressTask?.itemsScraped || latestTask?.items_count || 0
+                        const requestsCount = progressTask?.requestsCount || latestTask?.requests_count || 0
+
+                        return (
+                          <div className="mt-4 p-3 bg-gray-700/50 rounded-lg border border-gray-600">
+                            <div className="flex items-center justify-between mb-3">
+                              <div className="flex items-center space-x-2">
+                                <div className={`w-3 h-3 rounded-full ${
+                                  taskStatus === 'RUNNING' ? 'bg-green-400 animate-pulse' :
+                                  taskStatus === 'PENDING' ? 'bg-yellow-400 animate-pulse' :
+                                  taskStatus === 'FINISHED' ? 'bg-blue-400' :
+                                  'bg-gray-400'
+                                }`}></div>
+                                <span className="text-sm font-medium text-gray-300">
+                                  {taskStatus === 'RUNNING' ? '🔄 実行中' :
+                                   taskStatus === 'PENDING' ? '⏳ 待機中' :
+                                   taskStatus === 'FINISHED' ? '✅ 最新実行完了' :
+                                   '📋 実行履歴あり'}
+                                </span>
+                                <span className="text-xs text-gray-400">
+                                  (タスクID: {taskId.toString().slice(0, 8)}...)
+                                </span>
+                              </div>
                           <button
                             onClick={() => window.open(`/projects/${schedule.project_id}/tasks/${schedule.latest_task.id}/results`, '_blank')}
                             className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
@@ -1238,39 +1372,58 @@ export default function SchedulesPage() {
                           <div className="text-center">
                             <p className="text-gray-400">リクエスト数</p>
                             <p className="text-lg font-bold text-blue-400">
-                              {(schedule.latest_task.requests_count || 0).toLocaleString()}
+                              {(() => {
+                                const requestsCount = schedule.latest_task.requests_count || 0;
+                                if (requestsCount === 0) {
+                                  return <span className="text-gray-500">未実行</span>;
+                                }
+                                return requestsCount.toLocaleString();
+                              })()}
                             </p>
                           </div>
                           <div className="text-center">
                             <p className="text-gray-400">アイテム数</p>
                             <p className="text-lg font-bold text-green-400">
-                              {(schedule.latest_task.items_count || 0).toLocaleString()}
+                              {(() => {
+                                const itemsCount = schedule.latest_task.items_count || 0;
+                                if (itemsCount === 0) {
+                                  return <span className="text-gray-500">未取得</span>;
+                                }
+                                return itemsCount.toLocaleString();
+                              })()}
                             </p>
                           </div>
                         </div>
 
-                        {/* 完了タスクの進行状況バー（常に表示） */}
-                        <div className="w-full bg-gray-600 rounded-full h-2 mb-2">
-                          <div className="bg-gradient-to-r from-blue-500 to-green-500 h-2 rounded-full transition-all duration-500 flex items-center justify-center text-xs font-bold text-white"
-                               style={{
-                                 width: '100%' // 完了タスクは常に100%
-                               }}>
-                            100%
-                          </div>
-                        </div>
+                            {/* 進行状況バー */}
+                            <div className="w-full bg-gray-600 rounded-full h-2 mb-2">
+                              <div className="bg-gradient-to-r from-blue-500 to-green-500 h-2 rounded-full transition-all duration-500 flex items-center justify-center text-xs font-bold text-white"
+                                   style={{
+                                     width: taskStatus === 'RUNNING' || taskStatus === 'PENDING' ? '50%' : '100%'
+                                   }}>
+                                {taskStatus === 'RUNNING' || taskStatus === 'PENDING' ? '実行中...' : '100%'}
+                              </div>
+                            </div>
 
-                        {/* 完了タスクの詳細説明（常に表示） */}
-                        <div className="text-xs text-gray-600 mt-1">
-                          完了: {schedule.latest_task.items_count || 0}アイテム取得 ({schedule.latest_task.requests_count || 0}リクエスト)
-                        </div>
+                            {/* タスクの詳細説明 */}
+                            <div className="text-xs text-gray-600 mt-1">
+                              {taskStatus === 'finished' ? '完了: ' : '進行中: '}
+                              {itemsCount}アイテム取得 ({requestsCount}リクエスト)
+                            </div>
 
-                        {/* 実行時間表示 */}
-                        {schedule.latest_task.started_at && schedule.latest_task.finished_at && (
-                          <div className="text-xs text-gray-400 mt-2">
-                            実行時間: {formatDateTime(schedule.latest_task.started_at)} ～ {formatDateTime(schedule.latest_task.finished_at)}
+                            {/* 実行時間表示 */}
+                            {(latestTask?.started_at || progressTask?.startedAt) && (
+                              <div className="text-xs text-gray-400 mt-2">
+                                {latestTask?.finished_at || progressTask?.finishedAt ? (
+                                  <>実行時間: {formatDateTime(latestTask?.started_at || progressTask?.startedAt)} ～ {formatDateTime(latestTask?.finished_at || progressTask?.finishedAt)}</>
+                                ) : (
+                                  <>開始時刻: {formatDateTime(latestTask?.started_at || progressTask?.startedAt)}</>
+                                )}
+                              </div>
+                            )}
                           </div>
-                        )}
-                      </div>
+                        )
+                      })()
                     ) : (
                       /* 実行履歴がない場合の待機中表示 */
                       <div className="mt-4 p-3 bg-gray-700/50 rounded-lg border border-gray-600">
@@ -1306,7 +1459,7 @@ export default function SchedulesPage() {
                   </div>
 
                   {/* Rich進捗表示（実行中のみ） */}
-                  {taskProgress[schedule.id] && taskProgress[schedule.id].status === 'running' && (
+                  {taskProgress[schedule.id] && taskProgress[schedule.id].status === 'RUNNING' && (
                     <div className="mt-4">
                       <RichProgressDisplay
                         scheduleId={schedule.id}
@@ -1403,6 +1556,14 @@ export default function SchedulesPage() {
                         title="結果ダウンロード"
                       >
                         <Download className="w-4 h-4" />
+                      </button>
+
+                      <button
+                        onClick={() => window.open(`/schedules/${schedule.id}`, '_blank')}
+                        className="p-2 text-gray-400 hover:text-blue-400 transition-colors"
+                        title="実行履歴"
+                      >
+                        <Calendar className="w-4 h-4" />
                       </button>
 
                       <button

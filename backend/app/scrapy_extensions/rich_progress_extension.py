@@ -18,6 +18,43 @@ from scrapy.exceptions import NotConfigured
 import pytz
 from datetime import datetime
 
+# 動的パス追加（根本対応）
+def _setup_dynamic_imports():
+    """Rich Progress Extension用の動的インポート設定"""
+    try:
+        # 環境変数からパスを取得
+        scrapyui_root = os.environ.get('SCRAPYUI_ROOT')
+        scrapyui_backend = os.environ.get('SCRAPYUI_BACKEND')
+
+        if scrapyui_root and scrapyui_root not in sys.path:
+            sys.path.insert(0, scrapyui_root)
+            print(f"🔧 [RICH] Added SCRAPYUI_ROOT to sys.path: {scrapyui_root}")
+
+        if scrapyui_backend and scrapyui_backend not in sys.path:
+            sys.path.insert(0, scrapyui_backend)
+            print(f"🔧 [RICH] Added SCRAPYUI_BACKEND to sys.path: {scrapyui_backend}")
+
+        # 現在のディレクトリから推測
+        current_file = Path(__file__).absolute()
+        backend_path = current_file.parent.parent.parent  # backend/app/scrapy_extensions/../../../ = backend
+        scrapyui_path = backend_path.parent  # backend/../ = scrapyui root
+
+        if str(backend_path) not in sys.path:
+            sys.path.insert(0, str(backend_path))
+            print(f"🔧 [RICH] Added backend path to sys.path: {backend_path}")
+
+        if str(scrapyui_path) not in sys.path:
+            sys.path.insert(0, str(scrapyui_path))
+            print(f"🔧 [RICH] Added scrapyui path to sys.path: {scrapyui_path}")
+
+        print(f"🔧 [RICH] Current sys.path: {sys.path[:5]}...")  # 最初の5つだけ表示
+
+    except Exception as e:
+        print(f"⚠️ [RICH] Dynamic import setup error: {e}")
+
+# 動的インポート設定を実行
+_setup_dynamic_imports()
+
 # タイムゾーン設定
 TIMEZONE = pytz.timezone('Asia/Tokyo')
 
@@ -74,7 +111,7 @@ class RichProgressExtension:
         # 設定
         self.enabled = self.settings.getbool('RICH_PROGRESS_ENABLED', True)
         self.show_stats = self.settings.getbool('RICH_PROGRESS_SHOW_STATS', True)
-        self.update_interval = self.settings.getfloat('RICH_PROGRESS_UPDATE_INTERVAL', 0.1)
+        self.update_interval = self.settings.getfloat('RICH_PROGRESS_UPDATE_INTERVAL', 2.0)  # 2秒間隔に緩和
         self.websocket_enabled = self.settings.getbool('RICH_PROGRESS_WEBSOCKET', False)
 
         if not self.enabled:
@@ -83,16 +120,34 @@ class RichProgressExtension:
     @classmethod
     def from_crawler(cls, crawler: Crawler):
         """Crawlerからインスタンスを作成"""
+        # Rich Progress WebSocketが無効化されている場合はNoneを返す
+        if not crawler.settings.getbool('RICH_PROGRESS_WEBSOCKET', True):
+            return None
+
         extension = cls(crawler)
-        
-        # シグナルを接続
-        crawler.signals.connect(extension.spider_opened, signal=signals.spider_opened)
-        crawler.signals.connect(extension.spider_closed, signal=signals.spider_closed)
-        crawler.signals.connect(extension.request_scheduled, signal=signals.request_scheduled)
-        crawler.signals.connect(extension.response_received, signal=signals.response_received)
-        crawler.signals.connect(extension.item_scraped, signal=signals.item_scraped)
-        crawler.signals.connect(extension.spider_error, signal=signals.spider_error)
-        
+
+        # シグナルを接続（根本修正版）
+        try:
+            # 基本シグナルを接続
+            crawler.signals.connect(extension.spider_opened, signal=signals.spider_opened)
+            crawler.signals.connect(extension.spider_closed, signal=signals.spider_closed)
+            crawler.signals.connect(extension.request_scheduled, signal=signals.request_scheduled)
+            crawler.signals.connect(extension.response_received, signal=signals.response_received)
+            crawler.signals.connect(extension.item_scraped, signal=signals.item_scraped)
+            crawler.signals.connect(extension.spider_error, signal=signals.spider_error)
+
+            # 統計更新用の追加シグナルも接続
+            try:
+                crawler.signals.connect(extension.request_reached_downloader, signal=signals.request_reached_downloader)
+                crawler.signals.connect(extension.response_downloaded, signal=signals.response_downloaded)
+            except AttributeError:
+                # 一部のシグナルが存在しない場合は無視
+                pass
+
+            print("🔧 Rich Progress Extension signals connected successfully")
+        except Exception as e:
+            print(f"❌ Failed to connect Rich Progress Extension signals: {e}")
+
         return extension
     
     def spider_opened(self, spider: Spider):
@@ -223,8 +278,13 @@ class RichProgressExtension:
             # JSONLファイルパスを構築（複数のパターンを試行）
             from pathlib import Path
 
-            # 可能なファイル名パターン
+            # 可能なファイル名パターン（resultsディレクトリ内を優先）
             possible_files = [
+                # 新しい形式（results/ディレクトリ内）
+                f"results/{task_id}.jsonl",
+                f"results/{task_id}.json",
+                f"results/results_{task_id}.jsonl",
+                # 従来の形式（プロジェクトルート）
                 f"results_{task_id}.jsonl",
                 f"{task_id}.jsonl",
                 f"ranking_results.jsonl",
@@ -239,6 +299,7 @@ class RichProgressExtension:
                 print(f"🔥 [RICH PROGRESS] Checking: {file_path} (exists: {file_path.exists()})")
                 if file_path.exists():
                     jsonl_file_path = file_path
+                    print(f"🔥 [RICH PROGRESS] ✅ Found result file: {file_path}")
                     break
 
             if not jsonl_file_path:
@@ -275,9 +336,12 @@ class RichProgressExtension:
             spider.logger.error(f"❌ Traceback: {traceback.format_exc()}")
 
     def _execute_bulk_insert(self, task_id: str, lines: list, spider):
-        """JSONLファイル全体をバルクインサート（重複チェック付き）"""
+        """JSONLファイル全体をバルクインサート（根本対応版）"""
         try:
             spider.logger.info(f"🔄 Starting JSONL bulk insert for {len(lines)} lines")
+
+            # タスクの存在確認と作成（根本対応）
+            task_id = self._ensure_task_exists(task_id, spider)
 
             # 直接バルクインサートを実行
             inserted_count = self._bulk_insert_from_jsonl_lines(task_id, lines, spider)
@@ -589,31 +653,152 @@ class RichProgressExtension:
 
         except Exception as e:
             spider.logger.error(f"❌ Completion notification error: {e}")
-    
-    def request_scheduled(self, request: Request, spider: Spider):
-        """リクエスト送信時の処理（Scrapyの統計と同期）"""
-        # Scrapyの統計システムから実際の値を取得して同期
-        self._sync_with_scrapy_stats()
-        self._update_progress()
-        self._save_stats()
 
-    def response_received(self, response: Response, request: Request, spider: Spider):
-        """レスポンス受信時の処理"""
-        self.stats['responses_count'] += 1
-        self._update_progress()
-        self._save_stats()
+    def _ensure_task_exists(self, task_id: str, spider) -> str:
+        """タスクの存在確認と作成（根本対応）"""
+        try:
+            from ..database import SessionLocal, Task
+            from datetime import datetime
 
-    def item_scraped(self, item: Dict[str, Any], response: Response, spider: Spider):
-        """アイテム取得時の処理"""
-        self.stats['items_count'] += 1
-        self._update_progress()
-        self._save_stats()
+            db = SessionLocal()
+            try:
+                # タスクの存在確認
+                existing_task = db.query(Task).filter(Task.id == task_id).first()
 
-    def spider_error(self, failure, response: Response, spider: Spider):
-        """エラー発生時の処理"""
-        self.stats['errors_count'] += 1
-        self._update_progress()
-        self._save_stats()
+                if existing_task:
+                    spider.logger.info(f"✅ Task {task_id} already exists")
+                    return task_id
+
+                # タスクが存在しない場合は作成
+                spider.logger.warning(f"⚠️ Task {task_id} not found, creating new task")
+
+                new_task = Task(
+                    id=task_id,
+                    spider_name=spider.name,
+                    project_name=getattr(spider, 'project_name', 'unknown'),
+                    status='RUNNING',
+                    items_count=0,
+                    requests_count=0,
+                    errors_count=0,
+                    created_at=datetime.now(TIMEZONE),
+                    started_at=datetime.now(TIMEZONE),
+                    updated_at=datetime.now(TIMEZONE)
+                )
+
+                db.add(new_task)
+                db.commit()
+
+                spider.logger.info(f"✅ Created new task: {task_id}")
+                return task_id
+
+            finally:
+                db.close()
+
+        except Exception as e:
+            spider.logger.error(f"❌ Task creation error: {e}")
+            # フォールバック：元のタスクIDを返す
+            return task_id
+
+    def request_scheduled(self, request, spider):
+        """リクエスト送信時の処理（根本修正版）"""
+        try:
+            # 統計を直接更新
+            self.stats['requests_count'] += 1
+            spider.logger.debug(f"📤 Request scheduled: {self.stats['requests_count']}")
+
+            # Scrapyの統計システムから実際の値を取得して同期
+            self._sync_with_scrapy_stats()
+            self._update_progress()
+            self._save_stats()
+        except Exception as e:
+            spider.logger.error(f"❌ Error in request_scheduled: {e}")
+
+    def request_reached_downloader(self, request, spider):
+        """リクエストがダウンローダーに到達した時の処理（追加シグナル）"""
+        try:
+            spider.logger.debug(f"🔄 Request reached downloader: {request.url}")
+            self._sync_with_scrapy_stats()
+            self._update_progress()
+        except Exception as e:
+            spider.logger.error(f"❌ Error in request_reached_downloader: {e}")
+
+    def response_received(self, response, request, spider):
+        """レスポンス受信時の処理（根本修正版）"""
+        try:
+            # 統計を直接更新
+            self.stats['responses_count'] += 1
+            spider.logger.debug(f"📥 Response received: {self.stats['responses_count']}")
+
+            # Scrapyの統計システムから実際の値を取得して同期
+            self._sync_with_scrapy_stats()
+            self._update_progress()
+            self._save_stats()
+        except Exception as e:
+            spider.logger.error(f"❌ Error in response_received: {e}")
+
+    def response_downloaded(self, response, request, spider):
+        """レスポンスダウンロード完了時の処理（追加シグナル）"""
+        try:
+            spider.logger.debug(f"✅ Response downloaded: {response.url}")
+            self._sync_with_scrapy_stats()
+            self._update_progress()
+        except Exception as e:
+            spider.logger.error(f"❌ Error in response_downloaded: {e}")
+
+    def item_scraped(self, item, response, spider):
+        """アイテム取得時の処理（根本修正版）"""
+        try:
+            # 統計を直接更新
+            self.stats['items_count'] += 1
+            spider.logger.debug(f"📦 Item scraped: {self.stats['items_count']}")
+
+            # Scrapyの統計システムから実際の値を取得して同期
+            self._sync_with_scrapy_stats()
+            self._update_progress()
+            self._save_stats()
+        except Exception as e:
+            spider.logger.error(f"❌ Error in item_scraped: {e}")
+
+    def spider_error(self, failure, response, spider):
+        """エラー発生時の処理（根本修正版）"""
+        try:
+            # 統計を直接更新
+            self.stats['errors_count'] += 1
+            spider.logger.debug(f"❌ Error occurred: {self.stats['errors_count']}")
+
+            # Scrapyの統計システムから実際の値を取得して同期
+            self._sync_with_scrapy_stats()
+            self._update_progress()
+            self._save_stats()
+        except Exception as e:
+            spider.logger.error(f"❌ Error in spider_error: {e}")
+
+    def _sync_with_scrapy_stats(self):
+        """Scrapyの統計システムと同期（根本修正版）"""
+        try:
+            if hasattr(self, 'crawler') and hasattr(self.crawler, 'stats'):
+                scrapy_stats = self.crawler.stats.get_stats()
+
+                # Scrapyの統計から実際の値を取得
+                scrapy_requests = scrapy_stats.get('downloader/request_count', 0)
+                scrapy_responses = scrapy_stats.get('downloader/response_count', 0)
+                scrapy_items = scrapy_stats.get('item_scraped_count', 0)
+                scrapy_errors = scrapy_stats.get('spider_exceptions', 0)
+
+                # 統計を同期（Scrapyの値を優先）
+                if scrapy_requests > 0:
+                    self.stats['requests_count'] = scrapy_requests
+                if scrapy_responses > 0:
+                    self.stats['responses_count'] = scrapy_responses
+                if scrapy_items > 0:
+                    self.stats['items_count'] = scrapy_items
+                if scrapy_errors > 0:
+                    self.stats['errors_count'] = scrapy_errors
+
+                print(f"🔄 Stats synced - R:{scrapy_requests}, Res:{scrapy_responses}, I:{scrapy_items}, E:{scrapy_errors}")
+
+        except Exception as e:
+            print(f"❌ Error syncing with Scrapy stats: {e}")
     
     def _initialize_progress(self, spider: Spider):
         """Rich進捗バーを初期化"""
@@ -639,8 +824,8 @@ class RichProgressExtension:
         )
         
         if self.show_stats:
-            # ライブ表示でテーブルと進捗バーを組み合わせ
-            self.live = Live(self._create_layout(), console=self.console, refresh_per_second=10)
+            # ライブ表示でテーブルと進捗バーを組み合わせ（リフレッシュレートを緩和）
+            self.live = Live(self._create_layout(), console=self.console, refresh_per_second=2)
             self.live.start()
         else:
             self.progress.start()
@@ -867,19 +1052,34 @@ class RichProgressExtension:
             pass
 
     def _sync_with_scrapy_stats(self):
-        """Scrapyの統計情報と同期（Scrapyの統計を優先）"""
+        """Scrapyの統計情報と同期（強化版）"""
         try:
             if hasattr(self.crawler, 'stats'):
                 scrapy_stats = self.crawler.stats
 
                 # Scrapyの統計情報を常に優先（実際のHTTPリクエスト数と一致させる）
-                self.stats['items_count'] = scrapy_stats.get_value('item_scraped_count', self.stats['items_count'])
-                self.stats['requests_count'] = scrapy_stats.get_value('downloader/request_count', self.stats['requests_count'])
-                self.stats['responses_count'] = scrapy_stats.get_value('response_received_count', self.stats['responses_count'])
-                self.stats['errors_count'] = scrapy_stats.get_value('spider_exceptions', self.stats['errors_count'])
+                items_count = scrapy_stats.get_value('item_scraped_count', 0)
+                requests_count = scrapy_stats.get_value('downloader/request_count', 0)
+                responses_count = scrapy_stats.get_value('response_received_count', 0)
+                errors_count = scrapy_stats.get_value('spider_exceptions', 0)
+
+                # 統計が更新された場合のみ反映
+                if items_count > 0:
+                    self.stats['items_count'] = items_count
+                if requests_count > 0:
+                    self.stats['requests_count'] = requests_count
+                if responses_count > 0:
+                    self.stats['responses_count'] = responses_count
+                if errors_count > 0:
+                    self.stats['errors_count'] = errors_count
+
+                # デバッグ情報
+                if items_count > 0 or requests_count > 0:
+                    print(f"📊 Stats sync: items={items_count}, requests={requests_count}, responses={responses_count}")
 
         except Exception as e:
             # 同期エラーは無視
+            print(f"⚠️ Stats sync error: {e}")
             pass
 
 
@@ -895,8 +1095,8 @@ RICH_PROGRESS_ENABLED = True
 # 詳細統計を表示
 RICH_PROGRESS_SHOW_STATS = True
 
-# 更新間隔（秒）
-RICH_PROGRESS_UPDATE_INTERVAL = 0.1
+# 更新間隔（秒）- 大幅に緩和
+RICH_PROGRESS_UPDATE_INTERVAL = 2.0
 
 # WebSocket通知を有効化
 RICH_PROGRESS_WEBSOCKET = True
