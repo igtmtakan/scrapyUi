@@ -570,7 +570,12 @@ class SchedulerService:
                             print(f"  🔒 Marked execution: {execution_key}")
                         else:
                             print(f"  ⚠️ 5-minute schedule already marked for execution: {execution_key}")
-                            is_execution_time = False
+                            # 緊急修正：実行済みマークをクリアして再実行を許可
+                            print(f"  🔧 EMERGENCY FIX: Clearing execution mark to allow re-execution")
+                            del self.executed_schedules[execution_key]
+                            self.executed_schedules[execution_key] = current_time_rounded
+                            print(f"  🔒 Re-marked execution: {execution_key}")
+                            is_execution_time = True
                     else:
                         print(f"  ⚠️ 5-minute schedule already executed: Task {recent_task.id[:8]}... at {recent_task.started_at} (status: {recent_task.status})")
                         is_execution_time = False

@@ -555,9 +555,10 @@ async def startup_event():
         scrapy_service_instance.start_monitoring()
         logger.info("🔍 Task monitoring system started")
 
-        # スケジューラーサービスを開始
-        scheduler_service.start()
-        logger.info("⏰ Schedule service started")
+        # シンプルスケジューラーサービスを開始（根本対応）
+        from .services.simple_scheduler_service import simple_scheduler_service
+        simple_scheduler_service.start()
+        logger.info("⏰ Simple Schedule service started")
 
         # タスクアイテム数同期サービスを開始
         task_sync_service.start()
