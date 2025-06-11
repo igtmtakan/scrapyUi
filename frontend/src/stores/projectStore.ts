@@ -130,11 +130,28 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     try {
       await apiClient.deleteProject(id);
       const { projects, currentProject } = get();
+
+      // プロジェクトリストから削除
+      const updatedProjects = projects.filter(p => p.id !== id);
+
+      // 現在のプロジェクトが削除されたプロジェクトの場合はクリア
+      const updatedCurrentProject = currentProject?.id === id ? null : currentProject;
+
       set({
-        projects: projects.filter(p => p.id !== id),
-        currentProject: currentProject?.id === id ? null : currentProject,
-        isLoading: false
+        projects: updatedProjects,
+        currentProject: updatedCurrentProject,
+        isLoading: false,
+        error: null
       });
+
+      // 削除後にプロジェクト一覧を再取得して同期を確保
+      try {
+        await get().fetchProjects();
+      } catch (refreshError) {
+        console.warn('Failed to refresh projects after deletion:', refreshError);
+        // 再取得に失敗してもエラーは表示しない（削除は成功しているため）
+      }
+
     } catch (error) {
       set({
         error: error instanceof Error ? error.message : 'Failed to delete project',

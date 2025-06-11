@@ -679,6 +679,8 @@ EXTENSIONS = {
     "scrapy.extensions.logstats.LogStats": 500,
     # Rich進捗バー拡張機能を追加（スパイダーコードを変更せずに進捗バーを表示）
     "app.scrapy_extensions.rich_progress_extension.RichProgressExtension": 400,
+    # 軽量プログレスシステム拡張機能を追加（より軽量で安定）
+    "app.scrapy_extensions.lightweight_progress_extension.LightweightProgressExtension": 300,
 }'''
 
             if 'ADDONS = {}' in content:
@@ -712,7 +714,22 @@ RICH_PROGRESS_UPDATE_INTERVAL = 0.1    # 更新間隔（秒）
 RICH_PROGRESS_WEBSOCKET = True         # WebSocket通知（オプション）
 '''
 
-            content += rich_progress_settings
+            # 4. 軽量プログレスシステム設定を追加
+            lightweight_progress_settings = '''
+
+# ===== 軽量プログレスシステム設定 =====
+# より軽量で安定したプログレス表示システム
+LIGHTWEIGHT_PROGRESS_WEBSOCKET = True  # WebSocket通知を有効化
+LIGHTWEIGHT_BULK_INSERT = True         # バルクインサートを有効化
+
+# 自動ファイル管理設定
+AUTO_FILE_MANAGEMENT = True           # 自動ファイル管理を有効化
+MAX_JSONL_LINES = 500                 # JSONLファイルの最大行数（極めて積極的に）
+KEEP_SESSIONS = 1                     # 保持するセッション数（最新のみ）
+AUTO_CLEANUP_INTERVAL_HOURS = 1       # 自動クリーンアップ間隔（1時間毎）
+'''
+
+            content += rich_progress_settings + lightweight_progress_settings
 
             # ファイルに書き戻し
             with open(settings_file, 'w', encoding='utf-8') as f:

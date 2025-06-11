@@ -543,7 +543,8 @@ def system_health_check():
         # データベース接続チェック
         db = SessionLocal()
         try:
-            db.execute("SELECT 1")
+            from sqlalchemy import text
+            db.execute(text("SELECT 1"))
             db_status = "healthy"
         except Exception:
             db_status = "unhealthy"

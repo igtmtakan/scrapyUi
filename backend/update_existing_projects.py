@@ -30,12 +30,25 @@ EXTENSIONS = {
     "scrapy.extensions.logstats.LogStats": 500,
     # Rich進捗バー拡張機能を追加（スパイダーコードを変更せずに進捗バーを表示）
     "app.scrapy_extensions.rich_progress_extension.RichProgressExtension": 400,
+    # 軽量プログレスシステム拡張機能を追加（より軽量で安定）
+    "app.scrapy_extensions.lightweight_progress_extension.LightweightProgressExtension": 300,
 }
 
 RICH_PROGRESS_ENABLED = True           # 進捗バーを有効化
 RICH_PROGRESS_SHOW_STATS = True        # 詳細統計を表示
 RICH_PROGRESS_UPDATE_INTERVAL = 0.1    # 更新間隔（秒）
 RICH_PROGRESS_WEBSOCKET = False        # WebSocket通知（オプション）
+
+# ===== 軽量プログレスシステム設定 =====
+# より軽量で安定したプログレス表示システム
+LIGHTWEIGHT_PROGRESS_WEBSOCKET = True  # WebSocket通知を有効化
+LIGHTWEIGHT_BULK_INSERT = True         # バルクインサートを有効化
+
+# 自動ファイル管理設定
+AUTO_FILE_MANAGEMENT = True           # 自動ファイル管理を有効化
+MAX_JSONL_LINES = 500                 # JSONLファイルの最大行数（極めて積極的に）
+KEEP_SESSIONS = 1                     # 保持するセッション数（最新のみ）
+AUTO_CLEANUP_INTERVAL_HOURS = 1       # 自動クリーンアップ間隔（1時間毎）
 """
 
 
@@ -94,7 +107,9 @@ def update_extensions_setting(content: str) -> str:
             
             new_extensions += '''
     # Rich進捗バー拡張機能を追加（スパイダーコードを変更せずに進捗バーを表示）
-    "app.scrapy_extensions.rich_progress_extension.RichProgressExtension": 400,'''
+    "app.scrapy_extensions.rich_progress_extension.RichProgressExtension": 400,
+    # 軽量プログレスシステム拡張機能を追加（より軽量で安定）
+    "app.scrapy_extensions.lightweight_progress_extension.LightweightProgressExtension": 300,'''
             
             # 既存のEXTENSIONS設定を置換
             new_extensions_block = f"EXTENSIONS = {{{new_extensions}\n}}"

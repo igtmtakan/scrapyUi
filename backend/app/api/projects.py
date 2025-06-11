@@ -228,32 +228,48 @@ async def get_projects(
     - **200**: プロジェクトのリストを返します
     - **500**: サーバーエラー
     """
-    # 管理者は全プロジェクト、一般ユーザーは自分のプロジェクトのみ
-    if current_user.role == UserRole.ADMIN or current_user.role == "admin" or current_user.role == "ADMIN":
-        projects = db.query(DBProject).join(DBUser).all()
-    else:
-        projects = db.query(DBProject).filter(DBProject.user_id == current_user.id).join(DBUser).all()
+    try:
+        # 管理者は全プロジェクト、一般ユーザーは自分のプロジェクトのみ
+        # LEFT JOINを使用してユーザーが削除されたプロジェクトも取得
+        if current_user.role == UserRole.ADMIN or current_user.role == "admin" or current_user.role == "ADMIN":
+            projects = db.query(DBProject).outerjoin(DBUser).filter(DBProject.is_active == True).all()
+        else:
+            projects = db.query(DBProject).outerjoin(DBUser).filter(
+                DBProject.user_id == current_user.id,
+                DBProject.is_active == True
+            ).all()
 
-    # ユーザー名を含むレスポンスを作成
-    result = []
-    for project in projects:
-        project_dict = {
-            "id": project.id,
-            "name": project.name,
-            "description": project.description,
-            "path": project.path,
-            "scrapy_version": project.scrapy_version,
-            "settings": project.settings,
-            "db_save_enabled": project.db_save_enabled,
-            "created_at": project.created_at,
-            "updated_at": project.updated_at,
-            "user_id": project.user_id,
-            "username": project.user.username if project.user else None,
-            "is_active": project.is_active  # is_activeフィールドを追加
-        }
-        result.append(project_dict)
+        # ユーザー名を含むレスポンスを作成
+        result = []
+        for project in projects:
+            try:
+                project_dict = {
+                    "id": project.id,
+                    "name": project.name,
+                    "description": project.description,
+                    "path": project.path,
+                    "scrapy_version": project.scrapy_version,
+                    "settings": project.settings or {},
+                    "db_save_enabled": project.db_save_enabled,
+                    "created_at": project.created_at,
+                    "updated_at": project.updated_at,
+                    "user_id": project.user_id,
+                    "username": project.user.username if project.user else "Unknown User",
+                    "is_active": project.is_active
+                }
+                result.append(project_dict)
+            except Exception as e:
+                print(f"⚠️ Error processing project {project.id}: {str(e)}")
+                # 個別のプロジェクト処理エラーは無視して続行
+                continue
 
-    return result
+        print(f"📊 Retrieved {len(result)} active projects for user {current_user.username}")
+        return result
+
+    except Exception as e:
+        print(f"❌ Error in get_projects: {str(e)}")
+        # エラーが発生した場合は空のリストを返す（フロントエンドの表示を維持）
+        return []
 
 @router.get("/{project_id}", response_model=ProjectWithSpiders)
 async def get_project(
@@ -494,47 +510,73 @@ async def update_project(
     return db_project
 
 @router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_project(project_id: str, db: Session = Depends(get_db)):
-    """プロジェクトを削除"""
-    db_project = db.query(DBProject).filter(DBProject.id == project_id).first()
-    if not db_project:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Project not found"
-        )
-
-    # プロジェクトに関連するスケジュールを削除
+async def delete_project(
+    project_id: str,
+    db: Session = Depends(get_db),
+    current_user: DBUser = Depends(get_current_active_user)
+):
+    """プロジェクトを削除（論理削除）"""
     try:
-        from ..database import Schedule as DBSchedule
-        related_schedules = db.query(DBSchedule).filter(DBSchedule.project_id == project_id).all()
+        db_project = db.query(DBProject).filter(DBProject.id == project_id).first()
+        if not db_project:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Project not found"
+            )
 
-        if related_schedules:
-            print(f"🗑️ Deleting {len(related_schedules)} schedules related to project {db_project.name}")
-            for schedule in related_schedules:
-                print(f"  - Deleting schedule: {schedule.name} (ID: {schedule.id})")
-                db.delete(schedule)
+        # 管理者以外は自分のプロジェクトのみ削除可能
+        is_admin = (current_user.role == UserRole.ADMIN or
+                    current_user.role == "admin" or
+                    current_user.role == "ADMIN")
+        if not is_admin and db_project.user_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied"
+            )
 
-        # 変更をコミット（スケジュール削除）
+        print(f"🗑️ Deleting project: {db_project.name} (ID: {project_id})")
+
+        # プロジェクトに関連するスケジュールを削除
+        try:
+            from ..database import Schedule as DBSchedule
+            related_schedules = db.query(DBSchedule).filter(DBSchedule.project_id == project_id).all()
+
+            if related_schedules:
+                print(f"🗑️ Deleting {len(related_schedules)} schedules related to project {db_project.name}")
+                for schedule in related_schedules:
+                    print(f"  - Deleting schedule: {schedule.name} (ID: {schedule.id})")
+                    db.delete(schedule)
+
+            # 変更をコミット（スケジュール削除）
+            db.commit()
+            print(f"✅ Successfully deleted {len(related_schedules)} related schedules")
+
+        except Exception as e:
+            print(f"⚠️ Error deleting related schedules: {str(e)}")
+            db.rollback()
+            # スケジュール削除に失敗してもプロジェクト削除は続行
+
+        # 論理削除（is_activeをFalseに設定）
+        db_project.is_active = False
         db.commit()
-        print(f"✅ Successfully deleted {len(related_schedules)} related schedules")
 
+        print(f"✅ Project {db_project.name} marked as inactive (logical deletion)")
+
+        # 物理的なディレクトリ削除は行わない（データ保護のため）
+        # 必要に応じて管理者が手動で削除可能
+
+        return None
+
+    except HTTPException:
+        # HTTPExceptionの場合は再発生
+        raise
     except Exception as e:
-        print(f"⚠️ Error deleting related schedules: {str(e)}")
+        print(f"❌ Error in delete_project: {str(e)}")
         db.rollback()
-        # スケジュール削除に失敗してもプロジェクト削除は続行
-
-    # Scrapyプロジェクトディレクトリの削除（オプション）
-    try:
-        scrapy_service = ScrapyPlaywrightService()
-        scrapy_service.delete_project(db_project.path)
-    except Exception as e:
-        # ディレクトリ削除に失敗してもデータベースからは削除する
-        pass
-
-    db.delete(db_project)
-    db.commit()
-
-    return None
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete project: {str(e)}"
+        )
 
 
 # 手動同期エンドポイントは削除されました

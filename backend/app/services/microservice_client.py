@@ -230,12 +230,58 @@ class MicroserviceClient:
         # まずテストサービスをチェック
         if self.health_check("test_service"):
             return True
-        
+
         # 次にSpider Managerをチェック
         if self.health_check("spider_manager"):
             return True
-        
+
         return False
+
+    def execute_watchdog_task(self, project_name: str, spider_name: str, settings: Dict = None, schedule_id: str = None) -> Dict:
+        """watchdogタスクを実行（スケジューラー用）"""
+        try:
+            task_id = str(uuid.uuid4())
+
+            request_data = {
+                "task_id": task_id,
+                "project_name": project_name,
+                "spider_name": spider_name,
+                "settings": settings or {},
+                "schedule_id": schedule_id
+            }
+
+            # Spider Managerサービスに送信
+            service_url = self._get_service_url("spider_manager")
+
+            response = requests.post(
+                f"{service_url}/execute-watchdog",
+                json=request_data,
+                timeout=self.timeout
+            )
+
+            if response.status_code == 200:
+                result = response.json()
+                logger.info(f"✅ Watchdog task execution started: {task_id}")
+                return {
+                    "success": True,
+                    "task_id": task_id,
+                    "result": result
+                }
+            else:
+                logger.error(f"❌ Watchdog task execution failed: {response.status_code} - {response.text}")
+                return {
+                    "success": False,
+                    "error": f"HTTP {response.status_code}: {response.text}",
+                    "task_id": task_id
+                }
+
+        except Exception as e:
+            logger.error(f"❌ Watchdog task execution error: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "task_id": task_id if 'task_id' in locals() else None
+            }
 
 # グローバルクライアントインスタンス
 microservice_client = MicroserviceClient()

@@ -63,6 +63,8 @@ async def get_schedules(
         DBProject, DBSchedule.project_id == DBProject.id
     ).join(
         DBSpider, DBSchedule.spider_id == DBSpider.id
+    ).filter(
+        DBProject.is_active == True  # アクティブなプロジェクトのスケジュールのみ表示
     )
 
     # 管理者は全スケジュール、一般ユーザーは自分のプロジェクトのスケジュールのみ
@@ -253,7 +255,10 @@ async def get_schedule(schedule_id: str, db: Session = Depends(get_db)):
         DBProject, DBSchedule.project_id == DBProject.id
     ).join(
         DBSpider, DBSchedule.spider_id == DBSpider.id
-    ).filter(DBSchedule.id == schedule_id).first()
+    ).filter(
+        DBSchedule.id == schedule_id,
+        DBProject.is_active == True  # アクティブなプロジェクトのスケジュールのみ
+    ).first()
 
     if not result:
         raise HTTPException(

@@ -38,7 +38,8 @@ async def health_check(db: Session = Depends(get_db)):
     """
     try:
         # データベース接続テスト
-        db.execute("SELECT 1")
+        from sqlalchemy import text
+        db.execute(text("SELECT 1"))
 
         # 認証設定の確認
         auth_settings = default_settings_service.get_auth_settings()

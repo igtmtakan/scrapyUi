@@ -333,7 +333,8 @@ class SchedulerService:
             db = SessionLocal()
             try:
                 # 簡単なクエリでデータベース接続をテスト
-                db.execute("SELECT 1")
+                from sqlalchemy import text
+                db.execute(text("SELECT 1"))
                 db.close()
             except Exception as db_error:
                 print(f"⚠️ Database health check failed: {db_error}")
@@ -463,11 +464,12 @@ class SchedulerService:
                     print(f"    - Next run: {schedule.next_run.strftime('%H:%M:%S') if schedule.next_run else 'None'}")
                     print(f"    - Last run: {schedule.last_run.strftime('%H:%M:%S') if schedule.last_run else 'None'}")
 
-                    # missed execution（実行漏れ）をチェックして即座に実行
-                    missed_executions = self._check_and_execute_missed_executions(schedule, current_time, db)
-                    if missed_executions > 0:
-                        print(f"⚠️ Detected and executed {missed_executions} missed executions for {schedule.name}")
-                        executed_count += missed_executions
+                    # missed execution（実行漏れ）をチェックして即座に実行 - 一時的に無効化
+                    # missed_executions = self._check_and_execute_missed_executions(schedule, current_time, db)
+                    # if missed_executions > 0:
+                    #     print(f"⚠️ Detected and executed {missed_executions} missed executions for {schedule.name}")
+                    #     executed_count += missed_executions
+                    print(f"    ⚠️ Missed execution check disabled to prevent spam")
 
                     # デバッグ情報を出力
                     should_execute = self._should_execute_schedule(schedule, current_time, db)
@@ -704,8 +706,11 @@ class SchedulerService:
 
             print(f"🔧 Legacy execution for {schedule.name}: {project.name}/{spider.name}")
 
-            # タスクをデータベースに作成（緊急修正版）
-            task_id = str(uuid.uuid4())
+            # タスクをデータベースに作成（根本修正版）
+            # タスクIDを統一フォーマットで生成
+            import time
+            timestamp = int(time.time())
+            task_id = f"task_{timestamp}"
 
             # プロジェクトディレクトリの確認
             project_dir = f"/home/igtmtakan/workplace/python/scrapyUI/scrapy_projects/{project.name}"
@@ -779,15 +784,21 @@ class SchedulerService:
             try:
                 python_path = sys.executable
                 cmd = [
-                    python_path, "-m", "scrapy", "crawlwithwatchdog",  # 元に戻す
+                    python_path, "-m", "scrapy", "crawlwithwatchdog",
                     spider.name,
                     "-s", f"TASK_ID={new_task.id}",
                     "-s", f"SCHEDULE_ID={schedule.id}",
                     "-s", "FEED_EXPORT_ENCODING=utf-8",
                     "-s", "ROBOTSTXT_OBEY=False",
-                    "-s", "LIGHTWEIGHT_PROGRESS_WEBSOCKET=True",  # 軽量プログレス表示システム有効化
+                    "-s", "LIGHTWEIGHT_PROGRESS_WEBSOCKET=True",
                     "-o", f"results/{new_task.id}.jsonl"
                 ]
+
+                # 環境変数でタスクIDを確実に渡す
+                env = os.environ.copy()
+                env['SCRAPY_TASK_ID'] = new_task.id
+                env['SCRAPY_SCHEDULE_ID'] = str(schedule.id)
+                env['SCRAPY_PROJECT_PATH'] = project_dir
 
                 print(f"🚀 Executing command: {' '.join(cmd)}")
                 print(f"📁 Working directory: {project_dir}")
@@ -797,11 +808,13 @@ class SchedulerService:
                     print(f"❌ Project directory not found: {project_dir}")
                     raise Exception(f"Project directory not found: {project_dir}")
 
-                # 同期でScrapyを実行（緊急修正版）
-                print(f"🔧 Starting subprocess.run...")
+                # 同期でScrapyを実行（根本修正版）
+                print(f"🔧 Starting subprocess.run with env vars...")
+                print(f"🔧 SCRAPY_TASK_ID: {env.get('SCRAPY_TASK_ID')}")
                 result = subprocess.run(
                     cmd,
                     cwd=project_dir,
+                    env=env,  # 環境変数を渡す
                     capture_output=True,
                     text=True,
                     timeout=300  # 5分タイムアウト
