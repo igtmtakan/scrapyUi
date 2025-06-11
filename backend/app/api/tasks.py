@@ -1704,50 +1704,62 @@ async def download_task_results(
             # 結果ファイルパス（JSONLとJSONの両方を検索）
             result_file_path = None
 
-            # JSONLファイルを優先的に検索
-            jsonl_file_path = scrapy_service.base_projects_dir / project.path / f"results_{task_id}.jsonl"
+            # ファイルパス解決（根本修正版）
+            import glob
+
+            # 1. 最も一般的なパス: results/task_id.jsonl
+            jsonl_file_path = scrapy_service.base_projects_dir / project.path / "results" / f"{task_id}.jsonl"
             if jsonl_file_path.exists():
                 result_file_path = jsonl_file_path
+                print(f"✅ Found JSONL file: {result_file_path}")
             else:
-                # JSONファイルを検索
-                json_file_path = scrapy_service.base_projects_dir / project.path / f"results_{task_id}.json"
-                if json_file_path.exists():
-                    result_file_path = json_file_path
+                # 2. 標準パス: results_task_id.jsonl
+                jsonl_file_path_std = scrapy_service.base_projects_dir / project.path / f"results_{task_id}.jsonl"
+                if jsonl_file_path_std.exists():
+                    result_file_path = jsonl_file_path_std
+                    print(f"✅ Found JSONL file (std): {result_file_path}")
                 else:
-                    # 代替パスも試行
-                    # 二重パス（プロジェクト内のプロジェクトディレクトリ）
-                    jsonl_file_path = scrapy_service.base_projects_dir / project.path / project.path / f"results_{task_id}.jsonl"
-                    json_file_path = scrapy_service.base_projects_dir / project.path / project.path / f"results_{task_id}.json"
-
-                    if jsonl_file_path.exists():
-                        result_file_path = jsonl_file_path
-                    elif json_file_path.exists():
+                    # 3. JSON代替パス: results/task_id.json
+                    json_file_path = scrapy_service.base_projects_dir / project.path / "results" / f"{task_id}.json"
+                    if json_file_path.exists():
                         result_file_path = json_file_path
+                        print(f"✅ Found JSON file: {result_file_path}")
                     else:
-                        # プロジェクトディレクトリ内を検索
-                        import glob
-                        # JSONLファイルを検索
-                        pattern = str(scrapy_service.base_projects_dir / project.path / "**" / f"results_{task_id}.jsonl")
-                        matches = glob.glob(pattern, recursive=True)
-                        if matches:
-                            result_file_path = Path(matches[0])
+                        # 4. 標準JSONパス: results_task_id.json
+                        json_file_path_std = scrapy_service.base_projects_dir / project.path / f"results_{task_id}.json"
+                        if json_file_path_std.exists():
+                            result_file_path = json_file_path_std
+                            print(f"✅ Found JSON file (std): {result_file_path}")
                         else:
-                            # JSONファイルを検索
-                            pattern = str(scrapy_service.base_projects_dir / project.path / "**" / f"results_{task_id}.json")
+                            # 5. 再帰検索（最後の手段）
+                            print(f"🔍 Searching recursively for {task_id} files...")
+
+                            # JSONL検索
+                            pattern = str(scrapy_service.base_projects_dir / project.path / "**" / f"*{task_id}*.jsonl")
                             matches = glob.glob(pattern, recursive=True)
                             if matches:
                                 result_file_path = Path(matches[0])
+                                print(f"✅ Found JSONL file (recursive): {result_file_path}")
                             else:
-                                # 最後の手段：全体検索
-                                pattern = str(scrapy_service.base_projects_dir / "**" / f"results_{task_id}.jsonl")
+                                # JSON検索
+                                pattern = str(scrapy_service.base_projects_dir / project.path / "**" / f"*{task_id}*.json")
                                 matches = glob.glob(pattern, recursive=True)
                                 if matches:
                                     result_file_path = Path(matches[0])
+                                    print(f"✅ Found JSON file (recursive): {result_file_path}")
                                 else:
-                                    pattern = str(scrapy_service.base_projects_dir / "**" / f"results_{task_id}.json")
+                                    # 全体検索
+                                    pattern = str(scrapy_service.base_projects_dir / "**" / f"*{task_id}*.jsonl")
                                     matches = glob.glob(pattern, recursive=True)
                                     if matches:
                                         result_file_path = Path(matches[0])
+                                        print(f"✅ Found JSONL file (global): {result_file_path}")
+                                    else:
+                                        pattern = str(scrapy_service.base_projects_dir / "**" / f"*{task_id}*.json")
+                                        matches = glob.glob(pattern, recursive=True)
+                                        if matches:
+                                            result_file_path = Path(matches[0])
+                                            print(f"✅ Found JSON file (global): {result_file_path}")
 
             if not result_file_path:
                 # より詳細なエラー情報を提供
@@ -1863,33 +1875,56 @@ async def download_task_results_file(
         result_file_path = None
         file_extension = format.lower()
 
-        # 指定された形式のファイルを検索
-        target_file_path = scrapy_service.base_projects_dir / project.path / f"results_{task_id}.{file_extension}"
+        # 指定された形式のファイルを検索（修正版）
+        print(f"🔍 Searching for {file_extension} file for task {task_id}")
+
+        # 1. 最も一般的なパス: results/task_id.extension
+        target_file_path = scrapy_service.base_projects_dir / project.path / "results" / f"{task_id}.{file_extension}"
+        print(f"  Checking: {target_file_path}")
         if target_file_path.exists():
             result_file_path = target_file_path
+            print(f"  ✅ Found: {result_file_path}")
         else:
-            # 代替パスも試行
-            target_file_path = scrapy_service.base_projects_dir / project.path / project.path / f"results_{task_id}.{file_extension}"
+            # 2. 標準パス: results_task_id.extension
+            target_file_path = scrapy_service.base_projects_dir / project.path / f"results_{task_id}.{file_extension}"
+            print(f"  Checking: {target_file_path}")
             if target_file_path.exists():
                 result_file_path = target_file_path
+                print(f"  ✅ Found: {result_file_path}")
             else:
-                # プロジェクトディレクトリ内を検索
-                import glob
-                pattern = str(scrapy_service.base_projects_dir / project.path / "**" / f"results_{task_id}.{file_extension}")
-                matches = glob.glob(pattern, recursive=True)
-                if matches:
-                    result_file_path = Path(matches[0])
+                # 3. 代替パス: project/project/results_task_id.extension
+                target_file_path = scrapy_service.base_projects_dir / project.path / project.path / f"results_{task_id}.{file_extension}"
+                print(f"  Checking: {target_file_path}")
+                if target_file_path.exists():
+                    result_file_path = target_file_path
+                    print(f"  ✅ Found: {result_file_path}")
                 else:
-                    # 最後の手段：全体検索
-                    pattern = str(scrapy_service.base_projects_dir / "**" / f"results_{task_id}.{file_extension}")
+                    # 4. 再帰検索
+                    import glob
+                    print(f"  🔍 Recursive search for {task_id}.{file_extension}")
+
+                    # 実際のファイル名パターン
+                    pattern = str(scrapy_service.base_projects_dir / project.path / "**" / f"{task_id}.{file_extension}")
                     matches = glob.glob(pattern, recursive=True)
                     if matches:
                         result_file_path = Path(matches[0])
+                        print(f"  ✅ Found (recursive): {result_file_path}")
                     else:
-                        # 汎用ファイル名でも検索
-                        pattern = str(scrapy_service.base_projects_dir / project.path / f"results.{file_extension}")
-                        if Path(pattern).exists():
-                            result_file_path = Path(pattern)
+                        # 標準パターン
+                        pattern = str(scrapy_service.base_projects_dir / project.path / "**" / f"results_{task_id}.{file_extension}")
+                        matches = glob.glob(pattern, recursive=True)
+                        if matches:
+                            result_file_path = Path(matches[0])
+                            print(f"  ✅ Found (recursive std): {result_file_path}")
+                        else:
+                            # 全体検索
+                            pattern = str(scrapy_service.base_projects_dir / "**" / f"{task_id}.{file_extension}")
+                            matches = glob.glob(pattern, recursive=True)
+                            if matches:
+                                result_file_path = Path(matches[0])
+                                print(f"  ✅ Found (global): {result_file_path}")
+                            else:
+                                print(f"  ❌ File not found: {task_id}.{file_extension}")
 
         if not result_file_path:
             # EXCEL形式の場合はDBからデータを取得して生成
