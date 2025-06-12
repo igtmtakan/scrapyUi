@@ -74,18 +74,33 @@ async def get_system_status():
             "message": "FastAPI backend is running"
         }
 
-        # SchedulerService状態チェック
+        # Simple Scheduler状態チェック（最終修正版）
         try:
-            from ..services.scheduler_service import scheduler_service
+            from ..services.simple_scheduler_service import simple_scheduler_service
+
+            # Simple Schedulerの詳細状態を取得
+            scheduler_status = simple_scheduler_service.get_status()
+            is_running = scheduler_status.get("running", False)
+            active_schedules = scheduler_status.get("active_schedules", 0)
+            scheduler_type = scheduler_status.get("type", "simple_scheduler")
+
             status_info["services"]["scheduler"] = {
-                "status": "running" if scheduler_service.running else "stopped",
-                "message": f"Scheduler is {'running' if scheduler_service.running else 'stopped'}"
+                "status": "running" if is_running else "stopped",
+                "message": f"{scheduler_type.replace('_', ' ').title()} is {'running' if is_running else 'stopped'} ({active_schedules} active schedules)"
             }
         except Exception as e:
-            status_info["services"]["scheduler"] = {
-                "status": "error",
-                "message": f"Error checking Scheduler service: {str(e)}"
-            }
+            # フォールバック：旧scheduler_serviceもチェック
+            try:
+                from ..services.scheduler_service import scheduler_service
+                status_info["services"]["scheduler"] = {
+                    "status": "running" if scheduler_service.running else "stopped",
+                    "message": f"Legacy Scheduler is {'running' if scheduler_service.running else 'stopped'}"
+                }
+            except Exception as e2:
+                status_info["services"]["scheduler"] = {
+                    "status": "error",
+                    "message": f"Error checking Scheduler service: {str(e)} / {str(e2)}"
+                }
 
         # Celery Scheduler (Beat) 状態チェック
         try:

@@ -239,6 +239,7 @@ class Schedule(Base):
     # Foreign Keys
     project_id = Column(String(36), ForeignKey("projects.id"), nullable=False)
     spider_id = Column(String(36), ForeignKey("spiders.id"), nullable=False)
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=False)  # user_idを追加
 
     # Settings for the scheduled run
     settings = Column(JSON)

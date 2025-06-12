@@ -181,6 +181,7 @@ class ScheduleBase(BaseModel):
 class ScheduleCreate(ScheduleBase):
     project_id: str
     spider_id: str
+    user_id: str
 
 class ScheduleUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=100)
@@ -193,6 +194,7 @@ class Schedule(ScheduleBase):
     id: str
     project_id: str
     spider_id: str
+    user_id: str
     project_name: Optional[str] = None
     spider_name: Optional[str] = None
     last_run: Optional[datetime] = None
