@@ -1263,13 +1263,13 @@ export default function SchedulesPage() {
                                 <div className="text-center">
                                   <p className="text-gray-400">アイテム/秒</p>
                                   <p className="font-bold text-yellow-400">
-                                    {taskProgress[schedule.id].richStats.items_per_second.toFixed(2)}
+                                    {(taskProgress[schedule.id].richStats?.items_per_second || 0).toFixed(2)}
                                   </p>
                                 </div>
                                 <div className="text-center">
                                   <p className="text-gray-400">成功率</p>
                                   <p className="font-bold text-purple-400">
-                                    {taskProgress[schedule.id].richStats.success_rate.toFixed(1)}%
+                                    {(taskProgress[schedule.id].richStats?.success_rate || 0).toFixed(1)}%
                                   </p>
                                 </div>
                               </div>
@@ -1361,8 +1361,9 @@ export default function SchedulesPage() {
                                 </span>
                               </div>
                           <button
-                            onClick={() => window.open(`/projects/${schedule.project_id}/tasks/${schedule.latest_task.id}/results`, '_blank')}
+                            onClick={() => window.open(`/projects/${schedule.project_id}/tasks/${schedule.latest_task?.id}/results`, '_blank')}
                             className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
+                            disabled={!schedule.latest_task?.id}
                           >
                             結果表示
                           </button>
@@ -1373,7 +1374,7 @@ export default function SchedulesPage() {
                             <p className="text-gray-400">リクエスト数</p>
                             <p className="text-lg font-bold text-blue-400">
                               {(() => {
-                                const requestsCount = schedule.latest_task.requests_count || 0;
+                                const requestsCount = schedule.latest_task?.requests_count || 0;
                                 if (requestsCount === 0) {
                                   return <span className="text-gray-500">未実行</span>;
                                 }
@@ -1385,7 +1386,7 @@ export default function SchedulesPage() {
                             <p className="text-gray-400">アイテム数</p>
                             <p className="text-lg font-bold text-green-400">
                               {(() => {
-                                const itemsCount = schedule.latest_task.items_count || 0;
+                                const itemsCount = schedule.latest_task?.items_count || 0;
                                 if (itemsCount === 0) {
                                   return <span className="text-gray-500">未取得</span>;
                                 }
@@ -1679,25 +1680,25 @@ export default function SchedulesPage() {
                   <div className="bg-gray-700 rounded-lg p-4">
                     <p className="text-xs text-gray-400">アイテム数</p>
                     <p className="text-xl font-bold text-cyan-400">
-                      {selectedScheduleStats.richStats.items_count.toLocaleString()}
+                      {(selectedScheduleStats.richStats?.items_count || 0).toLocaleString()}
                     </p>
                   </div>
                   <div className="bg-gray-700 rounded-lg p-4">
                     <p className="text-xs text-gray-400">リクエスト数</p>
                     <p className="text-xl font-bold text-blue-400">
-                      {selectedScheduleStats.richStats.requests_count.toLocaleString()}
+                      {(selectedScheduleStats.richStats?.requests_count || 0).toLocaleString()}
                     </p>
                   </div>
                   <div className="bg-gray-700 rounded-lg p-4">
                     <p className="text-xs text-gray-400">レスポンス数</p>
                     <p className="text-xl font-bold text-green-400">
-                      {selectedScheduleStats.richStats.responses_count.toLocaleString()}
+                      {(selectedScheduleStats.richStats?.responses_count || 0).toLocaleString()}
                     </p>
                   </div>
                   <div className="bg-gray-700 rounded-lg p-4">
                     <p className="text-xs text-gray-400">エラー数</p>
                     <p className="text-xl font-bold text-red-400">
-                      {selectedScheduleStats.richStats.errors_count.toLocaleString()}
+                      {(selectedScheduleStats.richStats?.errors_count || 0).toLocaleString()}
                     </p>
                   </div>
                 </div>
@@ -1713,19 +1714,19 @@ export default function SchedulesPage() {
                   <div className="bg-gray-700 rounded-lg p-4">
                     <p className="text-xs text-gray-400">アイテム/秒</p>
                     <p className="text-xl font-bold text-yellow-400">
-                      {selectedScheduleStats.richStats.items_per_second.toFixed(2)}
+                      {(selectedScheduleStats.richStats?.items_per_second || 0).toFixed(2)}
                     </p>
                   </div>
                   <div className="bg-gray-700 rounded-lg p-4">
                     <p className="text-xs text-gray-400">リクエスト/秒</p>
                     <p className="text-xl font-bold text-orange-400">
-                      {selectedScheduleStats.richStats.requests_per_second.toFixed(2)}
+                      {(selectedScheduleStats.richStats?.requests_per_second || 0).toFixed(2)}
                     </p>
                   </div>
                   <div className="bg-gray-700 rounded-lg p-4">
                     <p className="text-xs text-gray-400">アイテム/分</p>
                     <p className="text-xl font-bold text-pink-400">
-                      {selectedScheduleStats.richStats.items_per_minute.toFixed(2)}
+                      {(selectedScheduleStats.richStats?.items_per_minute || 0).toFixed(2)}
                     </p>
                   </div>
                 </div>
@@ -1741,13 +1742,13 @@ export default function SchedulesPage() {
                   <div className="bg-gray-700 rounded-lg p-4">
                     <p className="text-xs text-gray-400">成功率</p>
                     <p className="text-xl font-bold text-green-400">
-                      {selectedScheduleStats.richStats.success_rate.toFixed(1)}%
+                      {(selectedScheduleStats.richStats?.success_rate || 0).toFixed(1)}%
                     </p>
                   </div>
                   <div className="bg-gray-700 rounded-lg p-4">
                     <p className="text-xs text-gray-400">エラー率</p>
                     <p className="text-xl font-bold text-red-400">
-                      {selectedScheduleStats.richStats.error_rate.toFixed(1)}%
+                      {(selectedScheduleStats.richStats?.error_rate || 0).toFixed(1)}%
                     </p>
                   </div>
                 </div>
@@ -1763,33 +1764,33 @@ export default function SchedulesPage() {
                   <div className="bg-gray-700 rounded-lg p-4">
                     <p className="text-xs text-gray-400">200 OK</p>
                     <p className="text-xl font-bold text-green-400">
-                      {selectedScheduleStats.richStats.downloader_response_status_count_200.toLocaleString()}
+                      {(selectedScheduleStats.richStats?.downloader_response_status_count_200 || 0).toLocaleString()}
                     </p>
                   </div>
                   <div className="bg-gray-700 rounded-lg p-4">
                     <p className="text-xs text-gray-400">404 Not Found</p>
                     <p className="text-xl font-bold text-yellow-400">
-                      {selectedScheduleStats.richStats.downloader_response_status_count_404.toLocaleString()}
+                      {(selectedScheduleStats.richStats?.downloader_response_status_count_404 || 0).toLocaleString()}
                     </p>
                   </div>
                   <div className="bg-gray-700 rounded-lg p-4">
                     <p className="text-xs text-gray-400">500 Server Error</p>
                     <p className="text-xl font-bold text-red-400">
-                      {selectedScheduleStats.richStats.downloader_response_status_count_500.toLocaleString()}
+                      {(selectedScheduleStats.richStats?.downloader_response_status_count_500 || 0).toLocaleString()}
                     </p>
                   </div>
                 </div>
               </div>
 
               {/* 時間情報 */}
-              {(selectedScheduleStats.richStats.start_time || selectedScheduleStats.richStats.finish_time) && (
+              {(selectedScheduleStats.richStats?.start_time || selectedScheduleStats.richStats?.finish_time) && (
                 <div>
                   <h4 className="text-lg font-medium text-white mb-4 flex items-center space-x-2">
                     <Clock className="h-5 w-5 text-blue-400" />
                     <span>時間情報</span>
                   </h4>
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    {selectedScheduleStats.richStats.start_time && (
+                    {selectedScheduleStats.richStats?.start_time && (
                       <div className="bg-gray-700 rounded-lg p-4">
                         <p className="text-xs text-gray-400">開始時刻</p>
                         <p className="text-sm font-bold text-blue-400">
@@ -1797,7 +1798,7 @@ export default function SchedulesPage() {
                         </p>
                       </div>
                     )}
-                    {selectedScheduleStats.richStats.finish_time && (
+                    {selectedScheduleStats.richStats?.finish_time && (
                       <div className="bg-gray-700 rounded-lg p-4">
                         <p className="text-xs text-gray-400">終了時刻</p>
                         <p className="text-sm font-bold text-green-400">
@@ -1808,7 +1809,7 @@ export default function SchedulesPage() {
                     <div className="bg-gray-700 rounded-lg p-4">
                       <p className="text-xs text-gray-400">実行時間</p>
                       <p className="text-sm font-bold text-yellow-400">
-                        {selectedScheduleStats.richStats.elapsed_time_seconds.toFixed(1)}秒
+                        {(selectedScheduleStats.richStats?.elapsed_time_seconds || 0).toFixed(1)}秒
                       </p>
                     </div>
                   </div>
