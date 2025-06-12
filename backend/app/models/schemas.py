@@ -181,7 +181,7 @@ class ScheduleBase(BaseModel):
 class ScheduleCreate(ScheduleBase):
     project_id: str
     spider_id: str
-    user_id: str
+    # user_idは認証されたユーザーから自動設定されるため不要
 
 class ScheduleUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=100)

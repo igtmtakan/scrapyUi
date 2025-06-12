@@ -295,7 +295,7 @@ async def get_schedule(schedule_id: str, db: Session = Depends(get_db)):
     description="新しいスケジュールを作成します。",
     response_description="作成されたスケジュールの情報"
 )
-async def create_schedule(schedule: ScheduleCreate, db: Session = Depends(get_db)):
+async def create_schedule(schedule: ScheduleCreate, db: Session = Depends(get_db), current_user: DBUser = Depends(get_current_active_user)):
     """
     ## スケジュール作成
 
@@ -393,7 +393,7 @@ async def create_schedule(schedule: ScheduleCreate, db: Session = Depends(get_db
             detail="Schedule with this name already exists in the project"
         )
 
-    # データベースに保存
+    # データベースに保存（user_id自動設定）
     db_schedule = DBSchedule(
         id=str(uuid.uuid4()),
         name=schedule.name,
@@ -401,6 +401,7 @@ async def create_schedule(schedule: ScheduleCreate, db: Session = Depends(get_db
         cron_expression=schedule.cron_expression,
         project_id=schedule.project_id,
         spider_id=schedule.spider_id,
+        user_id=current_user.id,  # 現在のユーザーIDを自動設定
         is_active=schedule.is_active,
         next_run=next_run,
         settings=schedule.settings
