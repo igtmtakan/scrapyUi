@@ -798,20 +798,29 @@ async def create_spider(
 ):
     """新しいスパイダーを作成"""
 
-    print(f"DEBUG: Received spider creation request:")
-    print(f"  name: {spider.name}")
-    print(f"  project_id: {spider.project_id}")
-    print(f"  template: {spider.template}")
-    print(f"  code_length: {len(spider.code) if spider.code else 0}")
-    print(f"  settings: {spider.settings}")
+    try:
+        print(f"DEBUG: Received spider creation request:")
+        print(f"  name: {spider.name}")
+        print(f"  project_id: {spider.project_id}")
+        print(f"  template: {spider.template}")
+        print(f"  code_length: {len(spider.code) if spider.code else 0}")
+        print(f"  settings: {spider.settings}")
 
-    # プロジェクトの存在確認
-    project = db.query(DBProject).filter(DBProject.id == spider.project_id).first()
-    if not project:
-        print(f"DEBUG: Project not found: {spider.project_id}")
+        # プロジェクトの存在確認
+        project = db.query(DBProject).filter(DBProject.id == spider.project_id).first()
+        if not project:
+            print(f"DEBUG: Project not found: {spider.project_id}")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Project not found"
+            )
+    except Exception as e:
+        print(f"❌ Error in spider creation initial validation: {str(e)}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Project not found"
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Spider creation validation failed: {str(e)}"
         )
 
     # スパイダー名の重複チェック
@@ -920,26 +929,42 @@ async def create_spider(
         print(f"✅ Spider created successfully: {spider.name}")
         return db_spider
 
+    except HTTPException:
+        # HTTPExceptionはそのまま再発生
+        raise
     except Exception as e:
         # エラー時のクリーンアップ
         print(f"❌ Error creating spider: {str(e)}")
+        import traceback
+        traceback.print_exc()
 
         # データベースロールバック
-        if db_spider:
-            db.rollback()
+        try:
+            if db_spider:
+                db.rollback()
+        except Exception as rollback_error:
+            print(f"⚠️ Failed to rollback database: {rollback_error}")
 
         # ファイル削除
-        if file_created and spider_file_path.exists():
-            try:
+        try:
+            if file_created and spider_file_path.exists():
                 spider_file_path.unlink()
                 print(f"🗑️ Cleaned up file: {spider_file_path}")
-            except Exception as cleanup_error:
-                print(f"⚠️ Failed to cleanup file: {cleanup_error}")
+        except Exception as cleanup_error:
+            print(f"⚠️ Failed to cleanup file: {cleanup_error}")
 
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create spider: {str(e)}"
-        )
+        # 詳細なエラー情報を含めて再発生
+        error_detail = f"Failed to create spider: {str(e)}"
+        if "validation" in str(e).lower():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=error_detail
+            )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=error_detail
+            )
 
 @router.put("/{spider_id}", response_model=Spider)
 async def update_spider(
