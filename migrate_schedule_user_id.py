@@ -12,7 +12,13 @@ def migrate_schedule_user_id():
     """Schedule テーブルに user_id カラムを追加"""
     
     # データベースファイルのパス
-    db_path = Path("backend/scrapy_ui.db")
+    # スクリプトの実行場所に応じてパスを調整
+    if Path("backend/database/scrapy_ui.db").exists():
+        db_path = Path("backend/database/scrapy_ui.db")
+    elif Path("database/scrapy_ui.db").exists():
+        db_path = Path("database/scrapy_ui.db")
+    else:
+        db_path = Path("backend/database/scrapy_ui.db")  # デフォルト
     
     if not db_path.exists():
         print(f"❌ Database file not found: {db_path}")
