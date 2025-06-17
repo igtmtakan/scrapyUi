@@ -394,6 +394,10 @@ class ApiClient {
           // JSONでない場合はテキストをそのまま使用
           throw new Error(`API request failed: ${response.status} ${response.statusText}${responseText ? ` - ${responseText}` : ''}`);
         }
+      } else {
+        // レスポンステキストが空の場合
+        console.warn('Empty response body for error status:', response.status);
+        throw new Error(`API request failed: ${response.status} ${response.statusText} - Empty response body`);
       }
 
       // FastAPIのバリデーションエラーの場合
@@ -405,6 +409,22 @@ class ApiClient {
           throw new Error(`Validation Error: ${validationErrors}`);
         } else {
           throw new Error(`Validation Error: ${errorData.detail}`);
+        }
+      }
+
+      // 400エラーの詳細処理
+      if (response.status === 400) {
+        console.error('400 Bad Request Details:', {
+          errorData,
+          responseText,
+          url: response.url,
+          requestBody: options.body
+        });
+
+        if (errorData.detail) {
+          throw new Error(`Bad Request: ${errorData.detail}`);
+        } else {
+          throw new Error(`Bad Request: ${responseText || 'Unknown error'}`);
         }
       }
 
@@ -1032,16 +1052,31 @@ class ApiClient {
     project_id?: string;
     settings?: Record<string, any>;
   }): Promise<Spider> {
-    return this.request<Spider>('/api/spiders/', {
-      method: 'POST',
-      body: JSON.stringify({
-        name: spiderData.name,
-        code: spiderData.code,
-        template: spiderData.template,
-        project_id: projectId,
-        settings: spiderData.settings || {}
-      }),
+    const requestData = {
+      name: spiderData.name,
+      code: spiderData.code,
+      template: spiderData.template,
+      project_id: projectId,
+      settings: spiderData.settings || {}
+    };
+
+    console.log('🕷️ Creating spider with data:', {
+      ...requestData,
+      code_length: requestData.code.length,
+      code_preview: requestData.code.substring(0, 200) + '...'
     });
+
+    try {
+      const result = await this.request<Spider>('/api/spiders/', {
+        method: 'POST',
+        body: JSON.stringify(requestData),
+      });
+      console.log('✅ Spider created successfully:', result.id);
+      return result;
+    } catch (error) {
+      console.error('❌ Spider creation failed:', error);
+      throw error;
+    }
   }
 
   async updateSpider(id: string, spiderData: Partial<Spider>): Promise<Spider> {
