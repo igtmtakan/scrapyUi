@@ -35,13 +35,11 @@ from ..performance.python313_optimizations import (
     jit_optimizer
 )
 
-# Rich progress imports
-try:
-    from ..utils.rich_progress import ScrapyProgressTracker, RichSpiderMonitor
-    RICH_AVAILABLE = True
-except ImportError:
-    RICH_AVAILABLE = False
-    print("⚠️ Rich progress not available - falling back to standard progress")
+# Rich progress removed for stability
+RICH_AVAILABLE = False
+
+# 統一FEED設定管理をインポート
+from ..core.feed_config import feed_config
 
 class ScrapyPlaywrightService:
     """Scrapy + Playwright統合を管理するサービスクラス（シングルトン）"""
@@ -79,11 +77,8 @@ class ScrapyPlaywrightService:
         self.monitoring_thread = None
         self.stop_monitoring = False
 
-        # Rich progress tracker
+        # Rich progress removed for stability
         self.rich_tracker = None
-        if RICH_AVAILABLE:
-            self.rich_tracker = ScrapyProgressTracker()
-            print("✨ Rich progress tracking enabled")
 
         self._initialized = True
         print(f"🔧 ScrapyPlaywrightService initialized with base_dir: {self.base_projects_dir.absolute()}")
@@ -145,6 +140,9 @@ class ScrapyPlaywrightService:
             # ScrapyUIデータベースパイプラインを追加（DB保存設定に基づく）
             # 注意: プロジェクト作成時はproject_idとuser_idがまだ利用できないため、後でAPI層で同期する
             self._setup_database_pipeline(project_dir / project_name, project_name, db_save_enabled)
+
+            # 統一FEED設定を追加（FeedExporter根本対応）
+            self._setup_safe_feed_settings(project_dir / project_name, project_name)
 
             # カスタムコマンド設定
             self._setup_custom_commands(project_dir / project_name, project_name)
@@ -672,15 +670,11 @@ sys.path.append('/home/igtmtakan/workplace/python/scrapyUI/backend')
             # 2. ADDONS = {} の後にEXTENSIONS設定を追加
             extensions_setting = '''
 
-# Rich進捗バー拡張機能を有効化
+# 標準Scrapy拡張機能のみ使用
 EXTENSIONS = {
     "scrapy.extensions.telnet.TelnetConsole": None,
     "scrapy.extensions.corestats.CoreStats": 500,
     "scrapy.extensions.logstats.LogStats": 500,
-    # Rich進捗バー拡張機能を追加（スパイダーコードを変更せずに進捗バーを表示）
-    "app.scrapy_extensions.rich_progress_extension.RichProgressExtension": 400,
-    # 軽量プログレスシステム拡張機能を追加（より軽量で安定）
-    "app.scrapy_extensions.lightweight_progress_extension.LightweightProgressExtension": 300,
 }'''
 
             if 'ADDONS = {}' in content:
@@ -758,40 +752,8 @@ AUTO_CLEANUP_INTERVAL_HOURS = 1       # 自動クリーンアップ間隔（1時
                 self.logger.info(f"FEED settings already exist in {settings_file}")
                 return
 
-            # FEED設定を追加
-            feed_settings = '''
-
-# ===== FEED設定 =====
-# 複数形式での結果出力をサポート
-FEEDS = {
-    'results.jsonl': {
-        'format': 'jsonlines',
-        'encoding': 'utf-8',
-        'store_empty': False,
-        'item_export_kwargs': {
-            'ensure_ascii': False
-        }
-    },
-    'results.json': {
-        'format': 'json',
-        'encoding': 'utf-8',
-        'store_empty': False,
-        'item_export_kwargs': {
-            'ensure_ascii': False,
-            'indent': 2
-        }
-    },
-    'results.csv': {
-        'format': 'csv',
-        'encoding': 'utf-8',
-        'store_empty': False
-    },
-    'results.xml': {
-        'format': 'xml',
-        'encoding': 'utf-8',
-        'store_empty': False
-    }
-}'''
+            # 統一FEED設定を追加
+            feed_settings = feed_config.create_project_feed_settings(project_name)
 
             # Rich進捗バー設定の前に追加
             if "# ===== Rich進捗バー設定 =====" in content:
@@ -811,6 +773,46 @@ FEEDS = {
 
         except Exception as e:
             self.logger.warning(f"Failed to add FEED settings to settings.py: {str(e)}")
+
+    def _setup_safe_feed_settings(self, project_package_dir: Path, project_name: str):
+        """新規プロジェクトに統一FEED設定を適用（FeedExporter根本対応）"""
+        try:
+            settings_file = project_package_dir / "settings.py"
+
+            if not settings_file.exists():
+                self.logger.warning(f"settings.py not found: {settings_file}")
+                return
+
+            # 現在の内容を読み込み
+            with open(settings_file, 'r', encoding='utf-8') as f:
+                content = f.read()
+
+            # 統一FEED設定を生成
+            safe_feed_settings = feed_config.create_project_feed_settings(project_name)
+
+            # 既存のFEED_EXPORT_ENCODINGを削除（重複回避）
+            import re
+            content = re.sub(
+                r'FEED_EXPORT_ENCODING\s*=\s*[\'"][^\'"]*[\'"]',
+                '',
+                content
+            )
+
+            # ファイル末尾に統一FEED設定を追加
+            if not content.endswith('\n'):
+                content += '\n'
+            content += '\n# ===== ScrapyUI統一FEED設定 =====\n'
+            content += '# FeedExporter根本対応による安全な設定\n'
+            content += safe_feed_settings
+
+            # ファイルに書き戻し
+            with open(settings_file, 'w', encoding='utf-8') as f:
+                f.write(content)
+
+            self.logger.info(f"Applied safe FEED settings to new project: {project_name}")
+
+        except Exception as e:
+            self.logger.warning(f"Failed to apply safe FEED settings to {project_name}: {str(e)}")
 
     def _sync_commands_to_database(self, project_id: str, project_name: str, user_id: str, project_package_dir: Path):
         """commandsディレクトリのファイルをデータベースに同期"""

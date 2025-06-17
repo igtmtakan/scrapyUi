@@ -12,6 +12,12 @@ from pathlib import Path
 import re
 from typing import List, Tuple
 
+# ScrapyUIのバックエンドパスを追加
+sys.path.append('/home/igtmtakan/workplace/python/scrapyUI/backend')
+
+# 統一FEED設定管理をインポート
+from app.core.feed_config import feed_config
+
 
 def get_rich_progress_settings() -> str:
     """Rich進捗バー設定のテンプレートを取得"""
@@ -23,15 +29,11 @@ def get_rich_progress_settings() -> str:
 import sys
 sys.path.append('/home/igtmtakan/workplace/python/scrapyUI/backend')
 
-# Rich進捗バー拡張機能を有効化
+# 標準Scrapy拡張機能のみ使用
 EXTENSIONS = {
     "scrapy.extensions.telnet.TelnetConsole": None,
     "scrapy.extensions.corestats.CoreStats": 500,
     "scrapy.extensions.logstats.LogStats": 500,
-    # Rich進捗バー拡張機能を追加（スパイダーコードを変更せずに進捗バーを表示）
-    "app.scrapy_extensions.rich_progress_extension.RichProgressExtension": 400,
-    # 軽量プログレスシステム拡張機能を追加（より軽量で安定）
-    "app.scrapy_extensions.lightweight_progress_extension.LightweightProgressExtension": 300,
 }
 
 RICH_PROGRESS_ENABLED = True           # 進捗バーを有効化
@@ -98,18 +100,10 @@ def update_extensions_setting(content: str) -> str:
         # 既存のEXTENSIONS設定を更新
         existing_extensions = match.group(1)
         
-        # RichProgressExtensionが既に含まれているかチェック
+        # 標準Scrapy拡張機能のみ使用（RichProgress関連は完全削除）
         if "RichProgressExtension" not in existing_extensions:
-            # 新しい拡張機能を追加
+            # 標準拡張機能のみ使用
             new_extensions = existing_extensions.rstrip()
-            if new_extensions and not new_extensions.endswith(','):
-                new_extensions += ','
-            
-            new_extensions += '''
-    # Rich進捗バー拡張機能を追加（スパイダーコードを変更せずに進捗バーを表示）
-    "app.scrapy_extensions.rich_progress_extension.RichProgressExtension": 400,
-    # 軽量プログレスシステム拡張機能を追加（より軽量で安定）
-    "app.scrapy_extensions.lightweight_progress_extension.LightweightProgressExtension": 300,'''
             
             # 既存のEXTENSIONS設定を置換
             new_extensions_block = f"EXTENSIONS = {{{new_extensions}\n}}"

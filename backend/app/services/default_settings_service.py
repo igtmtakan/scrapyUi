@@ -6,6 +6,10 @@ JSONL形式と大容量データ処理に最適化されたデフォルト設定
 from typing import Dict, Any, Optional
 from pathlib import Path
 import json
+import logging
+from ..core.feed_config import feed_config
+
+logger = logging.getLogger(__name__)
 
 
 class DefaultSettingsService:
@@ -179,39 +183,7 @@ class DefaultSettingsService:
         base_settings = {
             'TWISTED_REACTOR': self.default_settings["spider_defaults"]["memory_settings"]["reactor"],
             'FEED_EXPORT_ENCODING': feed_settings["encoding"],
-            'FEEDS': feed_settings.get("feeds", {
-                'results.jsonl': {
-                    'format': 'jsonl',
-                    'encoding': 'utf-8',
-                    'store_empty': False,
-                    'item_export_kwargs': {
-                        'ensure_ascii': False
-                    }
-                },
-                'results.json': {
-                    'format': 'json',
-                    'encoding': 'utf-8',
-                    'store_empty': False,
-                    'item_export_kwargs': {
-                        'ensure_ascii': False
-                    }
-                },
-                'results.csv': {
-                    'format': 'csv',
-                    'encoding': 'utf-8',
-                    'store_empty': False
-                },
-                'results.xml': {
-                    'format': 'xml',
-                    'encoding': 'utf-8',
-                    'store_empty': False
-                },
-                'results.xlsx': {
-                    'format': 'xlsx',
-                    'encoding': 'utf-8',
-                    'store_empty': False
-                }
-            }),
+            'FEEDS': feed_settings.get("feeds", feed_config.get_standard_feeds()),
             'PLAYWRIGHT_BROWSER_TYPE': self.default_settings["spider_defaults"]["playwright_settings"]["browser_type"],
             'PLAYWRIGHT_LAUNCH_OPTIONS': self.default_settings["spider_defaults"]["playwright_settings"]["launch_options"],
             'PLAYWRIGHT_DEFAULT_NAVIGATION_TIMEOUT': self.default_settings["spider_defaults"]["playwright_settings"]["navigation_timeout"],
@@ -237,7 +209,6 @@ class DefaultSettingsService:
                 'scrapy.extensions.corestats.CoreStats': 500,
                 'scrapy.extensions.memusage.MemoryUsage': 500,
                 'scrapy.extensions.logstats.LogStats': 500,
-                'app.scrapy_extensions.rich_progress_extension.RichProgressExtension': 400,
             },
             # Rich進捗バー設定
             'RICH_PROGRESS_ENABLED': True,
@@ -271,39 +242,7 @@ class DefaultSettingsService:
             'AUTOTHROTTLE_ENABLED': True,
             'AUTOTHROTTLE_TARGET_CONCURRENCY': 2.0,
             'MEMUSAGE_LIMIT_MB': self.default_settings["large_data_settings"]["memory_limit_mb"],
-            'FEEDS': feed_settings.get("feeds", {
-                'results.jsonl': {
-                    'format': 'jsonl',
-                    'encoding': 'utf-8',
-                    'store_empty': False,
-                    'item_export_kwargs': {
-                        'ensure_ascii': False
-                    }
-                },
-                'results.json': {
-                    'format': 'json',
-                    'encoding': 'utf-8',
-                    'store_empty': False,
-                    'item_export_kwargs': {
-                        'ensure_ascii': False
-                    }
-                },
-                'results.csv': {
-                    'format': 'csv',
-                    'encoding': 'utf-8',
-                    'store_empty': False
-                },
-                'results.xml': {
-                    'format': 'xml',
-                    'encoding': 'utf-8',
-                    'store_empty': False
-                },
-                'results.xlsx': {
-                    'format': 'xlsx',
-                    'encoding': 'utf-8',
-                    'store_empty': False
-                }
-            })
+            'FEEDS': feed_settings.get("feeds", feed_config.get_standard_feeds())
         }
     
     def get_mobile_settings(self) -> Dict[str, Any]:
@@ -360,29 +299,7 @@ class DefaultSettingsService:
                 'timeout': 30000,
             },
             'PLAYWRIGHT_DEFAULT_NAVIGATION_TIMEOUT': 30000,
-            'FEEDS': {
-                'ranking_results.jsonl': {
-                    'format': 'jsonlines',
-                    'encoding': 'utf8',
-                    'store_empty': False,
-                    'item_export_kwargs': {
-                        'ensure_ascii': False,
-                    },
-                },
-                'ranking_results.json': {
-                    'format': 'json',
-                    'encoding': 'utf8',
-                    'store_empty': False,
-                    'item_export_kwargs': {
-                        'ensure_ascii': False,
-                    },
-                },
-                'ranking_results.csv': {
-                    'format': 'csv',
-                    'encoding': 'utf8',
-                    'store_empty': False,
-                },
-            }
+            'FEEDS': feed_config.get_spider_feeds('amazon_ranking')
         }
 
     def get_puppeteer_settings(self) -> Dict[str, Any]:
@@ -414,29 +331,7 @@ class DefaultSettingsService:
             'PUPPETEER_WAIT_FOR': 3000,
             'PUPPETEER_VIEWPORT': {'width': 1920, 'height': 1080},
             'PUPPETEER_HEADLESS': True,
-            'FEEDS': {
-                'puppeteer_results.jsonl': {
-                    'format': 'jsonlines',
-                    'encoding': 'utf8',
-                    'store_empty': False,
-                    'item_export_kwargs': {
-                        'ensure_ascii': False,
-                    },
-                },
-                'puppeteer_results.json': {
-                    'format': 'json',
-                    'encoding': 'utf8',
-                    'store_empty': False,
-                    'item_export_kwargs': {
-                        'ensure_ascii': False,
-                    },
-                },
-                'puppeteer_results.csv': {
-                    'format': 'csv',
-                    'encoding': 'utf8',
-                    'store_empty': False,
-                },
-            }
+            'FEEDS': feed_config.get_spider_feeds('puppeteer')
         }
 
     def get_export_settings(self) -> Dict[str, Any]:

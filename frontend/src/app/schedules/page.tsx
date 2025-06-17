@@ -26,12 +26,12 @@ import {
 } from 'lucide-react'
 import { Schedule, scheduleService } from '@/services/scheduleService'
 import ScheduleModal from '@/components/schedules/ScheduleModal'
-import RichProgressDisplay from '@/components/schedules/RichProgressDisplay'
+// RichProgressDisplay removed for stability
 import { apiClient } from '@/lib/api'
 import { useAuthStore } from '@/stores/authStore'
 
-// Rich progress統計情報のインターフェース
-interface RichStats {
+// 進捗統計情報のインターフェース
+interface ProgressStats {
   // 基本カウンター
   items_count: number;
   requests_count: number;
@@ -328,15 +328,15 @@ export default function SchedulesPage() {
               startedAt: task.started_at,
               elapsedTime: task.started_at ?
                 Math.floor((new Date().getTime() - new Date(task.started_at).getTime()) / 1000) : 0,
-              richStats: task.rich_stats || null,
+              progressStats: task.progress_stats || null,
               scrapyStatsUsed: task.scrapy_stats_used || false
             }
 
-            // Rich progress統計情報を保存
-            if (task.rich_stats) {
-              setRichStatsData(prev => ({
+            // 進捗統計情報を保存
+            if (task.progress_stats) {
+              setProgressStatsData(prev => ({
                 ...prev,
-                [schedule.id]: task.rich_stats
+                [schedule.id]: task.progress_stats
               }))
             }
 
@@ -1459,21 +1459,25 @@ export default function SchedulesPage() {
                     </div>
                   </div>
 
-                  {/* Rich進捗表示（実行中のみ） */}
+                  {/* 進捗表示（実行中のみ） */}
                   {taskProgress[schedule.id] && taskProgress[schedule.id].status === 'RUNNING' && (
-                    <div className="mt-4">
-                      <RichProgressDisplay
-                        scheduleId={schedule.id}
-                        progressData={{
-                          taskId: taskProgress[schedule.id].taskId,
-                          status: taskProgress[schedule.id].status as 'running' | 'pending' | 'completed' | 'failed',
-                          itemsScraped: taskProgress[schedule.id].itemsScraped,
-                          requestsCount: taskProgress[schedule.id].requestsCount,
-                          elapsedTime: taskProgress[schedule.id].elapsedTime,
-                          startedAt: taskProgress[schedule.id].startedAt
-                        }}
-                        className="mb-4"
-                      />
+                    <div className="mt-4 p-4 bg-gray-800 rounded-lg border border-gray-700">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-sm text-gray-400">実行進捗</span>
+                        <span className="text-sm font-medium text-gray-300">
+                          {taskProgress[schedule.id].itemsScraped} アイテム / {taskProgress[schedule.id].requestsCount} リクエスト
+                        </span>
+                      </div>
+                      <div className="w-full bg-gray-700 rounded-full h-2">
+                        <div
+                          className="bg-gradient-to-r from-blue-500 to-green-500 h-2 rounded-full transition-all duration-300"
+                          style={{
+                            width: `${taskProgress[schedule.id].requestsCount > 0
+                              ? Math.min((taskProgress[schedule.id].itemsScraped / taskProgress[schedule.id].requestsCount) * 100, 100)
+                              : 0}%`
+                          }}
+                        ></div>
+                      </div>
                     </div>
                   )}
 
@@ -1627,15 +1631,15 @@ export default function SchedulesPage() {
         mode={modalMode}
       />
 
-      {/* Rich progress統計情報詳細モーダル */}
+      {/* 進捗統計情報詳細モーダル */}
       {selectedScheduleStats && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-gray-800 rounded-lg p-6 max-w-4xl w-full mx-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-6">
               <h3 className="text-xl font-semibold text-white flex items-center space-x-2">
                 <BarChart3 className="h-6 w-6 text-blue-400" />
-                <span>Rich Progress統計情報</span>
-                <span className="text-xs text-green-400" title="Rich progressと同じ統計情報">
+                <span>進捗統計情報</span>
+                <span className="text-xs text-green-400" title="標準進捗統計情報">
                   ✓
                 </span>
               </h3>

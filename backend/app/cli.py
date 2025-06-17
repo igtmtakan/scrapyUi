@@ -607,22 +607,18 @@ COMMANDS_MODULE = "{name}.commands"
 
 ADDONS = {{}}
 
-# ===== Rich進捗バー設定 =====
-# スパイダーコードを変更せずに美しい進捗バーを表示
+# ===== Scrapy拡張機能設定 =====
+# 標準Scrapy拡張機能のみ使用
 
 # ScrapyUIバックエンドへのパスを追加
 import sys
 sys.path.append('/home/igtmtakan/workplace/python/scrapyUI/backend')
 
-# Rich進捗バー拡張機能を有効化
+# 標準Scrapy拡張機能のみ使用
 EXTENSIONS = {{
     "scrapy.extensions.telnet.TelnetConsole": None,
     "scrapy.extensions.corestats.CoreStats": 500,
     "scrapy.extensions.logstats.LogStats": 500,
-    # Rich進捗バー拡張機能を追加（スパイダーコードを変更せずに進捗バーを表示）
-    "app.scrapy_extensions.rich_progress_extension.RichProgressExtension": 400,
-    # 軽量プログレスシステム拡張機能を追加（より軽量で安定）
-    "app.scrapy_extensions.lightweight_progress_extension.LightweightProgressExtension": 300,
 }}
 
 RICH_PROGRESS_ENABLED = True           # 進捗バーを有効化

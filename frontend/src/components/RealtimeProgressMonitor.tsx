@@ -133,8 +133,8 @@ export default function RealtimeProgressMonitor({
           const message = JSON.parse(event.data);
           console.log('📊 Parsed message:', message);
 
-          // Rich進捗バー用メッセージの処理
-          if (message.type === 'rich_progress' && message.data) {
+          // 進捗バー用メッセージの処理
+          if (message.type === 'progress' && message.data) {
             const progressData = message.data;
 
             // 進捗率を計算（アイテム数ベース、最低でも1%は表示）

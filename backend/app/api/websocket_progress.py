@@ -17,17 +17,17 @@ task_connections: Dict[str, Set[WebSocket]] = {}
 @router.websocket("/ws/progress/{task_id}")
 async def websocket_progress_endpoint(websocket: WebSocket, task_id: str):
     """
-    Rich進捗バー用WebSocketエンドポイント
+    進捗バー用WebSocketエンドポイント
     特定のタスクの進捗情報をリアルタイムで送信
     """
     client_ip = websocket.client.host if websocket.client else "unknown"
-    logger.info(f"📡 Rich進捗WebSocket接続試行: タスクID {task_id}, クライアント: {client_ip}")
+    logger.info(f"📡 進捗WebSocket接続試行: タスクID {task_id}, クライアント: {client_ip}")
 
     try:
         await websocket.accept()
-        logger.info(f"📡 Rich進捗WebSocket接続受諾完了: タスクID {task_id}, クライアント: {client_ip}")
+        logger.info(f"📡 進捗WebSocket接続受諾完了: タスクID {task_id}, クライアント: {client_ip}")
     except Exception as accept_error:
-        logger.error(f"❌ Rich進捗WebSocket接続受諾エラー: {type(accept_error).__name__}: {str(accept_error)}")
+        logger.error(f"❌ 進捗WebSocket接続受諾エラー: {type(accept_error).__name__}: {str(accept_error)}")
         return
 
     # 接続をタスクIDごとに管理
@@ -141,7 +141,7 @@ async def websocket_progress_endpoint(websocket: WebSocket, task_id: str):
 
                 # 進捗データを作成
                 progress_data = {
-                    "type": "rich_progress",
+                    "type": "progress",
                     "data": {
                         "taskId": task.id,
                         "status": task.status.value.lower() if task.status else "unknown",
@@ -208,7 +208,7 @@ async def websocket_progress_endpoint(websocket: WebSocket, task_id: str):
                 logger.info(f"📡 タスクID {task_id} の接続管理を削除")
 
 
-async def broadcast_rich_progress_update(task_id: str, progress_data: dict):
+async def broadcast_progress_update(task_id: str, progress_data: dict):
     """
     特定のタスクの進捗更新をすべての接続クライアントにブロードキャスト
     """
@@ -216,7 +216,7 @@ async def broadcast_rich_progress_update(task_id: str, progress_data: dict):
         return
     
     message = {
-        "type": "rich_progress",
+        "type": "progress",
         "data": progress_data
     }
     
@@ -227,7 +227,7 @@ async def broadcast_rich_progress_update(task_id: str, progress_data: dict):
         try:
             await websocket.send_text(message_str)
         except Exception as e:
-            logger.error(f"❌ Rich進捗ブロードキャストエラー: {type(e).__name__}: {str(e)}")
+            logger.error(f"❌ 進捗ブロードキャストエラー: {type(e).__name__}: {str(e)}")
             logger.error(f"❌ ブロードキャストデータ: {message_str[:200]}...")
             disconnected.add(websocket)
     
