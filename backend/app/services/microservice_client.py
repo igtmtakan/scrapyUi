@@ -33,8 +33,32 @@ class MicroserviceClient:
     def _get_service_url(self, service: str) -> str:
         """サービスURLを取得"""
         return self.base_urls.get(service, self.base_urls["test_service"])
-    
-    async def execute_spider_with_watchdog_async(self, 
+
+    async def execute_spider(self, task_message: Dict) -> bool:
+        """マイクロサービス経由でスパイダーを実行"""
+        try:
+            spider_manager_url = self._get_service_url("spider_manager")
+
+            # spider-managerにタスクを送信
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{spider_manager_url}/execute",
+                    json=task_message,
+                    timeout=aiohttp.ClientTimeout(total=30)
+                ) as response:
+                    if response.status == 200:
+                        result = await response.json()
+                        logger.info(f"✅ Spider task sent to microservice: {task_message['task_id']}")
+                        return True
+                    else:
+                        logger.error(f"❌ Failed to send task to spider-manager: {response.status}")
+                        return False
+
+        except Exception as e:
+            logger.error(f"❌ Error sending task to microservice: {e}")
+            return False
+
+    async def execute_spider_with_watchdog_async(self,
                                                project_id: str,
                                                spider_id: str, 
                                                project_path: str,

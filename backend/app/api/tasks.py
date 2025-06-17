@@ -545,30 +545,40 @@ async def create_task(
             print(f"Project path: {getattr(project, 'path', 'unknown')}")
             print(f"Spider name: {getattr(spider, 'name', 'unknown')}")
 
-            # 手動実行もCeleryタスクを使用（Reactor競合回避）
+            # マイクロサービス経由でタスクを実行
             if not os.getenv("TESTING", False):
                 try:
-                    print(f"🔄 Starting Celery spider execution (manual execution)")
+                    print(f"🔄 Starting microservice spider execution")
                     print(f"   Project ID: {task.project_id}")
                     print(f"   Spider ID: {task.spider_id}")
                     print(f"   Spider Name: {spider.name}")
                     print(f"   Project Path: {project.path}")
 
-                    # Celeryタスクを開始
-                    from ..tasks.scrapy_tasks import run_spider_task
+                    # マイクロサービスにタスクを送信
+                    from ..services.microservice_client import microservice_client
 
-                    celery_task = run_spider_task.delay(
-                        project_id=task.project_id,
-                        spider_id=task.spider_id,
-                        settings=task.settings or {}
-                    )
+                    task_message = {
+                        "task_id": task_id,
+                        "schedule_id": None,  # 手動実行の場合はNone
+                        "project_id": task.project_id,
+                        "spider_id": task.spider_id,
+                        "settings": task.settings or {},
+                        "priority": 5,
+                        "created_at": datetime.now().isoformat()
+                    }
 
-                    # タスクIDをCeleryタスクIDで更新
-                    db_task.celery_task_id = celery_task.id
-                    db_task.status = TaskStatus.PENDING
-                    db.commit()
-                    print(f"✅ Celery task started: {celery_task.id}")
-                    print(f"✅ Task {task_id} created with Celery - returning 201 Created")
+                    # spider-managerマイクロサービスにタスクを送信
+                    success = await microservice_client.execute_spider(task_message)
+
+                    if success:
+                        # タスクを実行中状態に更新
+                        db_task.status = TaskStatus.RUNNING
+                        db_task.started_at = datetime.now(timezone.utc)
+                        db.commit()
+                        print(f"✅ Microservice task started: {task_id}")
+                        print(f"✅ Task {task_id} created with microservice - returning 201 Created")
+                    else:
+                        raise Exception("Failed to start task via microservice")
 
                     # WebSocket通知を送信
                     await manager.send_task_update(task_id, {
@@ -582,13 +592,13 @@ async def create_task(
                         "progress": 0
                     })
 
-                except Exception as celery_error:
-                    print(f"❌ Celery task dispatch error: {str(celery_error)}")
-                    print(f"❌ Error type: {type(celery_error).__name__}")
+                except Exception as microservice_error:
+                    print(f"❌ Microservice task dispatch error: {str(microservice_error)}")
+                    print(f"❌ Error type: {type(microservice_error).__name__}")
                     import traceback
                     traceback.print_exc()
 
-                    # Celeryタスク開始に失敗した場合、タスクを失敗状態で保存
+                    # マイクロサービスタスク開始に失敗した場合、タスクを失敗状態で保存
                     db_task.status = TaskStatus.FAILED
                     db_task.started_at = datetime.now(timezone.utc)
                     db_task.finished_at = datetime.now(timezone.utc)
@@ -607,7 +617,7 @@ async def create_task(
                         "progress": 0
                     })
 
-                    print(f"⚠️ Task {task_id} marked as failed due to Celery task dispatch error")
+                    print(f"⚠️ Task {task_id} marked as failed due to microservice task dispatch error")
 
             else:
                 # テスト環境では即座に完了状態にする

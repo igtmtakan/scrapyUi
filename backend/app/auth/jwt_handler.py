@@ -1,4 +1,4 @@
-import jwt
+from jose import jwt
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any
 import os
@@ -77,7 +77,7 @@ class JWTHandler:
             return payload
         except jwt.ExpiredSignatureError:
             return None
-        except (jwt.PyJWTError, jwt.DecodeError, jwt.ExpiredSignatureError):
+        except (jwt.JWTError, jwt.ExpiredSignatureError):
             return None
 
     @staticmethod
@@ -86,7 +86,7 @@ class JWTHandler:
         try:
             payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM], options={"verify_exp": False})
             return payload
-        except (jwt.PyJWTError, jwt.DecodeError, jwt.ExpiredSignatureError):
+        except (jwt.JWTError, jwt.ExpiredSignatureError):
             return None
 
 class PasswordHandler:

@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from dataclasses import dataclass, asdict
 from collections import defaultdict, Counter
 import uuid
+from pathlib import Path
 
 
 @dataclass
@@ -28,7 +29,11 @@ class UsageEvent:
 class UsageAnalytics:
     """使用統計分析クラス"""
     
-    def __init__(self, db_path: str = "usage_analytics.db"):
+    def __init__(self, db_path: str = None):
+        if db_path is None:
+            # 統一データベースパスを使用
+            project_root = Path(__file__).parent.parent.parent.parent
+            db_path = str(project_root / "backend" / "database" / "scrapy_ui.db")
         self.db_path = db_path
         self.active_sessions = {}
         self.init_database()
