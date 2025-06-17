@@ -7,6 +7,7 @@ from fastapi.openapi.utils import get_openapi
 from starlette.middleware.base import BaseHTTPMiddleware
 import uvicorn
 import os
+import asyncio
 from pathlib import Path
 from dotenv import load_dotenv
 import pytz
@@ -545,6 +546,7 @@ async def startup_event():
         from .services.scrapy_service import ScrapyPlaywrightService
         from .services.scheduler_service import scheduler_service
         from .services.task_sync_service import task_sync_service
+        from .services.redis_event_listener import redis_event_listener
         from .services.task_executor import task_executor
 
         # ScrapyServiceのシングルトンインスタンスを取得
@@ -564,6 +566,10 @@ async def startup_event():
         task_sync_service.start()
         logger.info("🔧 Task sync service started")
 
+        # Redisイベントリスナーを開始（バックグラウンドタスクとして）
+        asyncio.create_task(redis_event_listener.start())
+        logger.info("📡 Redis event listener started")
+
         # タスクエグゼキューターを開始
         task_executor.start()
         logger.info("🚀 Task executor started")
@@ -571,6 +577,17 @@ async def startup_event():
         # リアルタイムWebSocket管理を開始
         realtime_websocket_manager.start()
         logger.info("📡 Realtime WebSocket Manager started")
+
+        # システムヘルスモニターを開始
+        from .services.system_health_monitor import system_health_monitor
+        await system_health_monitor.initialize()
+        await system_health_monitor.start_monitoring()
+        logger.info("🔍 System health monitor started")
+
+        # 自動修復サービスを開始
+        from .services.auto_repair_service import auto_repair_service
+        await auto_repair_service.start_auto_repair()
+        logger.info("🔧 Auto repair service started")
 
         # マイクロサービスの初期化
         try:
@@ -625,6 +642,21 @@ async def shutdown_event():
         task_sync_service.stop()
         logger.info("🔧 Task sync service stopped")
 
+        # Redisイベントリスナーを停止
+        from .services.redis_event_listener import redis_event_listener
+        await redis_event_listener.stop()
+        logger.info("📡 Redis event listener stopped")
+
+        # システムヘルスモニターを停止
+        from .services.system_health_monitor import system_health_monitor
+        await system_health_monitor.stop_monitoring()
+        logger.info("🔍 System health monitor stopped")
+
+        # 自動修復サービスを停止
+        from .services.auto_repair_service import auto_repair_service
+        await auto_repair_service.stop_auto_repair()
+        logger.info("🔧 Auto repair service stopped")
+
         # タスクエグゼキューターを停止
         from .services.task_executor import task_executor
         task_executor.stop()
@@ -670,6 +702,83 @@ async def api_health_check():
         "status": "healthy",
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
+
+@app.get("/api/system/health")
+async def system_health_status():
+    """システムヘルス状態の詳細情報"""
+    try:
+        from .services.system_health_monitor import system_health_monitor
+        health_status = await system_health_monitor.get_health_status()
+        return {
+            "status": "success",
+            "data": health_status
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+@app.get("/api/system/performance")
+async def system_performance_metrics():
+    """システムパフォーマンスメトリクス"""
+    try:
+        from .services.system_health_monitor import system_health_monitor
+        performance_history = await system_health_monitor.get_performance_history()
+        return {
+            "status": "success",
+            "data": performance_history
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+@app.post("/api/system/repair")
+async def manual_system_repair():
+    """手動システム修復"""
+    try:
+        from .services.auto_repair_service import auto_repair_service
+        repair_results = await auto_repair_service.manual_repair_all()
+        return {
+            "status": "success",
+            "data": repair_results
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+@app.post("/api/tasks/{task_id}/repair")
+async def repair_specific_task(task_id: str):
+    """特定タスクの修復"""
+    try:
+        from .services.auto_repair_service import auto_repair_service
+        repair_result = await auto_repair_service.repair_specific_task(task_id)
+        return repair_result
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+@app.get("/api/system/repair/stats")
+async def get_repair_stats():
+    """修復統計情報"""
+    try:
+        from .services.auto_repair_service import auto_repair_service
+        stats = await auto_repair_service.get_repair_stats()
+        return {
+            "status": "success",
+            "data": stats
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e)
+        }
 
 # OPTIONSハンドラーを削除 - CORSMiddlewareに任せる
 

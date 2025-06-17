@@ -192,11 +192,16 @@ class SpiderManager:
             output_file = Path(spider_process.output_file)
             items_count = 0
             file_size = 0
-            
+
             if output_file.exists():
                 file_size = output_file.stat().st_size
-                with open(output_file, 'r') as f:
-                    items_count = sum(1 for line in f if line.strip())
+                try:
+                    with open(output_file, 'r', encoding='utf-8') as f:
+                        items_count = sum(1 for line in f if line.strip())
+                    logger.info(f"📊 Counted {items_count} items in {output_file}")
+                except Exception as e:
+                    logger.error(f"❌ Error counting items in {output_file}: {e}")
+                    items_count = 0
             
             # Update task status in Redis
             await self.redis.hset(f"task:{task_id}", mapping={
