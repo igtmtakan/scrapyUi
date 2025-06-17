@@ -35,13 +35,9 @@ from ..performance.python313_optimizations import (
     jit_optimizer
 )
 
-# Rich progress imports
-try:
-    from ..utils.rich_progress import ScrapyProgressTracker, RichSpiderMonitor
-    RICH_AVAILABLE = True
-except ImportError:
-    RICH_AVAILABLE = False
-    print("⚠️ Rich progress not available - falling back to standard progress")
+# Rich progress - 完全無効化
+RICH_AVAILABLE = False
+print("⚠️ Rich progress globally disabled - using lightweight progress system")
 
 class ScrapyPlaywrightService:
     """Scrapy + Playwright統合を管理するサービスクラス（シングルトン）"""
@@ -79,11 +75,9 @@ class ScrapyPlaywrightService:
         self.monitoring_thread = None
         self.stop_monitoring = False
 
-        # Rich progress tracker
+        # Rich progress tracker - 無効化
         self.rich_tracker = None
-        if RICH_AVAILABLE:
-            self.rich_tracker = ScrapyProgressTracker()
-            print("✨ Rich progress tracking enabled")
+        print("✨ Lightweight progress tracking enabled")
 
         self._initialized = True
         print(f"🔧 ScrapyPlaywrightService initialized with base_dir: {self.base_projects_dir.absolute()}")
@@ -638,107 +632,9 @@ COMMANDS_MODULE = "{project_name}.commands"
             self.logger.warning(f"Failed to add COMMANDS_MODULE to settings.py: {str(e)}")
 
     def _add_rich_progress_settings(self, project_dir: Path, project_name: str):
-        """settings.pyにRich進捗バー設定を追加（COMMANDS_MODULEと同じパターン）"""
-        try:
-            settings_file = project_dir / "settings.py"
-
-            if not settings_file.exists():
-                self.logger.warning(f"Settings file not found: {settings_file}")
-                return
-
-            # 既存の内容を読み込み
-            with open(settings_file, 'r', encoding='utf-8') as f:
-                content = f.read()
-
-            # 既にRich進捗バー設定が含まれているかチェック
-            if "RICH_PROGRESS_ENABLED" in content or "RichProgressExtension" in content:
-                self.logger.info(f"Rich progress settings already exist in {settings_file}")
-                return
-
-            # 1. sys.path.append を追加（import文の後）
-            sys_path_setting = f'''
-# ScrapyUIバックエンドへのパスを追加
-import sys
-sys.path.append('/home/igtmtakan/workplace/python/scrapyUI/backend')
-'''
-
-            # import文の後に追加（COMMANDS_MODULEと同じパターン）
-            if 'NEWSPIDER_MODULE' in content:
-                content = content.replace(
-                    f'NEWSPIDER_MODULE = "{project_name}.spiders"',
-                    f'NEWSPIDER_MODULE = "{project_name}.spiders"{sys_path_setting}'
-                )
-
-            # 2. ADDONS = {} の後にEXTENSIONS設定を追加
-            extensions_setting = '''
-
-# Rich進捗バー拡張機能を有効化
-EXTENSIONS = {
-    "scrapy.extensions.telnet.TelnetConsole": None,
-    "scrapy.extensions.corestats.CoreStats": 500,
-    "scrapy.extensions.logstats.LogStats": 500,
-    # Rich進捗バー拡張機能を追加（スパイダーコードを変更せずに進捗バーを表示）
-    "app.scrapy_extensions.rich_progress_extension.RichProgressExtension": 400,
-    # 軽量プログレスシステム拡張機能を追加（より軽量で安定）
-    "app.scrapy_extensions.lightweight_progress_extension.LightweightProgressExtension": 300,
-}'''
-
-            if 'ADDONS = {}' in content:
-                content = content.replace(
-                    'ADDONS = {}',
-                    f'ADDONS = {{}}{extensions_setting}'
-                )
-            else:
-                # ADDONSが見つからない場合は、NEWSPIDER_MODULEの後に追加
-                if 'NEWSPIDER_MODULE' in content and 'EXTENSIONS' not in content:
-                    # sys.path.appendが既に追加されている場合を考慮
-                    if 'sys.path.append' in content:
-                        content = content.replace(
-                            'sys.path.append(\'/home/igtmtakan/workplace/python/scrapyUI/backend\')',
-                            f'sys.path.append(\'/home/igtmtakan/workplace/python/scrapyUI/backend\'){extensions_setting}'
-                        )
-                    else:
-                        content = content.replace(
-                            f'NEWSPIDER_MODULE = "{project_name}.spiders"',
-                            f'NEWSPIDER_MODULE = "{project_name}.spiders"{extensions_setting}'
-                        )
-
-            # 3. Rich進捗バー設定をファイル末尾に追加
-            rich_progress_settings = '''
-
-# ===== Rich進捗バー設定 =====
-# スパイダーコードを変更せずに美しい進捗バーを表示
-RICH_PROGRESS_ENABLED = True           # 進捗バーを有効化
-RICH_PROGRESS_SHOW_STATS = True        # 詳細統計を表示
-RICH_PROGRESS_UPDATE_INTERVAL = 0.1    # 更新間隔（秒）
-RICH_PROGRESS_WEBSOCKET = True         # WebSocket通知（オプション）
-'''
-
-            # 4. 軽量プログレスシステム設定を追加
-            lightweight_progress_settings = '''
-
-# ===== 軽量プログレスシステム設定 =====
-# より軽量で安定したプログレス表示システム
-LIGHTWEIGHT_PROGRESS_WEBSOCKET = True  # WebSocket通知を有効化
-LIGHTWEIGHT_BULK_INSERT = True         # バルクインサートを有効化
-
-# 自動ファイル管理設定
-AUTO_FILE_MANAGEMENT = True           # 自動ファイル管理を有効化
-MAX_JSONL_LINES = 500                 # JSONLファイルの最大行数（極めて積極的に）
-KEEP_SESSIONS = 1                     # 保持するセッション数（最新のみ）
-AUTO_CLEANUP_INTERVAL_HOURS = 1       # 自動クリーンアップ間隔（1時間毎）
-'''
-
-            content += rich_progress_settings + lightweight_progress_settings
-
-            # ファイルに書き戻し
-            with open(settings_file, 'w', encoding='utf-8') as f:
-                f.write(content)
-
-            self.logger.info(f"Added Rich progress settings to {settings_file}")
-
-        except Exception as e:
-            self.logger.warning(f"Failed to add Rich progress settings to settings.py: {str(e)}")
+        """Rich進捗バー設定を追加 - 無効化済み"""
+        # RichProgress設定は無効化されています
+        self.logger.info(f"Rich progress settings disabled for {project_name} - using lightweight progress")
 
     def _add_feed_settings(self, project_package_dir: Path, project_name: str):
         """settings.pyにFEED設定（CSV、XML、JSON、JSONL対応）を追加"""

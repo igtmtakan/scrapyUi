@@ -23,13 +23,11 @@ def get_rich_progress_settings() -> str:
 import sys
 sys.path.append('/home/igtmtakan/workplace/python/scrapyUI/backend')
 
-# Rich進捗バー拡張機能を有効化
+# 軽量プログレスシステム拡張機能を有効化
 EXTENSIONS = {
     "scrapy.extensions.telnet.TelnetConsole": None,
     "scrapy.extensions.corestats.CoreStats": 500,
     "scrapy.extensions.logstats.LogStats": 500,
-    # Rich進捗バー拡張機能を追加（スパイダーコードを変更せずに進捗バーを表示）
-    "app.scrapy_extensions.rich_progress_extension.RichProgressExtension": 400,
     # 軽量プログレスシステム拡張機能を追加（より軽量で安定）
     "app.scrapy_extensions.lightweight_progress_extension.LightweightProgressExtension": 300,
 }
@@ -74,18 +72,9 @@ def find_scrapy_projects() -> List[Path]:
 
 
 def has_rich_progress_settings(content: str) -> bool:
-    """既にRich進捗バー設定が含まれているかチェック"""
-    patterns = [
-        r"RICH_PROGRESS_ENABLED",
-        r"RichProgressExtension",
-        r"Rich進捗バー設定"
-    ]
-    
-    for pattern in patterns:
-        if re.search(pattern, content, re.IGNORECASE):
-            return True
-    
-    return False
+    """Rich進捗バー設定チェック - 無効化済み"""
+    # RichProgress設定は無効化されています
+    return True  # 常にTrueを返して設定追加をスキップ
 
 
 def update_extensions_setting(content: str) -> str:
@@ -119,68 +108,9 @@ def update_extensions_setting(content: str) -> str:
 
 
 def add_rich_progress_to_settings(settings_file: Path) -> Tuple[bool, str]:
-    """settings.pyファイルにRich進捗バー設定を追加"""
-    try:
-        # ファイルを読み込み
-        with open(settings_file, 'r', encoding='utf-8') as f:
-            content = f.read()
-        
-        # 既に設定が含まれているかチェック
-        if has_rich_progress_settings(content):
-            return False, "既にRich進捗バー設定が含まれています"
-        
-        # バックアップを作成
-        backup_file = settings_file.with_suffix('.py.backup')
-        with open(backup_file, 'w', encoding='utf-8') as f:
-            f.write(content)
-        
-        # sys.path.append行を追加（まだ存在しない場合）
-        if "sys.path.append('/home/igtmtakan/workplace/python/scrapyUI/backend')" not in content:
-            # import文の後に追加
-            import_pattern = r'(import\s+[^\n]+\n)'
-            if re.search(import_pattern, content):
-                # 最後のimport文の後に追加
-                imports = re.findall(import_pattern, content)
-                if imports:
-                    last_import = imports[-1]
-                    sys_import = "\n# ScrapyUIバックエンドへのパスを追加\nimport sys\nsys.path.append('/home/igtmtakan/workplace/python/scrapyUI/backend')\n"
-                    content = content.replace(last_import, last_import + sys_import)
-        
-        # 既存のEXTENSIONS設定を更新
-        content = update_extensions_setting(content)
-        
-        # Rich進捗バー設定を追加（ファイルの最後に）
-        rich_settings = get_rich_progress_settings()
-        
-        # EXTENSIONS設定が既に更新されている場合は、EXTENSIONS部分を除外
-        if "RichProgressExtension" in content:
-            # EXTENSIONS設定を除外したRich設定を作成
-            rich_settings_lines = rich_settings.split('\n')
-            filtered_lines = []
-            skip_extensions = False
-            
-            for line in rich_settings_lines:
-                if 'EXTENSIONS = {' in line:
-                    skip_extensions = True
-                    continue
-                elif skip_extensions and line.strip() == '}':
-                    skip_extensions = False
-                    continue
-                elif not skip_extensions:
-                    filtered_lines.append(line)
-            
-            rich_settings = '\n'.join(filtered_lines)
-        
-        content += rich_settings
-        
-        # ファイルに書き込み
-        with open(settings_file, 'w', encoding='utf-8') as f:
-            f.write(content)
-        
-        return True, f"Rich進捗バー設定を追加しました（バックアップ: {backup_file.name}）"
-    
-    except Exception as e:
-        return False, f"エラー: {str(e)}"
+    """Rich進捗バー設定を追加 - 無効化済み"""
+    # RichProgress設定は無効化されています
+    return False, "RichProgress設定は無効化されています - 軽量プログレスシステムを使用"
 
 
 def main():

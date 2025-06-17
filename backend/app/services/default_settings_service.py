@@ -237,13 +237,11 @@ class DefaultSettingsService:
                 'scrapy.extensions.corestats.CoreStats': 500,
                 'scrapy.extensions.memusage.MemoryUsage': 500,
                 'scrapy.extensions.logstats.LogStats': 500,
-                'app.scrapy_extensions.rich_progress_extension.RichProgressExtension': 400,
+                'app.scrapy_extensions.lightweight_progress_extension.LightweightProgressExtension': 300,
             },
-            # Rich進捗バー設定
-            'RICH_PROGRESS_ENABLED': True,
-            'RICH_PROGRESS_SHOW_STATS': True,
-            'RICH_PROGRESS_UPDATE_INTERVAL': 0.1,
-            'RICH_PROGRESS_WEBSOCKET': False
+            # 軽量プログレスシステム設定
+            'LIGHTWEIGHT_PROGRESS_WEBSOCKET': True,
+            'LIGHTWEIGHT_BULK_INSERT': True
         }
         
         # スパイダータイプ別の設定

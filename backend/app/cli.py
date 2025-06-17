@@ -625,11 +625,6 @@ EXTENSIONS = {{
     "app.scrapy_extensions.lightweight_progress_extension.LightweightProgressExtension": 300,
 }}
 
-RICH_PROGRESS_ENABLED = True           # 進捗バーを有効化
-RICH_PROGRESS_SHOW_STATS = True        # 詳細統計を表示
-RICH_PROGRESS_UPDATE_INTERVAL = 0.1    # 更新間隔（秒）
-RICH_PROGRESS_WEBSOCKET = False        # WebSocket通知（オプション）
-
 # ===== 軽量プログレスシステム設定 =====
 # より軽量で安定したプログレス表示システム
 LIGHTWEIGHT_PROGRESS_WEBSOCKET = True  # WebSocket通知を有効化
