@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from collections import defaultdict
 import json
 import math
+from pathlib import Path
 
 
 @dataclass
@@ -39,7 +40,15 @@ class Anomaly:
 class PredictiveAnalytics:
     """予測分析クラス"""
     
-    def __init__(self, performance_db: str = "performance_metrics.db", usage_db: str = "usage_analytics.db"):
+    def __init__(self, performance_db: str = None, usage_db: str = None):
+        if performance_db is None:
+            # 統一データベースパスを使用
+            project_root = Path(__file__).parent.parent.parent.parent
+            performance_db = str(project_root / "backend" / "database" / "scrapy_ui.db")
+        if usage_db is None:
+            # 統一データベースパスを使用
+            project_root = Path(__file__).parent.parent.parent.parent
+            usage_db = str(project_root / "backend" / "database" / "scrapy_ui.db")
         self.performance_db = performance_db
         self.usage_db = usage_db
     

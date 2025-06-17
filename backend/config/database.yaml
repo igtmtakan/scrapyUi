@@ -128,4 +128,4 @@ testing:
   database: backend/database/scrapy_ui.db
   echo: false
   type: sqlite
-usedatabase: default
+usedatabase: development
