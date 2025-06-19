@@ -473,8 +473,11 @@ project = {name}
     (project_dir / "__init__.py").write_text("")
     (project_dir / "spiders" / "__init__.py").write_text("")
 
-    # settings.py
+    # settings.py（新アーキテクチャ対応 - クリーンな設定）
     settings_py = f"""# Scrapy settings for {name} project
+#
+# 新アーキテクチャ対応: Playwright専用サービス（ポート8004）を使用
+# scrapy-playwright設定は不要 - 標準HTTPダウンローダーを使用
 #
 # For simplicity, this file contains only settings considered important or
 # commonly used. You can find more settings consulting the documentation:
@@ -581,17 +584,9 @@ FEED_EXPORT_ENCODING = 'utf-8'
 # HTTPCACHE_EXPIRATION_SECS = 86400  # 1 day
 # LOG_LEVEL = "INFO"
 
-# Scrapy-Playwright settings (commented out for standard Scrapy configuration)
-# DOWNLOAD_HANDLERS = {{
-#     "http": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
-#     "https": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
-# }}
-# PLAYWRIGHT_BROWSER_TYPE = "chromium"
-# PLAYWRIGHT_LAUNCH_OPTIONS = {{
-#     "headless": True,
-# }}
-# PLAYWRIGHT_DEFAULT_NAVIGATION_TIMEOUT = 10000
-# TWISTED_REACTOR = "twisted.internet.asyncioreactor.AsyncioSelectorReactor"
+# 新アーキテクチャ: Playwright専用サービス（ポート8004）を使用
+# Scrapy-Playwright設定は不要 - 標準HTTPダウンローダーを使用
+# 軽量で高速な標準Scrapyダウンローダーを使用
 
 # Proxy settings (optional - configure as needed)
 # DOWNLOADER_MIDDLEWARES = {{
@@ -614,11 +609,12 @@ ADDONS = {{}}
 import sys
 sys.path.append('/home/igtmtakan/workplace/python/scrapyUI/backend')
 
-# 標準Scrapy拡張機能のみ使用
+# 標準Scrapy拡張機能のみ使用（Rich進捗バー拡張機能は無効化）
 EXTENSIONS = {{
     "scrapy.extensions.telnet.TelnetConsole": None,
     "scrapy.extensions.corestats.CoreStats": 500,
     "scrapy.extensions.logstats.LogStats": 500,
+    # Rich進捗バー拡張機能は削除済み - 軽量進捗システムを使用
 }}
 
 # ===== 軽量プログレスシステム設定 =====

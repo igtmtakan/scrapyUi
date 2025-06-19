@@ -12,6 +12,7 @@ from ..models.schemas import Schedule, ScheduleCreate, ScheduleUpdate
 # from ..tasks.scrapy_tasks import scheduled_spider_run
 from ..services.scheduler_service import scheduler_service
 from ..services.realtime_websocket_manager import realtime_websocket_manager
+from ..services.enhanced_scheduler import enhanced_scheduler
 from .auth import get_current_active_user
 import asyncio
 
@@ -579,8 +580,8 @@ async def delete_schedule(schedule_id: str, db: Session = Depends(get_db)):
 
 @router.post(
     "/{schedule_id}/run",
-    summary="スケジュール手動実行",
-    description="スケジュールを手動で実行します。"
+    summary="スケジュール手動実行（強化版）",
+    description="強化されたPlaywright統合でスケジュールを手動実行します。"
 )
 async def run_schedule_now(schedule_id: str, db: Session = Depends(get_db), current_user = Depends(get_current_active_user)):
     """
@@ -703,16 +704,24 @@ async def run_schedule_now(schedule_id: str, db: Session = Depends(get_db), curr
                             except Exception as e:
                                 print(f"⚠️ WebSocket callback error in schedule run: {e}")
 
-                        # watchdog監視付きで実行
-                        result = loop.run_until_complete(
-                            scrapy_service.run_spider_with_watchdog(
-                                project_path=project.path,
-                                spider_name=spider.name,
-                                task_id=task_id,
-                                settings=db_schedule.settings or {},
-                                websocket_callback=websocket_callback
+                        # 強化されたスケジューラーで実行
+                        try:
+                            result = loop.run_until_complete(
+                                enhanced_scheduler.execute_scheduled_task(schedule_id)
                             )
-                        )
+                            print(f"✅ Enhanced scheduler execution completed: {result}")
+                        except Exception as enhanced_error:
+                            print(f"❌ Enhanced scheduler failed, falling back to legacy: {enhanced_error}")
+                            # レガシー実行にフォールバック
+                            result = loop.run_until_complete(
+                                scrapy_service.run_spider_with_watchdog(
+                                    project_path=project.path,
+                                    spider_name=spider.name,
+                                    task_id=task_id,
+                                    settings=db_schedule.settings or {},
+                                    websocket_callback=websocket_callback
+                                )
+                            )
                         print(f"✅ Fallback spider execution completed: {result}")
                     except Exception as e:
                         print(f"❌ Fallback spider execution error: {e}")

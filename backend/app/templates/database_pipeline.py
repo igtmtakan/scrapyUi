@@ -141,7 +141,41 @@ class ScrapyUIDatabasePipeline:
             if not self.session or not DBResult:
                 # データベースが利用できない場合はアイテムをそのまま返す
                 return item
-            
+
+            # タスクが存在するかチェック（初回のみ）
+            if self.items_saved == 0:
+                try:
+                    from app.database import Task, TaskStatus
+                    existing_task = self.session.query(Task).filter(Task.id == self.task_id).first()
+
+                    if not existing_task:
+                        # タスクが存在しない場合は作成
+                        spider.logger.info(f"🔧 タスクが存在しないため作成: {self.task_id}")
+
+                        # デフォルトのプロジェクトIDとスパイダーIDを取得
+                        from app.database import Project, Spider
+                        default_project = self.session.query(Project).first()
+                        project_id = default_project.id if default_project else "default-project-id"
+
+                        default_spider = self.session.query(Spider).first()
+                        spider_id = default_spider.id if default_spider else "default-spider-id"
+
+                        new_task = Task(
+                            id=self.task_id,
+                            status=TaskStatus.RUNNING,
+                            project_id=project_id,  # プロジェクトIDを指定
+                            spider_id=spider_id,  # スパイダーIDを指定
+                            user_id=1,  # デフォルトユーザー
+                            items_count=0,
+                            requests_count=0,
+                            created_at=datetime.now()
+                        )
+                        self.session.add(new_task)
+                        self.session.commit()
+                        spider.logger.info(f"✅ タスク作成完了: {self.task_id} (project_id: {project_id})")
+                except Exception as task_error:
+                    spider.logger.warning(f"⚠️ タスク作成エラー（続行）: {task_error}")
+
             # アイテムを辞書に変換
             if hasattr(item, '_values'):
                 # Scrapy Itemの場合
@@ -152,12 +186,12 @@ class ScrapyUIDatabasePipeline:
             else:
                 # その他の場合は文字列化
                 item_dict = {"data": str(item)}
-            
+
             # 日時フィールドを追加
             current_time = datetime.now().isoformat()
             item_dict['crawl_start_datetime'] = self.crawl_start_datetime
             item_dict['item_acquired_datetime'] = current_time
-            
+
             # データベースレコードを作成
             db_result = DBResult(
                 id=str(uuid.uuid4()),
@@ -168,17 +202,17 @@ class ScrapyUIDatabasePipeline:
                 crawl_start_datetime=datetime.fromisoformat(self.crawl_start_datetime) if self.crawl_start_datetime else None,
                 item_acquired_datetime=datetime.fromisoformat(current_time)
             )
-            
+
             # データベースに保存
             self.session.add(db_result)
             self.session.commit()
-            
+
             self.items_saved += 1
-            
+
             # 定期的にログ出力
             if self.items_saved % 10 == 0:
                 spider.logger.info(f"📊 データベースに保存済み: {self.items_saved}件")
-            
+
             return item
             
         except Exception as e:

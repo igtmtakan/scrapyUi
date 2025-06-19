@@ -111,15 +111,7 @@ class DefaultSettingsService:
                         }
                     }
                 },
-                "playwright_settings": {
-                    "browser_type": "chromium",
-                    "launch_options": {
-                        "headless": True,
-                        "args": ["--no-sandbox", "--disable-dev-shm-usage"]
-                    },
-                    "navigation_timeout": 10000,
-                    "page_timeout": 30000
-                },
+                # Playwright設定は削除済み - 新アーキテクチャのPlaywright専用サービス（ポート8004）を使用
                 "performance_settings": {
                     "concurrent_requests": 1,
                     "download_delay": 0.5,
@@ -131,7 +123,8 @@ class DefaultSettingsService:
                     "autothrottle_debug": False
                 },
                 "memory_settings": {
-                    "reactor": "twisted.internet.asyncioreactor.AsyncioSelectorReactor",
+                    # 新アーキテクチャ: 標準リアクターを使用（Playwright専用サービスと分離）
+                    "reactor": "twisted.internet.selectreactor.SelectReactor",
                     "memusage_enabled": True,
                     "memusage_limit_mb": 2048,
                     "memusage_warning_mb": 1024
@@ -177,7 +170,7 @@ class DefaultSettingsService:
         feed_settings = self.default_settings["spider_defaults"]["feed_settings"]
 
         base_settings = {
-            'TWISTED_REACTOR': self.default_settings["spider_defaults"]["memory_settings"]["reactor"],
+            # TWISTED_REACTOR設定は削除済み - 新アーキテクチャでは標準リアクターを使用
             'FEED_EXPORT_ENCODING': feed_settings["encoding"],
             'FEEDS': feed_settings.get("feeds", {
                 'results.jsonl': {
@@ -212,9 +205,7 @@ class DefaultSettingsService:
                     'store_empty': False
                 }
             }),
-            'PLAYWRIGHT_BROWSER_TYPE': self.default_settings["spider_defaults"]["playwright_settings"]["browser_type"],
-            'PLAYWRIGHT_LAUNCH_OPTIONS': self.default_settings["spider_defaults"]["playwright_settings"]["launch_options"],
-            'PLAYWRIGHT_DEFAULT_NAVIGATION_TIMEOUT': self.default_settings["spider_defaults"]["playwright_settings"]["navigation_timeout"],
+            # Playwright設定は削除済み - 新アーキテクチャのPlaywright専用サービス（ポート8004）を使用
             'CONCURRENT_REQUESTS': self.default_settings["spider_defaults"]["performance_settings"]["concurrent_requests"],
             'DOWNLOAD_DELAY': self.default_settings["spider_defaults"]["performance_settings"]["download_delay"],
             'RANDOMIZE_DOWNLOAD_DELAY': self.default_settings["spider_defaults"]["performance_settings"]["randomize_download_delay"],
@@ -231,13 +222,13 @@ class DefaultSettingsService:
             'MEMUSAGE_LIMIT_MB': self.default_settings["spider_defaults"]["memory_settings"]["memusage_limit_mb"],
             'MEMUSAGE_WARNING_MB': self.default_settings["spider_defaults"]["memory_settings"]["memusage_warning_mb"],
             'USER_AGENT': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            # Rich進捗バー拡張機能
+            # 標準Scrapy拡張機能のみ使用（Rich進捗バー拡張機能は無効化）
             'EXTENSIONS': {
                 'scrapy.extensions.telnet.TelnetConsole': None,
                 'scrapy.extensions.corestats.CoreStats': 500,
                 'scrapy.extensions.memusage.MemoryUsage': 500,
                 'scrapy.extensions.logstats.LogStats': 500,
-                'app.scrapy_extensions.lightweight_progress_extension.LightweightProgressExtension': 300,
+                # Rich進捗バー拡張機能は削除済み - 軽量進捗システムを使用
             },
             # 軽量プログレスシステム設定
             'LIGHTWEIGHT_PROGRESS_WEBSOCKET': True,
@@ -305,16 +296,17 @@ class DefaultSettingsService:
         }
     
     def get_mobile_settings(self) -> Dict[str, Any]:
-        """モバイル用設定"""
+        """モバイル用設定（新アーキテクチャ対応）"""
         return {
-            'PLAYWRIGHT_CONTEXTS': {
-                'mobile': {
-                    'viewport': {'width': 375, 'height': 667},
-                    'user_agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1',
-                    'is_mobile': True,
-                    'has_touch': True,
-                }
-            },
+            # Playwright設定は削除済み - 新アーキテクチャのPlaywright専用サービス（ポート8004）を使用
+            # 'PLAYWRIGHT_CONTEXTS': {  # 削除済み
+            #     'mobile': {
+            #         'viewport': {'width': 375, 'height': 667},
+            #         'user_agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1',
+            #         'is_mobile': True,
+            #         'has_touch': True,
+            #     }
+            # },
             'USER_AGENT': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1'
         }
     
@@ -352,12 +344,13 @@ class DefaultSettingsService:
                 'Sec-Fetch-User': '?1',
                 'Upgrade-Insecure-Requests': '1',
             },
-            'PLAYWRIGHT_BROWSER_TYPE': 'chromium',
-            'PLAYWRIGHT_LAUNCH_OPTIONS': {
-                'headless': True,
-                'timeout': 30000,
-            },
-            'PLAYWRIGHT_DEFAULT_NAVIGATION_TIMEOUT': 30000,
+            # Playwright設定は削除済み - 新アーキテクチャのPlaywright専用サービス（ポート8004）を使用
+            # 'PLAYWRIGHT_BROWSER_TYPE': 'chromium',  # 削除済み
+            # 'PLAYWRIGHT_LAUNCH_OPTIONS': {  # 削除済み
+            #     'headless': True,
+            #     'timeout': 30000,
+            # },
+            # 'PLAYWRIGHT_DEFAULT_NAVIGATION_TIMEOUT': 30000,  # 削除済み
             'FEEDS': {
                 'ranking_results.jsonl': {
                     'format': 'jsonlines',

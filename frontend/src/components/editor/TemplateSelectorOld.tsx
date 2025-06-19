@@ -46,7 +46,8 @@ const templates: Template[] = [
     icon: <FileText className="w-5 h-5" />,
     category: 'basic',
     code: `import scrapy
-from scrapy_playwright.page import PageMethod
+# 新アーキテクチャ: Playwright専用サービス（ポート8004）を使用
+# from scrapy_playwright.page import PageMethod  # 削除済み
 
 class BasicSpider(scrapy.Spider):
     name = 'basic_spider'
@@ -54,8 +55,8 @@ class BasicSpider(scrapy.Spider):
 
     custom_settings = {
         'DOWNLOAD_HANDLERS': {
-            "http": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
-            "https": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
+            "http": # "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler"  # 削除済み,
+            "https": # "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler"  # 削除済み,
         },
         'TWISTED_REACTOR': "twisted.internet.asyncioreactor.AsyncioSelectorReactor",
         'PLAYWRIGHT_BROWSER_TYPE': 'chromium',
@@ -360,7 +361,8 @@ class HtmlSpider(scrapy.Spider):
     icon: <Database className="w-5 h-5" />,
     category: 'advanced',
     code: `import scrapy
-from scrapy_playwright.page import PageMethod
+# 新アーキテクチャ: Playwright専用サービス（ポート8004）を使用
+# from scrapy_playwright.page import PageMethod  # 削除済み
 from pyquery import PyQuery as pq
 
 class PyQueryAdvancedSpider(scrapy.Spider):
@@ -369,8 +371,8 @@ class PyQueryAdvancedSpider(scrapy.Spider):
 
     custom_settings = {
         'DOWNLOAD_HANDLERS': {
-            "http": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
-            "https": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
+            "http": # "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler"  # 削除済み,
+            "https": # "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler"  # 削除済み,
         },
         'TWISTED_REACTOR': "twisted.internet.asyncioreactor.AsyncioSelectorReactor",
         'PLAYWRIGHT_BROWSER_TYPE': 'chromium',
@@ -464,7 +466,8 @@ class PyQueryAdvancedSpider(scrapy.Spider):
     icon: <ShoppingCart className="w-5 h-5" />,
     category: 'ecommerce',
     code: `import scrapy
-from scrapy_playwright.page import PageMethod
+# 新アーキテクチャ: Playwright専用サービス（ポート8004）を使用
+# from scrapy_playwright.page import PageMethod  # 削除済み
 from bs4 import BeautifulSoup
 import re
 from urllib.parse import urljoin
@@ -475,8 +478,8 @@ class EcommerceSpider(scrapy.Spider):
 
     custom_settings = {
         'DOWNLOAD_HANDLERS': {
-            "http": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
-            "https": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
+            "http": # "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler"  # 削除済み,
+            "https": # "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler"  # 削除済み,
         },
         'TWISTED_REACTOR': "twisted.internet.asyncioreactor.AsyncioSelectorReactor",
         'PLAYWRIGHT_BROWSER_TYPE': 'chromium',
@@ -735,7 +738,8 @@ class QuotesSpider(scrapy.Spider):
     icon: <Globe className="w-5 h-5" />,
     category: 'news',
     code: `import scrapy
-from scrapy_playwright.page import PageMethod
+# 新アーキテクチャ: Playwright専用サービス（ポート8004）を使用
+# from scrapy_playwright.page import PageMethod  # 削除済み
 from bs4 import BeautifulSoup
 from datetime import datetime
 import re
@@ -747,8 +751,8 @@ class NewsSpider(scrapy.Spider):
 
     custom_settings = {
         'DOWNLOAD_HANDLERS': {
-            "http": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
-            "https": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
+            "http": # "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler"  # 削除済み,
+            "https": # "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler"  # 削除済み,
         },
         'TWISTED_REACTOR': "twisted.internet.asyncioreactor.AsyncioSelectorReactor",
         'PLAYWRIGHT_BROWSER_TYPE': 'chromium',
@@ -1012,7 +1016,8 @@ class ApiSpider(scrapy.Spider):
     icon: <Zap className="w-5 h-5" />,
     category: 'advanced',
     code: `import scrapy
-from scrapy_playwright.page import PageMethod
+# 新アーキテクチャ: Playwright専用サービス（ポート8004）を使用
+# from scrapy_playwright.page import PageMethod  # 削除済み
 
 class AdvancedSpider(scrapy.Spider):
     name = 'advanced_spider'
@@ -1020,8 +1025,8 @@ class AdvancedSpider(scrapy.Spider):
 
     custom_settings = {
         'DOWNLOAD_HANDLERS': {
-            "http": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
-            "https": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
+            "http": # "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler"  # 削除済み,
+            "https": # "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler"  # 削除済み,
         },
         'TWISTED_REACTOR': "twisted.internet.asyncioreactor.AsyncioSelectorReactor",
         'PLAYWRIGHT_BROWSER_TYPE': 'chromium',
@@ -3615,7 +3620,8 @@ class TestingSpider(scrapy.Spider):
     icon: <Monitor className="w-5 h-5" />,
     category: 'playwright',
     code: `import scrapy
-from scrapy_playwright.page import PageMethod
+# 新アーキテクチャ: Playwright専用サービス（ポート8004）を使用
+# from scrapy_playwright.page import PageMethod  # 削除済み
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from urllib.parse import urljoin
 import asyncio
@@ -3639,8 +3645,8 @@ class PlaywrightAdvancedSpider(scrapy.Spider):
 
     custom_settings = {
         'DOWNLOAD_HANDLERS': {
-            "http": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
-            "https": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
+            "http": # "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler"  # 削除済み,
+            "https": # "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler"  # 削除済み,
         },
         'TWISTED_REACTOR': "twisted.internet.asyncioreactor.AsyncioSelectorReactor",
         'PLAYWRIGHT_BROWSER_TYPE': 'chromium',
@@ -4076,7 +4082,8 @@ class PlaywrightAdvancedSpider(scrapy.Spider):
     icon: <Smartphone className="w-5 h-5" />,
     category: 'playwright',
     code: `import scrapy
-from scrapy_playwright.page import PageMethod
+# 新アーキテクチャ: Playwright専用サービス（ポート8004）を使用
+# from scrapy_playwright.page import PageMethod  # 削除済み
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 import asyncio
 import json
@@ -4099,8 +4106,8 @@ class PlaywrightSPASpider(scrapy.Spider):
 
     custom_settings = {
         'DOWNLOAD_HANDLERS': {
-            "http": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
-            "https": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
+            "http": # "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler"  # 削除済み,
+            "https": # "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler"  # 削除済み,
         },
         'TWISTED_REACTOR': "twisted.internet.asyncioreactor.AsyncioSelectorReactor",
         'PLAYWRIGHT_BROWSER_TYPE': 'chromium',

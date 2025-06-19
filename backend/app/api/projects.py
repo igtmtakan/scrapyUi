@@ -376,18 +376,19 @@ async def create_project(
         try:
             # テスト環境では実際のScrapyプロジェクト作成をスキップ
             if not os.getenv("TESTING", False):
-                scrapy_service = ScrapyPlaywrightService()
+                # 新アーキテクチャ: クリーンなScrapyサービスを使用
+                scrapy_service = ScrapyPlaywrightService()  # 名前は保持、内部はクリーン
                 # プロジェクト名（ディレクトリ名）とプロジェクトパス（設定名）、DB保存設定を正しく指定
                 # フロントエンドからdb_save_enabledが送信されない場合はデフォルトでTrueに設定
                 db_save_enabled = getattr(project, 'db_save_enabled', True)
                 scrapy_service.create_project(project_path, project_path, db_save_enabled)
-                logger.info(f"Scrapy project created successfully: {project_path}")
+                logger.info(f"Clean Scrapy project created successfully (new architecture): {project_path}")
             else:
                 # テスト環境でもScrapyプロジェクトを作成（WebUI表示のため）
-                scrapy_service = ScrapyPlaywrightService()
+                scrapy_service = ScrapyPlaywrightService()  # 名前は保持、内部はクリーン
                 db_save_enabled = getattr(project, 'db_save_enabled', True)
                 scrapy_service.create_project(project_path, project_path, db_save_enabled)
-                logger.info(f"Test Scrapy project created successfully: {project_path}")
+                logger.info(f"Test clean Scrapy project created successfully (new architecture): {project_path}")
         except Exception as e:
             # プロジェクト作成に失敗してもデータベースには保存する（テスト用）
             log_exception(

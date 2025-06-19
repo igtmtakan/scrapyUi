@@ -1,0 +1,28 @@
+# Playwright専用サービス依存関係
+
+# Web Framework
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+
+# Playwright
+playwright==1.52.0
+
+# Data Validation
+pydantic==2.5.0
+
+# HTTP Client
+httpx==0.25.2
+requests==2.31.0
+
+# Async Support
+asyncio-mqtt==0.13.0
+
+# Logging
+structlog==23.2.0
+
+# Monitoring
+prometheus-client==0.19.0
+
+# Development
+pytest==7.4.3
+pytest-asyncio==0.21.1

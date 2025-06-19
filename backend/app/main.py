@@ -29,7 +29,7 @@ from .middleware.error_middleware import (
     PerformanceLoggingMiddleware
 )
 
-from .api import projects, spiders, tasks, results, schedules, notifications, auth, proxies, ai, admin, script_runner, project_files, performance, system, settings, timezone, websocket_progress, microservices, lightweight_progress
+from .api import projects, spiders, tasks, results, schedules, notifications, auth, proxies, ai, admin, script_runner, project_files, performance, system, settings, timezone, microservices, lightweight_progress
 # from .api import extensions  # テンプレート管理API - 一時的に無効化
 # from .api import database_config  # 一時的に無効化
 # from .api import shell  # 一時的に無効化
@@ -478,8 +478,7 @@ async def websocket_terminal(websocket: WebSocket):
 # WebSocketエンドポイント（一般的なパターンは後に登録）
 app.include_router(websocket_endpoints.router, prefix="/ws")
 
-# Rich進捗バー用WebSocketエンドポイント
-app.include_router(websocket_progress.router, prefix="")
+# Rich進捗バー用WebSocketエンドポイントは削除済み - 軽量進捗システムを使用
 
 # リアルタイム進捗監視WebSocketエンドポイント
 from .services.realtime_websocket_manager import realtime_websocket_manager
@@ -578,33 +577,48 @@ async def startup_event():
         realtime_websocket_manager.start()
         logger.info("📡 Realtime WebSocket Manager started")
 
-        # システムヘルスモニターを開始
-        from .services.system_health_monitor import system_health_monitor
-        await system_health_monitor.initialize()
-        await system_health_monitor.start_monitoring()
-        logger.info("🔍 System health monitor started")
+        # システムヘルスモニターを遅延開始
+        async def delayed_health_monitor():
+            """システムヘルスモニターの遅延開始"""
+            await asyncio.sleep(15)  # 15秒待機してマイクロサービスの起動を待つ
+            try:
+                from .services.system_health_monitor import system_health_monitor
+                await system_health_monitor.initialize()
+                await system_health_monitor.start_monitoring()
+                logger.info("🔍 System health monitor started")
+            except Exception as e:
+                logger.error(f"❌ Failed to start health monitor: {e}")
+
+        # バックグラウンドでヘルスモニターを開始
+        asyncio.create_task(delayed_health_monitor())
 
         # 自動修復サービスを開始
         from .services.auto_repair_service import auto_repair_service
         await auto_repair_service.start_auto_repair()
         logger.info("🔧 Auto repair service started")
 
-        # マイクロサービスの初期化
-        try:
-            from .services.microservice_client import microservice_client
+        # マイクロサービスの初期化（遅延実行）
+        async def delayed_microservice_check():
+            """マイクロサービスの遅延チェック"""
+            await asyncio.sleep(10)  # 10秒待機してマイクロサービスの起動を待つ
+            try:
+                from .services.microservice_client import microservice_client
 
-            # マイクロサービスの可用性チェック
-            if microservice_client.is_microservice_available():
-                logger.info("🚀 Microservices are available")
-                print("🚀 Microservices monitoring services initialized")
-            else:
-                logger.warning("⚠️ Microservices not available, using legacy execution")
-                print("⚠️ Microservices not available (start microservices for enhanced features)")
+                # マイクロサービスの可用性チェック
+                if microservice_client.is_microservice_available():
+                    logger.info("🚀 Microservices are available")
+                    print("🚀 Microservices monitoring services initialized")
+                else:
+                    logger.warning("⚠️ Microservices not available, using legacy execution")
+                    print("⚠️ Microservices not available (start microservices for enhanced features)")
 
-        except Exception as microservice_error:
-            logger.error(f"❌ Failed to initialize microservices: {microservice_error}")
-            print(f"⚠️ Microservices initialization failed: {microservice_error}")
-            # マイクロサービスの初期化に失敗してもアプリケーションは継続
+            except Exception as microservice_error:
+                logger.error(f"❌ Failed to initialize microservices: {microservice_error}")
+                print(f"⚠️ Microservices initialization failed: {microservice_error}")
+                # マイクロサービスの初期化に失敗してもアプリケーションは継続
+
+        # バックグラウンドでマイクロサービスチェックを実行
+        asyncio.create_task(delayed_microservice_check())
 
         logger.info("✅ ScrapyUI Application started successfully")
         print("✅ ScrapyUI Application started successfully")

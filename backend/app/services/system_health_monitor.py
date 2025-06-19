@@ -119,8 +119,9 @@ class SystemHealthMonitor:
         
         # 2. データベース接続チェック
         try:
+            from sqlalchemy import text
             with SessionLocal() as db:
-                db.execute("SELECT 1")
+                db.execute(text("SELECT 1"))
         except Exception as e:
             issues.append(f"Database connection failed: {e}")
         
@@ -246,17 +247,18 @@ class SystemHealthMonitor:
             'spider_manager': 'http://localhost:8002/health',
             'test_service': 'http://localhost:8005/health'
         }
-        
+
         status = {}
         for service, url in services.items():
             try:
                 import aiohttp
                 async with aiohttp.ClientSession() as session:
-                    async with session.get(url, timeout=5) as response:
+                    async with session.get(url, timeout=3) as response:
                         status[service] = response.status == 200
             except Exception:
+                # マイクロサービスが起動していない場合は警告レベルを下げる
                 status[service] = False
-        
+
         return status
 
     async def _check_stuck_tasks(self) -> List[str]:

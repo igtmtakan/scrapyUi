@@ -146,8 +146,7 @@ class ScrapyPlaywrightService:
             # settings.pyにCOMMANDS_MODULEを追加
             self._add_commands_module_to_settings(project_dir / project_name, project_name)
 
-            # Rich進捗バー設定を追加
-            self._add_rich_progress_settings(project_dir / project_name, project_name)
+            # Rich進捗バー設定は削除済み - 軽量進捗システムを使用
 
             # FEED設定を追加
             self._add_feed_settings(project_dir / project_name, project_name)
@@ -189,54 +188,9 @@ class ScrapyPlaywrightService:
             )
 
     def _setup_playwright_config(self, project_dir: Path) -> None:
-        """scrapy-playwright設定をプロジェクトに追加"""
-        settings_file = project_dir / "settings.py"
-
-        playwright_settings = '''
-
-# Scrapy-Playwright settings
-DOWNLOAD_HANDLERS = {
-    "http": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
-    "https": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
-}
-
-TWISTED_REACTOR = "twisted.internet.asyncioreactor.AsyncioSelectorReactor"
-
-PLAYWRIGHT_BROWSER_TYPE = "chromium"
-PLAYWRIGHT_LAUNCH_OPTIONS = {
-    "headless": True,
-}
-
-# Default request meta for Playwright
-PLAYWRIGHT_DEFAULT_NAVIGATION_TIMEOUT = 30000
-PLAYWRIGHT_ABORT_REQUEST = lambda req: req.resource_type == "image"
-
-# Override the default request headers:
-DEFAULT_REQUEST_HEADERS = {
-    'Accept-Language': 'ja',
-}
-
-# Feed export encoding
-FEED_EXPORT_ENCODING = 'utf-8'
-
-# HTTP Cache settings (for development efficiency)
-HTTPCACHE_ENABLED = True
-HTTPCACHE_DIR = 'httpcache'
-HTTPCACHE_EXPIRATION_SECS = 86400  # 1 day
-
-# Proxy settings (optional - configure as needed)
-# DOWNLOADER_MIDDLEWARES = {
-#     'scrapy_proxies.RandomProxy': 350,
-# }
-
-# Proxy settings (optional - configure as needed)
-# PROXY_LIST = '/path/to/proxy/list.txt'
-# PROXY_MODE = 0  # 0: random, 1: round-robin, 2: only once
-'''
-
-        if settings_file.exists():
-            with open(settings_file, 'a', encoding='utf-8') as f:
-                f.write(playwright_settings)
+        """新アーキテクチャ: Playwright専用サービス（ポート8004）を使用 - scrapy-playwright設定は不要"""
+        # Scrapy-Playwright設定は削除済み - 新アーキテクチャでは不要
+        return
 
     def _setup_database_pipeline(self, project_package_dir: Path, project_name: str, db_save_enabled: bool = True, project_id: str = None, user_id: str = None):
         """基本フォーマットのpipelines.pyを生成し、データベースに同期"""
@@ -631,10 +585,7 @@ COMMANDS_MODULE = "{project_name}.commands"
         except Exception as e:
             self.logger.warning(f"Failed to add COMMANDS_MODULE to settings.py: {str(e)}")
 
-    def _add_rich_progress_settings(self, project_dir: Path, project_name: str):
-        """Rich進捗バー設定を追加 - 無効化済み"""
-        # RichProgress設定は無効化されています
-        self.logger.info(f"Rich progress settings disabled for {project_name} - using lightweight progress")
+
 
     def _add_feed_settings(self, project_package_dir: Path, project_name: str):
         """settings.pyにFEED設定（CSV、XML、JSON、JSONL対応）を追加"""
@@ -689,15 +640,8 @@ FEEDS = {
     }
 }'''
 
-            # Rich進捗バー設定の前に追加
-            if "# ===== Rich進捗バー設定 =====" in content:
-                content = content.replace(
-                    "# ===== Rich進捗バー設定 =====",
-                    f"{feed_settings}\n\n# ===== Rich進捗バー設定 ====="
-                )
-            else:
-                # Rich進捗バー設定がない場合はファイル末尾に追加
-                content += feed_settings
+            # ファイル末尾に追加
+            content += feed_settings
 
             # ファイルに書き戻し
             with open(settings_file, 'w', encoding='utf-8') as f:
@@ -1331,6 +1275,16 @@ project = {project_path}
             env['SCRAPY_SETTINGS_MODULE'] = f'{project_name}.settings'
             # Rich progressエクステンション用のタスクID環境変数を設定
             env['SCRAPY_TASK_ID'] = task_id
+
+            # Playwright環境変数を追加（スケジュール実行対応）
+            env['PLAYWRIGHT_BROWSERS_PATH'] = '0'  # システムブラウザを使用
+            env['PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD'] = '1'
+            env['DISPLAY'] = ':99'  # 仮想ディスプレイ
+            env['NODE_OPTIONS'] = '--max-old-space-size=4096'
+
+            # Playwright実行に必要な追加設定
+            env['PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH'] = '/usr/bin/chromium-browser'  # システムChromiumパス
+            env['PLAYWRIGHT_FIREFOX_EXECUTABLE_PATH'] = '/usr/bin/firefox'  # システムFirefoxパス
 
             print(f"🔧 PYTHONPATH set to: {env['PYTHONPATH']}")
             print(f"🔧 SCRAPYUI_ROOT: {env['SCRAPYUI_ROOT']}")

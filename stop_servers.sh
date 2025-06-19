@@ -10,6 +10,9 @@
 BACKEND_PORT=${BACKEND_PORT:-8000}
 FRONTEND_PORT=${FRONTEND_PORT:-4000}
 NODEJS_PORT=${NODEJS_PORT:-3001}
+TEST_SERVICE_PORT=${TEST_SERVICE_PORT:-8005}
+SPIDER_MANAGER_PORT=${SPIDER_MANAGER_PORT:-8002}
+PLAYWRIGHT_SERVICE_PORT=${PLAYWRIGHT_SERVICE_PORT:-8004}
 
 echo "🛑 ScrapyUI サーバーを停止しています..."
 
@@ -21,6 +24,9 @@ fi
 echo "📊 バックエンドポート: ${BACKEND_PORT}"
 echo "🌐 フロントエンドポート: ${FRONTEND_PORT}"
 echo "🤖 Node.js Puppeteerポート: ${NODEJS_PORT}"
+echo "🧪 Test Serviceポート: ${TEST_SERVICE_PORT}"
+echo "🕷️ Spider Managerポート: ${SPIDER_MANAGER_PORT}"
+echo "🎭 Playwright Serviceポート: ${PLAYWRIGHT_SERVICE_PORT}"
 
 # プロセスIDファイルから停止
 if [ -f .backend.pid ]; then
@@ -58,6 +64,20 @@ if [ -f .test_service.pid ]; then
     rm -f .test_service.pid
 fi
 
+if [ -f .spider_manager.pid ]; then
+    SPIDER_MANAGER_PID=$(cat .spider_manager.pid)
+    echo "🕷️ Spider Managerプロセス (PID: ${SPIDER_MANAGER_PID}) を停止中..."
+    kill ${SPIDER_MANAGER_PID} 2>/dev/null || true
+    rm -f .spider_manager.pid
+fi
+
+if [ -f .playwright_service.pid ]; then
+    PLAYWRIGHT_SERVICE_PID=$(cat .playwright_service.pid)
+    echo "🎭 Playwright専用サービスプロセス (PID: ${PLAYWRIGHT_SERVICE_PID}) を停止中..."
+    kill ${PLAYWRIGHT_SERVICE_PID} 2>/dev/null || true
+    rm -f .playwright_service.pid
+fi
+
 # マイクロサービスポート停止
 echo "🚀 マイクロサービスポートを停止中..."
 for port in 8001 8002 8003 8004 8005; do
@@ -84,12 +104,18 @@ pkill -f "npm.*dev" 2>/dev/null || true
 pkill -f "node.*app.js" 2>/dev/null || true
 pkill -f "nodemon.*app.js" 2>/dev/null || true
 pkill -f "scheduler_service" 2>/dev/null || true
+pkill -f "test-service.*main.py" 2>/dev/null || true
+pkill -f "spider-manager.*simple_main.py" 2>/dev/null || true
+pkill -f "playwright-service.*app.py" 2>/dev/null || true
 
 # ポートを使用しているプロセスを強制停止
-echo "🔧 ポート ${BACKEND_PORT}, ${FRONTEND_PORT}, ${NODEJS_PORT} を使用中のプロセスを停止中..."
+echo "🔧 全ポートを使用中のプロセスを停止中..."
 lsof -ti:${BACKEND_PORT} | xargs kill -9 2>/dev/null || true
 lsof -ti:${FRONTEND_PORT} | xargs kill -9 2>/dev/null || true
 lsof -ti:${NODEJS_PORT} | xargs kill -9 2>/dev/null || true
+lsof -ti:${TEST_SERVICE_PORT} | xargs kill -9 2>/dev/null || true
+lsof -ti:${SPIDER_MANAGER_PORT} | xargs kill -9 2>/dev/null || true
+lsof -ti:${PLAYWRIGHT_SERVICE_PORT} | xargs kill -9 2>/dev/null || true
 
 sleep 2
 
@@ -111,6 +137,24 @@ if lsof -i:${NODEJS_PORT} >/dev/null 2>&1; then
     echo "❌ ポート ${NODEJS_PORT} がまだ使用中です"
 else
     echo "✅ ポート ${NODEJS_PORT} が解放されました"
+fi
+
+if lsof -i:${TEST_SERVICE_PORT} >/dev/null 2>&1; then
+    echo "❌ ポート ${TEST_SERVICE_PORT} がまだ使用中です"
+else
+    echo "✅ ポート ${TEST_SERVICE_PORT} が解放されました"
+fi
+
+if lsof -i:${SPIDER_MANAGER_PORT} >/dev/null 2>&1; then
+    echo "❌ ポート ${SPIDER_MANAGER_PORT} がまだ使用中です"
+else
+    echo "✅ ポート ${SPIDER_MANAGER_PORT} が解放されました"
+fi
+
+if lsof -i:${PLAYWRIGHT_SERVICE_PORT} >/dev/null 2>&1; then
+    echo "❌ ポート ${PLAYWRIGHT_SERVICE_PORT} がまだ使用中です"
+else
+    echo "✅ ポート ${PLAYWRIGHT_SERVICE_PORT} が解放されました"
 fi
 
 

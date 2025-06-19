@@ -299,12 +299,36 @@ class ApiClient {
         url,
         method: options.method || 'GET',
         errorType: error?.constructor?.name,
-        stack: error instanceof Error ? error.stack : undefined
+        stack: error instanceof Error ? error.stack : undefined,
+        baseURL: this.baseURL,
+        fullURL: url,
+        requestHeaders: headers,
+        requestBody: options.body
       });
 
-      // ネットワークエラーの場合
-      if (error instanceof TypeError && error.message.includes('Failed to fetch')) {
-        throw new Error('ネットワークエラー: サーバーに接続できません。サーバーが起動しているか確認してください。');
+      // ネットワークエラーの詳細診断
+      if (error instanceof TypeError) {
+        if (error.message.includes('Failed to fetch')) {
+          console.error('🔍 Detailed network diagnosis:', {
+            possibleCauses: [
+              'Backend server is not running',
+              'CORS policy blocking the request',
+              'Network connectivity issues',
+              'Firewall blocking the connection'
+            ],
+            checkList: [
+              `Check if backend is running on ${this.baseURL}`,
+              'Check browser console for CORS errors',
+              'Verify network connectivity',
+              'Check if port 8000 is accessible'
+            ]
+          });
+          throw new Error('ネットワークエラー: サーバーに接続できません。サーバーが起動しているか確認してください。');
+        }
+
+        if (error.message.includes('NetworkError')) {
+          throw new Error('ネットワークエラー: ネットワーク接続に問題があります。');
+        }
       }
 
       // その他のネットワークエラー
@@ -595,17 +619,39 @@ class ApiClient {
 
   // Authentication
   async login(email: string, password: string): Promise<LoginResponse> {
-    const response = await this.request<LoginResponse>('/api/auth/login', {
-      method: 'POST',
-      body: JSON.stringify({ email, password }),
+    console.log('🔐 Login attempt:', {
+      email,
+      baseURL: this.baseURL,
+      endpoint: '/api/auth/login',
+      fullURL: `${this.baseURL}/api/auth/login`
     });
 
-    this.saveToken(response.access_token);
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('refresh_token', response.refresh_token);
-    }
+    try {
+      const response = await this.request<LoginResponse>('/api/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({ email, password }),
+      });
 
-    return response;
+      console.log('✅ Login successful:', {
+        hasAccessToken: !!response.access_token,
+        hasRefreshToken: !!response.refresh_token,
+        tokenPreview: response.access_token ? `${response.access_token.slice(0, 10)}...` : 'none'
+      });
+
+      this.saveToken(response.access_token);
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('refresh_token', response.refresh_token);
+      }
+
+      return response;
+    } catch (error) {
+      console.error('❌ Login failed:', {
+        error: error instanceof Error ? error.message : String(error),
+        email,
+        baseURL: this.baseURL
+      });
+      throw error;
+    }
   }
 
   async register(userData: {

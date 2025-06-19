@@ -237,16 +237,17 @@ class MicroserviceClient:
         """サービスのヘルスチェック"""
         try:
             service_url = self._get_service_url(service)
-            
+
             response = requests.get(
                 f"{service_url}/health",
-                timeout=5
+                timeout=2  # タイムアウトを短縮
             )
-            
+
             return response.status_code == 200
-            
+
         except Exception as e:
-            logger.error(f"❌ Health check failed for {service}: {e}")
+            # ログレベルを下げて頻繁なエラーメッセージを抑制
+            logger.debug(f"Health check failed for {service}: {e}")
             return False
     
     def is_microservice_available(self) -> bool:

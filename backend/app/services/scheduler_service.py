@@ -784,7 +784,7 @@ class SchedulerService:
                 print(f"⚠️ Task verification failed: {verify_error}")
                 print(f"🔧 Continuing with Scrapy execution")
 
-            # Scrapyコマンドを構築（緊急修正版）
+            # Scrapyコマンドを構築（lightprogress統合版）
             print(f"🚀 Starting Scrapy execution for task {new_task.id[:8]}...")
             try:
                 python_path = sys.executable
@@ -796,8 +796,14 @@ class SchedulerService:
                     "-s", "FEED_EXPORT_ENCODING=utf-8",
                     "-s", "ROBOTSTXT_OBEY=False",
                     "-s", "LIGHTWEIGHT_PROGRESS_WEBSOCKET=True",
+                    "--task-id", new_task.id,  # lightprogress統合のため追加
                     "-o", f"results/{new_task.id}.jsonl"
                 ]
+
+                # 環境変数にタスクIDを設定（lightprogress統合）
+                import os
+                os.environ['SCRAPYUI_TASK_ID'] = new_task.id
+                print(f"🔧 Set SCRAPYUI_TASK_ID environment variable for scheduler: {new_task.id}")
 
                 # 環境変数でタスクIDを確実に渡す
                 env = os.environ.copy()
@@ -833,7 +839,44 @@ class SchedulerService:
                 if result.stderr:
                     print(f"⚠️ Scrapy stderr: {result.stderr[-500:]}")  # 最後の500文字
 
-                # 実行結果に基づいてタスクステータスを更新
+                # lightprogressシステムでタスクステータスを更新
+                print(f"🔧 Updating task status with lightprogress system...")
+                try:
+                    from ..services.scrapy_watchdog_monitor import ScrapyWatchdogMonitor
+                    from pathlib import Path
+
+                    # lightprogress監視インスタンスを作成
+                    lightprogress_monitor = ScrapyWatchdogMonitor(
+                        task_id=new_task.id,
+                        project_path=project_dir,
+                        spider_name=spider.name
+                    )
+
+                    # JSONLファイルパスを設定
+                    result_file = os.path.join(results_dir, f"{new_task.id}.jsonl")
+                    lightprogress_monitor.jsonl_file_path = Path(result_file)
+
+                    # 結果ファイル→DB保存（richprogressと同じ方法）
+                    print(f"📁 Storing results to database...")
+                    lightprogress_monitor._store_results_to_db_like_richprogress()
+
+                    # タスクステータスを更新（lightprogressロジック）
+                    print(f"🔧 Updating task status...")
+                    lightprogress_monitor._update_task_status_on_completion(
+                        success=(result.returncode == 0),
+                        process_success=(result.returncode == 0),
+                        data_success=True,  # データ取得成功と仮定
+                        result={'return_code': result.returncode, 'stdout': result.stdout, 'stderr': result.stderr}
+                    )
+
+                    print(f"✅ lightprogress integration completed for scheduler task")
+
+                except Exception as e:
+                    print(f"❌ lightprogress integration error: {e}")
+                    import traceback
+                    print(f"❌ Error details: {traceback.format_exc()}")
+
+                # 実行結果に基づいてタスクステータスを更新（レガシー処理）
                 if result.returncode == 0:
                     new_task.status = TaskStatus.FINISHED
                     new_task.finished_at = datetime.now()

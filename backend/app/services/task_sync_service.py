@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """
 タスクアイテム数同期サービス
-タスクのアイテム数を実際のDB結果数と同期する
+タスクのアイテム数を実際のDB結果数とJSONLファイル数と同期する
 """
 
 import threading
 import time
+import os
 from datetime import datetime, timedelta
 from typing import List
+from pathlib import Path
 
 from ..database import SessionLocal, Task as DBTask, Result as DBResult
 
@@ -15,7 +17,7 @@ from ..database import SessionLocal, Task as DBTask, Result as DBResult
 class TaskSyncService:
     """
     タスクアイテム数同期サービス
-    定期的にタスクのアイテム数を実際のDB結果数と同期
+    定期的にタスクのアイテム数を実際のDB結果数とJSONLファイル数と同期
     """
 
     def __init__(self):
@@ -23,6 +25,7 @@ class TaskSyncService:
         self.thread = None
         self.sync_interval = 300  # 5分間隔
         self.last_sync_time = None
+        self.base_projects_dir = Path("/home/igtmtakan/workplace/python/scrapyUI/scrapy_projects")
 
     def start(self):
         """同期サービスを開始"""
@@ -41,6 +44,29 @@ class TaskSyncService:
         if self.thread:
             self.thread.join(timeout=5)
         print("🛑 Task sync service stopped")
+
+    def _count_jsonl_items(self, task_id: str) -> int:
+        """JSONLファイルからアイテム数をカウント"""
+        try:
+            # 各プロジェクトディレクトリでresults_task_*.jsonlファイルを検索
+            result_files = list(self.base_projects_dir.glob(f"*/results_{task_id}.jsonl"))
+
+            total_count = 0
+            for result_file in result_files:
+                if result_file.exists():
+                    try:
+                        with open(result_file, 'r', encoding='utf-8') as f:
+                            line_count = sum(1 for line in f if line.strip())
+                        total_count += line_count
+                    except Exception as e:
+                        print(f"❌ Error reading {result_file}: {e}")
+                        continue
+
+            return total_count
+
+        except Exception as e:
+            print(f"❌ Error counting JSONL items for {task_id}: {e}")
+            return 0
 
     def _run_sync_loop(self):
         """同期ループのメイン処理"""
@@ -86,16 +112,22 @@ class TaskSyncService:
                     actual_db_count = db.query(DBResult).filter(
                         DBResult.task_id == task.id
                     ).count()
-                    
+
+                    # JSONLファイルからアイテム数を取得
+                    jsonl_count = self._count_jsonl_items(task.id)
+
+                    # より多い方を実際のアイテム数とする
+                    actual_count = max(actual_db_count, jsonl_count)
+
                     # アイテム数が不一致の場合は同期
-                    if task.items_count != actual_db_count:
-                        print(f"🔧 Syncing task {task.id[:8]}...: {task.items_count} → {actual_db_count}")
-                        
-                        task.items_count = actual_db_count
-                        task.requests_count = max(actual_db_count, task.requests_count or 1)
-                        
+                    if task.items_count != actual_count:
+                        print(f"🔧 Syncing task {task.id[:8]}...: {task.items_count} → {actual_count} (DB:{actual_db_count}, JSONL:{jsonl_count})")
+
+                        task.items_count = actual_count
+                        task.requests_count = max(actual_count, task.requests_count or 1)
+
                         synced_count += 1
-                    
+
                 except Exception as e:
                     print(f"❌ Error syncing task {task.id[:8]}...: {str(e)}")
                     continue
@@ -136,21 +168,29 @@ class TaskSyncService:
             actual_db_count = db.query(DBResult).filter(
                 DBResult.task_id == task_id
             ).count()
-            
+
+            # JSONLファイルからアイテム数を取得
+            jsonl_count = self._count_jsonl_items(task_id)
+
+            # より多い方を実際のアイテム数とする
+            actual_count = max(actual_db_count, jsonl_count)
+
             old_count = task.items_count
-            
+
             # アイテム数を同期
-            task.items_count = actual_db_count
-            task.requests_count = max(actual_db_count, task.requests_count or 1)
-            
+            task.items_count = actual_count
+            task.requests_count = max(actual_count, task.requests_count or 1)
+
             db.commit()
-            
-            print(f"🔧 Synced task {task_id[:8]}...: {old_count} → {actual_db_count}")
+
+            print(f"🔧 Synced task {task_id[:8]}...: {old_count} → {actual_count} (DB:{actual_db_count}, JSONL:{jsonl_count})")
             
             return {
                 "task_id": task_id,
                 "old_count": old_count,
-                "new_count": actual_db_count,
+                "new_count": actual_count,
+                "db_count": actual_db_count,
+                "jsonl_count": jsonl_count,
                 "synced": True,
                 "timestamp": datetime.now().isoformat()
             }

@@ -90,7 +90,6 @@ def create_spider(token, project_id):
     # 既存スパイダーがない場合は新規作成
     print('🕷️ 新規スパイダー作成中...')
     spider_code = '''import scrapy
-from scrapy_playwright.page import PageMethod
 import re
 import urllib.parse
 
@@ -100,16 +99,6 @@ class Omocha20JsonlSpider(scrapy.Spider):
     start_urls = ["https://www.amazon.co.jp/gp/bestsellers/software/ref=zg_bs_nav_software_0"]
 
     custom_settings = {
-        'DOWNLOAD_HANDLERS': {
-            "http": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
-            "https": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
-        },
-        'TWISTED_REACTOR': "twisted.internet.asyncioreactor.AsyncioSelectorReactor",
-        'PLAYWRIGHT_BROWSER_TYPE': 'chromium',
-        'PLAYWRIGHT_LAUNCH_OPTIONS': {
-            'headless': True,
-            'args': ['--no-sandbox', '--disable-dev-shm-usage']
-        },
         'CONCURRENT_REQUESTS': 1,
         'DOWNLOAD_DELAY': 2,
         'RANDOMIZE_DOWNLOAD_DELAY': True,
@@ -120,13 +109,6 @@ class Omocha20JsonlSpider(scrapy.Spider):
         for url in self.start_urls:
             yield scrapy.Request(
                 url=url,
-                meta={
-                    "playwright": True,
-                    "playwright_page_methods": [
-                        PageMethod("wait_for_load_state", "domcontentloaded"),
-                        PageMethod("wait_for_timeout", 3000),
-                    ],
-                },
                 callback=self.parse
             )
 
@@ -140,13 +122,6 @@ class Omocha20JsonlSpider(scrapy.Spider):
                 full_url = urllib.parse.urljoin(response.url, link)
                 yield scrapy.Request(
                     url=full_url,
-                    meta={
-                        "playwright": True,
-                        "playwright_page_methods": [
-                            PageMethod("wait_for_load_state", "domcontentloaded"),
-                            PageMethod("wait_for_timeout", 2000),
-                        ],
-                    },
                     callback=self.parse_product
                 )
 
@@ -160,13 +135,6 @@ class Omocha20JsonlSpider(scrapy.Spider):
                 next_url = urllib.parse.urljoin(response.url, next_link)
                 yield scrapy.Request(
                     url=next_url,
-                    meta={
-                        "playwright": True,
-                        "playwright_page_methods": [
-                            PageMethod("wait_for_load_state", "domcontentloaded"),
-                            PageMethod("wait_for_timeout", 3000),
-                        ],
-                    },
                     callback=self.parse
                 )
 

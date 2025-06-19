@@ -146,6 +146,9 @@ class ScrapyWatchdogMonitor:
         # Scrapyプロセス
         self.scrapy_process = None
 
+        # 根本対応: richprogressと同じタスク事前作成
+        self._ensure_task_exists_like_richprogress()
+
     def _generate_data_hash_improved(self, item_data: dict) -> str:
         """item_typeを考慮した改善されたハッシュ生成（全フィールド対応）"""
         try:
@@ -350,11 +353,22 @@ class ScrapyWatchdogMonitor:
             print(f"📋 実行コマンド: {' '.join(cmd)}")
             print(f"📁 実行ディレクトリ: {self.project_path}")
 
-            # 環境変数を設定
+            # 環境変数を設定（Playwright対応強化）
             env = os.environ.copy()
             env['SCRAPY_TASK_ID'] = self.task_id
             env['SCRAPY_PROJECT_PATH'] = str(self.project_path)
             env['PYTHONPATH'] = str(self.project_path)
+
+            # Playwright環境変数を追加
+            env['PLAYWRIGHT_BROWSERS_PATH'] = '0'  # システムブラウザを使用
+            env['PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD'] = '1'
+            env['DISPLAY'] = ':99'  # 仮想ディスプレイ（必要に応じて）
+
+            # Node.js環境変数（Playwrightに必要）
+            env['NODE_OPTIONS'] = '--max-old-space-size=4096'
+
+            # デバッグ用環境変数
+            env['DEBUG'] = 'pw:api'  # Playwrightデバッグ有効化
 
             # プロセスを開始
             self.scrapy_process = await asyncio.create_subprocess_exec(
@@ -387,6 +401,13 @@ class ScrapyWatchdogMonitor:
                 'stderr': stderr.decode('utf-8', errors='ignore')
             }
 
+            # 推奨対応: richprogressと同じ結果ファイル→DB保存に完全依存
+            print(f"🔧 推奨対応: richprogressと同じ結果ファイル→DB保存を実行")
+            self._store_results_to_db_like_richprogress()
+
+            # 根本対応: プロセス完了時のタスクステータス更新
+            self._update_task_status_on_completion(success, process_success, data_success, result)
+
             if success:
                 if process_success and data_success:
                     print(f"✅ Scrapyプロセス完了（プロセス成功 + データ取得: {self.processed_lines}件）")
@@ -409,6 +430,321 @@ class ScrapyWatchdogMonitor:
         except Exception as e:
             print(f"❌ Scrapyプロセス実行エラー: {e}")
             raise
+
+    def _update_task_status_on_completion(self, success: bool, process_success: bool, data_success: bool, result: Dict[str, Any]):
+        """プロセス完了時のタスクステータス更新（根本対応）"""
+        try:
+            from ..database import SessionLocal, Task, TaskStatus, Result
+            from datetime import datetime
+
+            db = SessionLocal()
+            try:
+                task = db.query(Task).filter(Task.id == self.task_id).first()
+                if not task:
+                    print(f"⚠️ タスクが見つかりません: {self.task_id}")
+                    return
+
+                # 実際のデータ取得数を確認
+                actual_items = db.query(Result).filter(Result.task_id == self.task_id).count()
+
+                # 完了時刻を設定
+                task.finished_at = datetime.now()
+
+                # 根本対応: 正確なステータス判定
+                if success and data_success and actual_items > 0:
+                    # データ取得成功 → FINISHED
+                    task.status = TaskStatus.FINISHED
+                    task.items_count = actual_items
+                    task.error_count = 0
+                    task.error_message = None
+                    print(f"🔧 タスクステータス更新: {self.task_id[:8]}... → FINISHED (items: {actual_items})")
+
+                elif success and process_success and actual_items == 0:
+                    # 根本対応強化: アイテム数0件は必ずFAILED状態にする
+                    task.status = TaskStatus.FAILED
+                    task.items_count = 0
+                    task.error_count = (task.error_count or 0) + 1
+                    task.error_message = "Process completed but no items were collected - marked as FAILED (lightprogress fix)"
+                    print(f"🔧 タスクステータス更新: {self.task_id[:8]}... → FAILED (no items collected - lightprogress fix)")
+
+                else:
+                    # 失敗 → FAILED
+                    task.status = TaskStatus.FAILED
+                    task.items_count = actual_items
+                    task.error_count = (task.error_count or 0) + 1
+
+                    # エラーメッセージを生成
+                    error_details = []
+                    if not process_success:
+                        error_details.append(f"Process failed (code: {result.get('return_code', 'unknown')})")
+                    if not data_success:
+                        error_details.append("No data collected")
+                    if result.get('stderr'):
+                        error_details.append(f"Error: {result['stderr'][:200]}")
+
+                    task.error_message = "; ".join(error_details)
+                    print(f"🔧 タスクステータス更新: {self.task_id[:8]}... → FAILED ({'; '.join(error_details)})")
+
+                task.updated_at = datetime.now()
+                db.commit()
+
+            except Exception as e:
+                db.rollback()
+                print(f"❌ タスクステータス更新エラー: {e}")
+            finally:
+                db.close()
+
+        except Exception as e:
+            print(f"❌ タスクステータス更新エラー: {e}")
+
+    def _store_results_to_db_like_richprogress(self):
+        """richprogressと同じ方法で結果ファイルをDBに保存（根本対応）"""
+        try:
+            import json
+            from pathlib import Path
+            from ..database import SessionLocal, Result as DBResult
+            import uuid
+            import hashlib
+            from datetime import datetime
+
+            print(f"📁 Starting richprogress-style result storage for task {self.task_id}")
+
+            # 結果ファイルを検索（richprogressと同じパターン）
+            possible_paths = []
+
+            # 1. JSONLファイル（最優先）
+            if self.jsonl_file_path and self.jsonl_file_path.exists():
+                possible_paths.append(self.jsonl_file_path)
+
+            # 2. プロジェクトディレクトリ内の結果ファイルを検索（推奨対応: 拡張パターン）
+            project_path = Path(self.project_path)
+            patterns = [
+                f"results/{self.task_id}.jsonl",
+                f"results/{self.task_id}.json",
+                f"results/results_{self.task_id}.jsonl",
+                f"results_{self.task_id}.jsonl",
+                f"results_{self.task_id}.json",
+                f"*{self.task_id}*.json",
+                f"*{self.task_id}*.jsonl",
+                # 推奨対応: Scrapyデフォルト出力ファイルも検索
+                "ranking_results.jsonl",
+                "items.jsonl",
+                "output.jsonl",
+                "*.jsonl",
+                "*.json"
+            ]
+
+            for pattern in patterns:
+                files = list(project_path.glob(pattern))
+                if files:
+                    latest_file = max(files, key=lambda f: f.stat().st_mtime)
+                    possible_paths.append(latest_file)
+                    break
+
+            # 存在するファイルを見つける
+            result_path = None
+            for path in possible_paths:
+                if path and path.exists() and path.stat().st_size > 0:
+                    result_path = path
+                    break
+
+            if not result_path:
+                print(f"📁 No valid result file found for task {self.task_id}")
+                print(f"   Searched paths: {[str(p) for p in possible_paths if p]}")
+                return
+
+            print(f"📁 Found result file for task {self.task_id}: {result_path}")
+
+            db = SessionLocal()
+            try:
+                # 既存のデータをチェック（重複防止）
+                existing_count = db.query(DBResult).filter(DBResult.task_id == self.task_id).count()
+                if existing_count > 0:
+                    print(f"⚠️ Task {self.task_id} already has {existing_count} results in database, skipping to prevent duplicates")
+                    return
+
+                with open(result_path, 'r', encoding='utf-8') as f:
+                    content = f.read().strip()
+
+                if not content:
+                    print(f"📁 Empty result file for task {self.task_id}")
+                    return
+
+                stored_count = 0
+
+                # JSONLファイルとして処理（推奨対応: エラー耐性強化）
+                if content.count('\n') > 0 or result_path.suffix == '.jsonl':
+                    items = content.strip().split('\n')
+
+                    for line_num, line in enumerate(items, 1):
+                        line = line.strip()
+                        if line:
+                            try:
+                                item_data = json.loads(line)
+
+                                # データハッシュを生成（richprogressと同じ方法）
+                                data_hash = None
+                                if isinstance(item_data, dict):
+                                    product_url = item_data.get('product_url', '')
+                                    ranking_position = item_data.get('ranking_position', '')
+
+                                    if product_url:
+                                        data_hash = hashlib.md5(product_url.encode('utf-8')).hexdigest()
+                                    elif ranking_position:
+                                        data_hash = hashlib.md5(f"pos_{ranking_position}".encode('utf-8')).hexdigest()
+
+                                # 日時フィールドを処理
+                                crawl_start_datetime = None
+                                item_acquired_datetime = None
+
+                                if isinstance(item_data, dict):
+                                    if 'crawl_start_datetime' in item_data:
+                                        try:
+                                            crawl_start_datetime = datetime.fromisoformat(item_data['crawl_start_datetime'].replace('Z', '+00:00'))
+                                        except (ValueError, TypeError):
+                                            crawl_start_datetime = datetime.now()
+
+                                    if 'item_acquired_datetime' in item_data:
+                                        try:
+                                            item_acquired_datetime = datetime.fromisoformat(item_data['item_acquired_datetime'].replace('Z', '+00:00'))
+                                        except (ValueError, TypeError):
+                                            item_acquired_datetime = datetime.now()
+
+                                # DBに保存（richprogressと同じ方法）
+                                db_result = DBResult(
+                                    id=str(uuid.uuid4()),
+                                    task_id=self.task_id,
+                                    data=item_data,
+                                    data_hash=data_hash,
+                                    created_at=datetime.now(),
+                                    crawl_start_datetime=crawl_start_datetime,
+                                    item_acquired_datetime=item_acquired_datetime
+                                )
+                                db.add(db_result)
+                                stored_count += 1
+
+                            except json.JSONDecodeError as e:
+                                print(f"⚠️ Invalid JSON in result line: {line[:100]}... Error: {e}")
+                                continue
+
+                    db.commit()
+                    print(f"✅ Stored {stored_count} items (JSONL format) to DB for task {self.task_id} using richprogress method")
+
+                else:
+                    # 単一JSONオブジェクトの場合
+                    try:
+                        data = json.loads(content)
+
+                        if isinstance(data, list):
+                            # JSON配列の場合
+                            for item in data:
+                                # データハッシュを生成
+                                data_hash = None
+                                if isinstance(item, dict):
+                                    product_url = item.get('product_url', '')
+                                    if product_url:
+                                        data_hash = hashlib.md5(product_url.encode('utf-8')).hexdigest()
+
+                                db_result = DBResult(
+                                    id=str(uuid.uuid4()),
+                                    task_id=self.task_id,
+                                    data=item,
+                                    data_hash=data_hash,
+                                    created_at=datetime.now(),
+                                    item_acquired_datetime=datetime.now()
+                                )
+                                db.add(db_result)
+                                stored_count += 1
+                        else:
+                            # 単一オブジェクトの場合
+                            db_result = DBResult(
+                                id=str(uuid.uuid4()),
+                                task_id=self.task_id,
+                                data=data,
+                                created_at=datetime.now(),
+                                item_acquired_datetime=datetime.now()
+                            )
+                            db.add(db_result)
+                            stored_count = 1
+
+                        db.commit()
+                        print(f"✅ Stored {stored_count} items (JSON format) to DB for task {self.task_id} using richprogress method")
+
+                    except json.JSONDecodeError as e:
+                        print(f"❌ Unable to parse result file for task {self.task_id}: {e}")
+
+            finally:
+                db.close()
+
+        except Exception as e:
+            print(f"❌ Error storing results to DB for task {self.task_id}: {e}")
+
+    def _ensure_task_exists_like_richprogress(self):
+        """richprogressと同じ方法でタスクを事前作成（根本対応）"""
+        try:
+            from ..database import SessionLocal, Task as DBTask, TaskStatus, Project as DBProject, Spider as DBSpider, User as DBUser
+            from datetime import datetime
+            import pytz
+
+            db = SessionLocal()
+            try:
+                # タスクの存在確認
+                existing_task = db.query(DBTask).filter(DBTask.id == self.task_id).first()
+
+                if existing_task:
+                    print(f"✅ Task {self.task_id} already exists")
+                    return self.task_id
+
+                print(f"🔧 Creating task like richprogress: {self.task_id}")
+
+                # スパイダーを検索
+                spider = db.query(DBSpider).filter(DBSpider.name == self.spider_name).first()
+                if not spider:
+                    print(f"❌ Spider {self.spider_name} not found in database")
+                    return self.task_id
+
+                # プロジェクトを取得
+                project = db.query(DBProject).filter(DBProject.id == spider.project_id).first()
+                if not project:
+                    print(f"❌ Project for spider {self.spider_name} not found")
+                    return self.task_id
+
+                # ユーザーを取得（システムユーザー）
+                user = db.query(DBUser).first()
+                if not user:
+                    print(f"❌ No user found in database")
+                    return self.task_id
+
+                # タスクを作成（richprogressと同じ方法）
+                jst = pytz.timezone('Asia/Tokyo')
+                current_time = datetime.now(jst).replace(tzinfo=None)
+
+                new_task = DBTask(
+                    id=self.task_id,
+                    project_id=project.id,
+                    spider_id=spider.id,
+                    status=TaskStatus.RUNNING,
+                    items_count=0,
+                    requests_count=0,
+                    error_count=0,
+                    created_at=current_time,
+                    started_at=current_time,
+                    updated_at=current_time,
+                    user_id=user.id
+                )
+
+                db.add(new_task)
+                db.commit()
+
+                print(f"✅ Created task like richprogress: {self.task_id}")
+                return self.task_id
+
+            finally:
+                db.close()
+
+        except Exception as e:
+            print(f"❌ Error creating task like richprogress: {e}")
+            return self.task_id
 
     def _analyze_failure_cause(self, result: Dict[str, Any]):
         """Scrapyプロセス失敗原因を分析"""
@@ -1302,12 +1638,23 @@ class ScrapyWatchdogMonitor:
                     task.items_count = final_items
                     task.requests_count = final_requests
 
-                    # ステータスの自動修正
-                    if final_items > 0 and task.status.name == 'FAILED':
-                        from ..database import TaskStatus
-                        task.status = TaskStatus.FINISHED
-                        task.error_count = 0
-                        print(f"🔧 Status auto-corrected: {self.task_id[:8]}... FAILED → FINISHED")
+                    # ステータスの自動修正（根本対応版）
+                    from ..database import TaskStatus
+
+                    # 正確なステータス判定ロジック
+                    if final_items > 0:
+                        # データ取得成功 → FINISHED
+                        if task.status.name in ['FAILED', 'RUNNING']:
+                            task.status = TaskStatus.FINISHED
+                            task.error_count = 0
+                            print(f"🔧 Status corrected: {self.task_id[:8]}... {task.status.name} → FINISHED (items: {final_items})")
+                    else:
+                        # データ取得失敗 → FAILED
+                        if task.status.name in ['FINISHED', 'RUNNING']:
+                            task.status = TaskStatus.FAILED
+                            task.error_count = task.error_count + 1 if task.error_count else 1
+                            task.error_message = f"No items collected. Requests: {final_requests}, Duration: {(task.finished_at - task.started_at).total_seconds() if task.started_at and task.finished_at else 'unknown'}s"
+                            print(f"🔧 Status corrected: {self.task_id[:8]}... {task.status.name} → FAILED (no items collected)")
 
                     task.updated_at = datetime.now()
 

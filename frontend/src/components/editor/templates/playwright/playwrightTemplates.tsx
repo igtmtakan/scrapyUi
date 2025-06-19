@@ -10,7 +10,8 @@ export const playwrightTemplates: Template[] = [
     icon: <Monitor className="w-5 h-5" />,
     category: 'playwright',
     code: `import scrapy
-from scrapy_playwright.page import PageMethod
+# 新アーキテクチャ: Playwright専用サービス（ポート8004）を使用
+# from scrapy_playwright.page import PageMethod  # 削除済み
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from urllib.parse import urljoin
 import asyncio

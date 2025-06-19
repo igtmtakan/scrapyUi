@@ -2,6 +2,7 @@ import { Template } from './types'
 import { basicTemplates } from './basic'
 import { amazonTemplates, rakutenTemplates, yahooShoppingTemplates } from './ecommerce'
 import { playwrightTemplates } from './playwright'
+import { playwrightServiceTemplates } from './playwright/playwrightServiceTemplates'
 import { puppeteerTemplates } from './puppeteer/puppeteerTemplates'
 import { gurunaviTemplates } from './food'
 import { yahooNewsTemplates } from './news'
@@ -16,6 +17,7 @@ export const allTemplates: Template[] = [
   ...rakutenTemplates,
   ...yahooShoppingTemplates,
   ...playwrightTemplates,
+  ...playwrightServiceTemplates,
   ...puppeteerTemplates,
   ...gurunaviTemplates,
   ...yahooNewsTemplates,
@@ -32,6 +34,7 @@ export { CATEGORIES } from './types'
 export { basicTemplates } from './basic'
 export { amazonTemplates, rakutenTemplates, yahooShoppingTemplates } from './ecommerce'
 export { playwrightTemplates } from './playwright'
+export { playwrightServiceTemplates } from './playwright/playwrightServiceTemplates'
 export { puppeteerTemplates } from './puppeteer/puppeteerTemplates'
 export { gurunaviTemplates } from './food'
 export { yahooNewsTemplates } from './news'

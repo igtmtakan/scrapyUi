@@ -247,7 +247,8 @@ class AmazonSpider(scrapy.Spider):
     icon: <Trophy className="w-5 h-5" />,
     category: 'ecommerce',
     code: `import scrapy
-from scrapy_playwright.page import PageMethod
+# 新アーキテクチャ: Playwright専用サービス（ポート8004）を使用
+# from scrapy_playwright.page import PageMethod  # 削除済み
 from urllib.parse import urljoin, urlparse
 import re
 from datetime import datetime
@@ -275,11 +276,12 @@ class AmazonRanking60Spider(scrapy.Spider):
     target_pages = 10           # 取得するページ数
     total_target_items = target_items_per_page * target_pages  # 合計60商品
 
+    # 新アーキテクチャ: Scrapy-Playwright設定は不要
     custom_settings = {
-        'DOWNLOAD_HANDLERS': {
-            'https': 'scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler',
-            'http': 'scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler',
-        },
+        # 'DOWNLOAD_HANDLERS': {  # 削除済み - 標準HTTPダウンローダーを使用
+        #     'https': 'scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler',
+        #     'http': 'scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler',
+        # },
         'ROBOTSTXT_OBEY': True,
         'DOWNLOAD_DELAY': 3,
         'RANDOMIZE_DOWNLOAD_DELAY': 0.5,
@@ -297,13 +299,13 @@ class AmazonRanking60Spider(scrapy.Spider):
             'Sec-Fetch-User': '?1',
             'Upgrade-Insecure-Requests': '1',
         },
-        'PLAYWRIGHT_BROWSER_TYPE': 'chromium',
-        'PLAYWRIGHT_LAUNCH_OPTIONS': {
-            'headless': True,
-            'timeout': 30000,
-        },
-        'PLAYWRIGHT_DEFAULT_NAVIGATION_TIMEOUT': 30000,
-        'PLAYWRIGHT_PROCESS_REQUEST_HEADERS': None,
+        # 'PLAYWRIGHT_BROWSER_TYPE': 'chromium',  # 削除済み
+        # 'PLAYWRIGHT_LAUNCH_OPTIONS': {  # 削除済み
+        #     'headless': True,
+        #     'timeout': 30000,
+        # },
+        # 'PLAYWRIGHT_DEFAULT_NAVIGATION_TIMEOUT': 30000,  # 削除済み
+        # 'PLAYWRIGHT_PROCESS_REQUEST_HEADERS': None,  # 削除済み
         'FEEDS': {
             'ranking_results.jsonl': {
                 'format': 'jsonlines',
@@ -329,15 +331,16 @@ class AmazonRanking60Spider(scrapy.Spider):
         for url in self.start_urls:
             yield scrapy.Request(
                 url,
-                meta={
-                    'playwright': True,
-                    'playwright_page_methods': [
-                        PageMethod('wait_for_load_state', 'domcontentloaded'),
-                        PageMethod('wait_for_timeout', 2000),
-                        PageMethod('evaluate', 'window.scrollTo(0, document.body.scrollHeight)'),
-                        PageMethod('wait_for_timeout', 1000),
-                    ],
-                },
+                # 新アーキテクチャ: Playwright専用サービス（ポート8004）を使用
+                # meta={
+                #     'playwright': True,
+                #     'playwright_page_methods': [
+                #         PageMethod('wait_for_load_state', 'domcontentloaded'),
+                #         PageMethod('wait_for_timeout', 2000),
+                #         PageMethod('evaluate', 'window.scrollTo(0, document.body.scrollHeight)'),
+                #         PageMethod('wait_for_timeout', 1000),
+                #     ],
+                # },
                 callback=self.parse_ranking_page
             )
 
