@@ -709,7 +709,7 @@ class SchedulerService:
                 print(f"❌ Project or spider not found for schedule {schedule.name}")
                 return None
 
-            print(f"🔧 Legacy execution for {schedule.name}: {project.name}/{spider.name}")
+            print(f"🔧 Legacy execution for {schedule.name}: {project.path}/{spider.name}")
 
             # タスクをデータベースに作成（根本修正版）
             # タスクIDを統一フォーマットで生成
@@ -717,8 +717,8 @@ class SchedulerService:
             timestamp = int(time.time())
             task_id = f"task_{timestamp}"
 
-            # プロジェクトディレクトリの確認
-            project_dir = f"/home/igtmtakan/workplace/python/scrapyUI/scrapy_projects/{project.name}"
+            # プロジェクトディレクトリの確認（project.pathを使用）
+            project_dir = f"/home/igtmtakan/workplace/python/scrapyUI/scrapy_projects/{project.path}"
             if not os.path.exists(project_dir):
                 print(f"❌ Project directory not found: {project_dir}")
                 return None
@@ -1131,7 +1131,7 @@ class SchedulerService:
                         if project and spider:
                             try:
                                 result = microservice_client.execute_watchdog_task(
-                                    project_name=project.name,
+                                    project_name=project.path,
                                     spider_name=spider.name,
                                     settings=schedule.settings or {},
                                     schedule_id=str(schedule.id)

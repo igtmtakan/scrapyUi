@@ -5,11 +5,9 @@
 
 import asyncio
 import logging
-import mysql.connector
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Any
-from sqlalchemy.orm import Session
+from typing import Dict, List, Any, Optional
 from ..database import SessionLocal, Task, TaskStatus
 
 logger = logging.getLogger(__name__)
@@ -84,9 +82,10 @@ class AutoRepairService:
                 
                 for task in zero_item_tasks:
                     # 対応する結果データを確認
+                    from sqlalchemy import text
                     result_count = db.execute(
-                        "SELECT COUNT(*) FROM results WHERE task_id = %s",
-                        (task.id,)
+                        text("SELECT COUNT(*) FROM results WHERE task_id = :task_id"),
+                        {"task_id": task.id}
                     ).fetchone()
                     
                     if result_count and result_count[0] > 0:
@@ -102,28 +101,95 @@ class AutoRepairService:
             logger.error(f"❌ Item count repair failed: {e}")
 
     async def _repair_stuck_tasks(self):
-        """スタックしたタスクの自動修復"""
+        """スタックしたタスクの自動修復（強化版）"""
         try:
             with SessionLocal() as db:
-                # 2時間以上RUNNINGのタスクを検索
-                stuck_threshold = datetime.now() - timedelta(hours=2)
+                # 1. 長時間RUNNINGのタスクを検索（1時間以上）
+                stuck_threshold = datetime.now() - timedelta(hours=1)
                 stuck_tasks = db.query(Task).filter(
                     Task.status == TaskStatus.RUNNING,
                     Task.started_at < stuck_threshold
-                ).limit(10).all()  # 一度に10件まで処理
-                
+                ).limit(20).all()  # 一度に20件まで処理
+
                 for task in stuck_tasks:
-                    # タスクをFAILEDに変更
+                    # プロセスが実際に動いているかチェック
+                    is_process_running = await self._check_task_process(task.id)
+
+                    if not is_process_running:
+                        # 結果ファイルから実際の状態を判定
+                        actual_status = await self._determine_actual_task_status(task)
+
+                        if actual_status == "FINISHED":
+                            task.status = TaskStatus.FINISHED
+                            task.finished_at = datetime.now()
+                            logger.info(f"🔧 Repaired stuck task as FINISHED: {task.id}")
+                        else:
+                            task.status = TaskStatus.FAILED
+                            task.finished_at = datetime.now()
+                            logger.info(f"🔧 Repaired stuck task as FAILED: {task.id}")
+
+                        self.repair_stats['stuck_task_repairs'] += 1
+                        self.repair_stats['total_repairs'] += 1
+
+                # 2. 長時間PENDINGのタスクをチェック（30分以上）
+                pending_threshold = datetime.now() - timedelta(minutes=30)
+                pending_tasks = db.query(Task).filter(
+                    Task.status == TaskStatus.PENDING,
+                    Task.created_at < pending_threshold
+                ).limit(10).all()
+
+                for task in pending_tasks:
+                    # PENDINGタスクをFAILEDに変更
                     task.status = TaskStatus.FAILED
                     task.finished_at = datetime.now()
                     self.repair_stats['stuck_task_repairs'] += 1
                     self.repair_stats['total_repairs'] += 1
-                    logger.info(f"🔧 Repaired stuck task: {task.id}")
-                
+                    logger.info(f"🔧 Repaired stuck PENDING task: {task.id}")
+
                 db.commit()
-                
+
         except Exception as e:
             logger.error(f"❌ Stuck task repair failed: {e}")
+
+    async def _check_task_process(self, task_id: str) -> bool:
+        """タスクのプロセスが実際に動いているかチェック"""
+        try:
+            import psutil
+            for proc in psutil.process_iter(['pid', 'cmdline']):
+                try:
+                    cmdline = proc.info['cmdline']
+                    if cmdline and any(task_id in arg for arg in cmdline):
+                        return True
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+            return False
+        except Exception:
+            return False
+
+    async def _determine_actual_task_status(self, task) -> str:
+        """結果ファイルから実際のタスク状態を判定"""
+        try:
+            # 結果ファイルの存在確認
+            result_file = self.base_projects_dir / f"{task.project.name}/results/{task.id}.jsonl"
+
+            if result_file.exists():
+                # ファイルサイズと行数をチェック
+                file_size = result_file.stat().st_size
+                if file_size > 0:
+                    # 行数をカウント
+                    with open(result_file, 'r', encoding='utf-8') as f:
+                        line_count = sum(1 for _ in f)
+
+                    if line_count > 0:
+                        # アイテム数を更新
+                        task.items_count = line_count
+                        return "FINISHED"
+
+            return "FAILED"
+
+        except Exception as e:
+            logger.error(f"❌ Error determining task status for {task.id}: {e}")
+            return "FAILED"
 
     async def _repair_file_sync(self):
         """ファイル同期の自動修復"""
@@ -210,9 +276,10 @@ class AutoRepairService:
                     return {"status": "error", "message": "Task not found"}
                 
                 # 結果データ数を確認
+                from sqlalchemy import text
                 result_count = db.execute(
-                    "SELECT COUNT(*) FROM results WHERE task_id = %s",
-                    (task_id,)
+                    text("SELECT COUNT(*) FROM results WHERE task_id = :task_id"),
+                    {"task_id": task_id}
                 ).fetchone()
                 
                 if result_count and result_count[0] > 0:

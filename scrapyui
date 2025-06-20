@@ -1,0 +1,78 @@
+#!/bin/bash
+
+# ScrapyUI 統合管理コマンド
+# 使用方法: ./scrapyui {start|stop|restart|status|logs}
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+case "${1:-help}" in
+    "start")
+        echo "🚀 Starting ScrapyUI..."
+        ./start_scrapyui.sh start
+        ;;
+    "stop")
+        echo "🛑 Stopping ScrapyUI..."
+        ./start_scrapyui.sh stop
+        ;;
+    "restart")
+        echo "🔄 Restarting ScrapyUI..."
+        ./start_scrapyui.sh restart
+        ;;
+    "status")
+        ./start_scrapyui.sh status
+        ;;
+    "logs")
+        echo "📋 ScrapyUI Logs:"
+        echo "=================="
+        echo ""
+        echo "📁 Log files location: logs/"
+        echo ""
+        if [ -n "$2" ]; then
+            # 特定のサービスのログを表示
+            if [ -f "logs/$2.log" ]; then
+                echo "📄 Showing logs for $2:"
+                echo "========================"
+                tail -f "logs/$2.log"
+            else
+                echo "❌ Log file not found: logs/$2.log"
+                echo ""
+                echo "Available logs:"
+                ls -la logs/ 2>/dev/null || echo "No logs directory found"
+            fi
+        else
+            # 全ログファイルを表示
+            echo "Available log files:"
+            ls -la logs/ 2>/dev/null || echo "No logs directory found"
+            echo ""
+            echo "Usage: $0 logs [service-name]"
+            echo "Example: $0 logs backend"
+        fi
+        ;;
+    "help"|*)
+        echo "ScrapyUI 統合管理コマンド"
+        echo "========================"
+        echo ""
+        echo "使用方法: $0 {command}"
+        echo ""
+        echo "コマンド:"
+        echo "  start    - ScrapyUIを起動"
+        echo "  stop     - ScrapyUIを停止"
+        echo "  restart  - ScrapyUIを再起動"
+        echo "  status   - サービス状態を確認"
+        echo "  logs     - ログファイルを表示"
+        echo "  help     - このヘルプを表示"
+        echo ""
+        echo "ログ確認:"
+        echo "  $0 logs           - 利用可能なログファイル一覧"
+        echo "  $0 logs backend   - バックエンドのログを表示"
+        echo "  $0 logs spider-manager - Spider Managerのログを表示"
+        echo ""
+        echo "サービス一覧:"
+        echo "  - Backend Server (http://localhost:8000)"
+        echo "  - Spider Manager (http://localhost:8002)"
+        echo "  - Test Service (http://localhost:8005)"
+        echo "  - Frontend (http://localhost:4000)"
+        echo ""
+        ;;
+esac

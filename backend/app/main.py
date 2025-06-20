@@ -29,7 +29,7 @@ from .middleware.error_middleware import (
     PerformanceLoggingMiddleware
 )
 
-from .api import projects, spiders, tasks, results, schedules, notifications, auth, proxies, ai, admin, script_runner, project_files, performance, system, settings, timezone, microservices, lightweight_progress
+from .api import projects, spiders, tasks, results, schedules, notifications, auth, proxies, ai, admin, script_runner, project_files, performance, system, settings, timezone, microservices, lightweight_progress, internal
 # from .api import extensions  # テンプレート管理API - 一時的に無効化
 # from .api import database_config  # 一時的に無効化
 # from .api import shell  # 一時的に無効化
@@ -465,6 +465,7 @@ app.include_router(system.router, prefix="/api", tags=["system"])
 app.include_router(timezone.router, tags=["timezone"])
 app.include_router(microservices.router, tags=["microservices"])
 app.include_router(lightweight_progress.router, tags=["lightweight-progress"])
+app.include_router(internal.router, prefix="/api/internal", tags=["internal"])
 # app.include_router(settings.router, prefix="/api/settings", tags=["settings"])
 
 # Terminal WebSocketエンドポイント（先に登録して優先度を上げる）
@@ -597,28 +598,53 @@ async def startup_event():
         await auto_repair_service.start_auto_repair()
         logger.info("🔧 Auto repair service started")
 
-        # マイクロサービスの初期化（遅延実行）
-        async def delayed_microservice_check():
-            """マイクロサービスの遅延チェック"""
-            await asyncio.sleep(10)  # 10秒待機してマイクロサービスの起動を待つ
-            try:
-                from .services.microservice_client import microservice_client
+        # キャッシュ管理サービスを開始
+        from .services.cache_manager import cache_manager
+        await cache_manager.start_cache_monitoring()
+        logger.info("🗄️ Cache manager started")
 
-                # マイクロサービスの可用性チェック
-                if microservice_client.is_microservice_available():
-                    logger.info("🚀 Microservices are available")
-                    print("🚀 Microservices monitoring services initialized")
-                else:
-                    logger.warning("⚠️ Microservices not available, using legacy execution")
-                    print("⚠️ Microservices not available (start microservices for enhanced features)")
+        # 監視サービスを開始
+        from .services.monitoring_service import monitoring_service
+        asyncio.create_task(monitoring_service.start_monitoring())
+        logger.info("🔍 Monitoring service started")
 
-            except Exception as microservice_error:
-                logger.error(f"❌ Failed to initialize microservices: {microservice_error}")
-                print(f"⚠️ Microservices initialization failed: {microservice_error}")
-                # マイクロサービスの初期化に失敗してもアプリケーションは継続
+        # マイクロサービスの初期化（継続的チェック）
+        async def continuous_microservice_check():
+            """マイクロサービスの継続的チェック"""
+            microservice_available = False
+            check_count = 0
+
+            while check_count < 30:  # 最大30回チェック（5分間）
+                await asyncio.sleep(2)  # 2秒間隔でチェック
+                check_count += 1
+
+                try:
+                    from .services.microservice_client import microservice_client
+
+                    # マイクロサービスの可用性チェック
+                    if microservice_client.is_microservice_available():
+                        if not microservice_available:  # 初回認識時のみログ出力
+                            logger.info("🚀 Microservices are available")
+                            print("🚀 Microservices monitoring services initialized")
+                            microservice_available = True
+                        break
+                    else:
+                        if check_count == 1:  # 初回チェック時のみ警告
+                            logger.warning("⚠️ Microservices not available, checking every 2 seconds...")
+                        elif check_count % 15 == 0:  # 30秒ごとに状況報告
+                            logger.info(f"🔍 Still checking microservices... (attempt {check_count}/30)")
+
+                except Exception as microservice_error:
+                    if check_count == 1:  # 初回エラー時のみログ出力
+                        logger.error(f"❌ Failed to check microservices: {microservice_error}")
+
+            # 最終チェック結果
+            if not microservice_available:
+                logger.warning("⚠️ Microservices not available after 5 minutes, using legacy execution")
+                print("⚠️ Microservices not available (start microservices for enhanced features)")
 
         # バックグラウンドでマイクロサービスチェックを実行
-        asyncio.create_task(delayed_microservice_check())
+        asyncio.create_task(continuous_microservice_check())
 
         logger.info("✅ ScrapyUI Application started successfully")
         print("✅ ScrapyUI Application started successfully")
@@ -670,6 +696,16 @@ async def shutdown_event():
         from .services.auto_repair_service import auto_repair_service
         await auto_repair_service.stop_auto_repair()
         logger.info("🔧 Auto repair service stopped")
+
+        # キャッシュ管理サービスを停止
+        from .services.cache_manager import cache_manager
+        await cache_manager.stop_cache_monitoring()
+        logger.info("🗄️ Cache manager stopped")
+
+        # 監視サービスを停止
+        from .services.monitoring_service import monitoring_service
+        await monitoring_service.stop_monitoring()
+        logger.info("🔍 Monitoring service stopped")
 
         # タスクエグゼキューターを停止
         from .services.task_executor import task_executor
@@ -784,6 +820,38 @@ async def get_repair_stats():
     try:
         from .services.auto_repair_service import auto_repair_service
         stats = await auto_repair_service.get_repair_stats()
+        return {
+            "status": "success",
+            "data": stats
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+@app.get("/api/system/monitoring/stats")
+async def get_monitoring_stats():
+    """監視統計情報"""
+    try:
+        from .services.monitoring_service import monitoring_service
+        stats = monitoring_service.get_monitoring_stats()
+        return {
+            "status": "success",
+            "data": stats
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+@app.get("/api/system/cache/stats")
+async def get_cache_stats():
+    """キャッシュ統計情報"""
+    try:
+        from .services.cache_manager import cache_manager
+        stats = cache_manager.get_cache_stats()
         return {
             "status": "success",
             "data": stats

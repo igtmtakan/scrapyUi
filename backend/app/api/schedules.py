@@ -1356,3 +1356,97 @@ async def clear_webui_cache(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"キャッシュクリア中にエラーが発生しました: {str(e)}"
         )
+
+@router.post(
+    "/clear-cache",
+    summary="WebUIキャッシュクリア",
+    description="WebUIのキャッシュをクリアして最新状態を反映します。",
+    response_description="キャッシュクリア結果"
+)
+async def clear_cache(
+    current_user: DBUser = Depends(get_current_active_user)
+):
+    """
+    ## WebUIキャッシュクリア
+
+    WebUIのキャッシュをクリアして、タスクやスケジュールの最新状態を反映します。
+
+    ### レスポンス
+    - **200**: キャッシュクリア成功
+    - **500**: サーバーエラー
+    """
+    try:
+        from ..services.cache_manager import cache_manager
+
+        result = await cache_manager.manual_cache_clear(
+            reason="manual_api_call",
+            user_id=current_user.id
+        )
+
+        return {
+            "status": "success",
+            "message": "WebUIキャッシュがクリアされました",
+            "data": result,
+            "instructions": [
+                "ブラウザでページを更新（F5キー）してください",
+                "最新のタスク状態が表示されます"
+            ]
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"キャッシュクリア中にエラーが発生しました: {str(e)}"
+        )
+
+@router.post(
+    "/force-sync/{task_id}",
+    summary="タスク強制同期",
+    description="特定のタスクの状態を強制的に同期します。",
+    response_description="同期結果"
+)
+async def force_task_sync(
+    task_id: str,
+    current_user: DBUser = Depends(get_current_active_user)
+):
+    """
+    ## タスク強制同期
+
+    特定のタスクの状態をデータベースから取得し、WebUIに強制的に同期します。
+
+    ### パラメータ
+    - **task_id**: 同期するタスクのID
+
+    ### レスポンス
+    - **200**: 同期成功
+    - **404**: タスクが見つからない
+    - **500**: サーバーエラー
+    """
+    try:
+        from ..services.cache_manager import cache_manager
+
+        result = await cache_manager.force_task_sync(task_id)
+
+        if result["status"] == "error":
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=result["message"]
+            )
+
+        return {
+            "status": "success",
+            "message": f"タスク {task_id} の同期が完了しました",
+            "data": result,
+            "instructions": [
+                "WebUIでタスクの最新状態が反映されました",
+                "必要に応じてページを更新してください"
+            ]
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"タスク同期中にエラーが発生しました: {str(e)}"
+        )
