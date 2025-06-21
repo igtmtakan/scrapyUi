@@ -717,10 +717,26 @@ export default function SchedulesPage() {
     if (!confirm('このスケジュールを削除しますか？')) return
 
     try {
+      console.log('🗑️ スケジュール削除開始:', scheduleId)
       await scheduleService.deleteSchedule(scheduleId)
+      console.log('✅ スケジュール削除成功:', scheduleId)
       setSchedules(prev => prev.filter(s => s.id !== scheduleId))
+      alert('スケジュールが正常に削除されました')
     } catch (error: any) {
-      alert(error.response?.data?.detail || 'スケジュールの削除に失敗しました')
+      console.error('❌ スケジュール削除エラー:', {
+        scheduleId,
+        error,
+        errorMessage: error?.message,
+        errorResponse: error?.response,
+        errorData: error?.response?.data,
+        errorStatus: error?.response?.status
+      })
+
+      const errorMessage = error?.response?.data?.detail ||
+                          error?.message ||
+                          'スケジュールの削除に失敗しました'
+
+      alert(`スケジュールの削除に失敗しました:\n${errorMessage}`)
     }
   }
 

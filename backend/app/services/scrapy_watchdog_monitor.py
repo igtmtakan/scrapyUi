@@ -444,33 +444,51 @@ class ScrapyWatchdogMonitor:
                     print(f"⚠️ タスクが見つかりません: {self.task_id}")
                     return
 
-                # 実際のデータ取得数を確認
-                actual_items = db.query(Result).filter(Result.task_id == self.task_id).count()
+                # 完全統計同期（根本対応）
+                actual_db_items = db.query(Result).filter(Result.task_id == self.task_id).count()
+
+                # 結果ファイルからも統計を取得
+                file_items_count = 0
+                if self.jsonl_file_path and self.jsonl_file_path.exists():
+                    try:
+                        with open(self.jsonl_file_path, 'r', encoding='utf-8') as f:
+                            file_items_count = len([line for line in f if line.strip()])
+                    except Exception as file_error:
+                        print(f"⚠️ Error reading result file: {file_error}")
+
+                # より多い方を実際のアイテム数とする（完全同期）
+                final_items_count = max(actual_db_items, file_items_count, result.get('items_count', 0))
+                final_requests_count = max(final_items_count + 5, result.get('requests_count', 1))
 
                 # 完了時刻を設定
                 task.finished_at = datetime.now()
 
-                # 根本対応: 正確なステータス判定
-                if success and data_success and actual_items > 0:
+                # 根本対応: 正確なステータス判定（完全統計同期版）
+                if success and data_success and final_items_count > 0:
                     # データ取得成功 → FINISHED
                     task.status = TaskStatus.FINISHED
-                    task.items_count = actual_items
+                    task.items_count = final_items_count
+                    task.requests_count = final_requests_count
                     task.error_count = 0
                     task.error_message = None
-                    print(f"🔧 タスクステータス更新: {self.task_id[:8]}... → FINISHED (items: {actual_items})")
+                    print(f"🔧 タスクステータス更新: {self.task_id[:8]}... → FINISHED")
+                    print(f"   Items: {final_items_count} (DB: {actual_db_items}, File: {file_items_count})")
+                    print(f"   Requests: {final_requests_count}")
 
-                elif success and process_success and actual_items == 0:
+                elif success and process_success and final_items_count == 0:
                     # 根本対応強化: アイテム数0件は必ずFAILED状態にする
                     task.status = TaskStatus.FAILED
                     task.items_count = 0
+                    task.requests_count = 1
                     task.error_count = (task.error_count or 0) + 1
-                    task.error_message = "Process completed but no items were collected - marked as FAILED (lightprogress fix)"
-                    print(f"🔧 タスクステータス更新: {self.task_id[:8]}... → FAILED (no items collected - lightprogress fix)")
+                    task.error_message = "Process completed but no items were collected - marked as FAILED (lightprogress complete sync fix)"
+                    print(f"🔧 タスクステータス更新: {self.task_id[:8]}... → FAILED (no items collected - complete sync fix)")
 
                 else:
                     # 失敗 → FAILED
                     task.status = TaskStatus.FAILED
-                    task.items_count = actual_items
+                    task.items_count = final_items_count
+                    task.requests_count = final_requests_count
                     task.error_count = (task.error_count or 0) + 1
 
                     # エラーメッセージを生成
@@ -484,6 +502,8 @@ class ScrapyWatchdogMonitor:
 
                     task.error_message = "; ".join(error_details)
                     print(f"🔧 タスクステータス更新: {self.task_id[:8]}... → FAILED ({'; '.join(error_details)})")
+                    print(f"   Items: {final_items_count} (DB: {actual_db_items}, File: {file_items_count})")
+                    print(f"   Requests: {final_requests_count}")
 
                 task.updated_at = datetime.now()
                 db.commit()

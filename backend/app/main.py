@@ -29,7 +29,7 @@ from .middleware.error_middleware import (
     PerformanceLoggingMiddleware
 )
 
-from .api import projects, spiders, tasks, results, schedules, notifications, auth, proxies, ai, admin, script_runner, project_files, performance, system, settings, timezone, microservices, lightweight_progress, internal
+from .api import projects, spiders, tasks, results, schedules, notifications, auth, proxies, ai, admin, script_runner, project_files, performance, system, settings, timezone, microservices, lightweight_progress, internal, statistics_validation
 # from .api import extensions  # テンプレート管理API - 一時的に無効化
 # from .api import database_config  # 一時的に無効化
 # from .api import shell  # 一時的に無効化
@@ -466,6 +466,7 @@ app.include_router(timezone.router, tags=["timezone"])
 app.include_router(microservices.router, tags=["microservices"])
 app.include_router(lightweight_progress.router, tags=["lightweight-progress"])
 app.include_router(internal.router, prefix="/api/internal", tags=["internal"])
+app.include_router(statistics_validation.router, tags=["statistics-validation"])
 # app.include_router(settings.router, prefix="/api/settings", tags=["settings"])
 
 # Terminal WebSocketエンドポイント（先に登録して優先度を上げる）
@@ -598,6 +599,13 @@ async def startup_event():
         await auto_repair_service.start_auto_repair()
         logger.info("🔧 Auto repair service started")
 
+        # 統計検証サービスの開始
+        from .services.universal_statistics_validator import universal_validator
+        from .services.batch_statistics_fixer import batch_fixer
+        universal_validator.start_realtime_monitoring()
+        batch_fixer.start_batch_processing()
+        logger.info("📊 Statistics validation services started")
+
         # キャッシュ管理サービスを開始
         from .services.cache_manager import cache_manager
         await cache_manager.start_cache_monitoring()
@@ -696,6 +704,13 @@ async def shutdown_event():
         from .services.auto_repair_service import auto_repair_service
         await auto_repair_service.stop_auto_repair()
         logger.info("🔧 Auto repair service stopped")
+
+        # 統計検証サービスの停止
+        from .services.universal_statistics_validator import universal_validator
+        from .services.batch_statistics_fixer import batch_fixer
+        universal_validator.stop_realtime_monitoring()
+        batch_fixer.stop_batch_processing()
+        logger.info("📊 Statistics validation services stopped")
 
         # キャッシュ管理サービスを停止
         from .services.cache_manager import cache_manager

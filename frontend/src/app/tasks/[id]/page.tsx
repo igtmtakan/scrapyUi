@@ -27,7 +27,7 @@ interface Task {
   items_count: number;
   requests_count: number;
   error_count: number;
-  log_level: string;
+  log_level?: string;
   settings?: any;
   created_at: string;
   updated_at: string;

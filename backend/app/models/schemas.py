@@ -107,7 +107,7 @@ class Spider(SpiderBase):
 
 # Task schemas
 class TaskBase(BaseModel):
-    log_level: str = "INFO"
+    log_level: Optional[str] = "INFO"
     settings: Optional[Dict[str, Any]] = None
 
 class TaskCreate(TaskBase):

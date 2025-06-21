@@ -165,7 +165,19 @@ class ScheduleService {
 
   // スケジュール削除
   async deleteSchedule(scheduleId: string): Promise<void> {
-    await apiClient.delete(`/api/schedules/${scheduleId}`);
+    try {
+      console.log('📡 scheduleService: deleteSchedule呼び出し', scheduleId);
+      await apiClient.delete(`/api/schedules/${scheduleId}`);
+      console.log('📡 scheduleService: deleteSchedule成功', scheduleId);
+    } catch (error) {
+      console.error('❌ scheduleService: deleteScheduleエラー', {
+        scheduleId,
+        error: error instanceof Error ? error.message : String(error),
+        errorType: error?.constructor?.name,
+        errorDetails: error
+      });
+      throw error;
+    }
   }
 
   // スケジュール即座実行

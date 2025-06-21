@@ -59,7 +59,7 @@ export interface Task {
   created_at: string;
   started_at?: string;
   finished_at?: string;
-  log_level: string;
+  log_level?: string;
   items_count?: number;
   requests_count?: number;
   error_count?: number;

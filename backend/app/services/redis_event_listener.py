@@ -146,15 +146,17 @@ class RedisEventListener:
         try:
             task = db.query(Task).filter(Task.id == task_id).first()
             if task:
-                # ステータス判定
+                # ステータス判定（lightprogressロジックと統一）
                 if return_code == 0 and items_count > 0:
                     # 正常終了かつアイテム取得済み
                     task.status = TaskStatus.FINISHED
                     logger.info(f"✅ Task {task_id[:8]}... completed successfully ({items_count} items)")
                 elif return_code == 0 and items_count == 0:
-                    # 正常終了だがアイテムなし
-                    task.status = TaskStatus.FINISHED
-                    logger.info(f"⚠️ Task {task_id[:8]}... completed with no items")
+                    # 正常終了だがアイテムなし → lightprogressと同じくFAILEDに設定
+                    task.status = TaskStatus.FAILED
+                    task.error_count = (task.error_count or 0) + 1
+                    task.error_message = "Process completed but no items were collected - marked as FAILED (redis event fix)"
+                    logger.warning(f"⚠️ Task {task_id[:8]}... completed with no items - marked as FAILED")
                 else:
                     # 異常終了
                     task.status = TaskStatus.FAILED
